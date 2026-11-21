@@ -476,7 +476,7 @@ fn all_constructible_half_inversion_combinations_pass_at_rated_element_bands() {
                     &sequence_ranges,
                     &model.train,
                     unpowered(),
-                    model.comfortable_force_limits,
+                    model.design_force_targets,
                     sequence_ranges[0].start - 15.0,
                     speed,
                 );
@@ -905,7 +905,7 @@ fn full_trains_cross_composed_immelmann_and_dive_loops() {
                     &ranges,
                     &config,
                     unpowered(),
-                    model.comfortable_force_limits,
+                    model.design_force_targets,
                     start - 15.0,
                     27.5,
                 );

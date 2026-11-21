@@ -496,7 +496,7 @@ fn run_and_check(composition: Composition) -> Vec<String> {
         failures.push(format!("{} had no element samples", composition.name));
         return failures;
     }
-    let limits = composition.model.comfortable_force_limits;
+    let limits = composition.model.design_force_targets;
     let minimum_vertical = element_samples
         .iter()
         .map(|sample| sample.vertical_g)

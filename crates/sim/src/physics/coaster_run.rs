@@ -1,7 +1,7 @@
 use super::{Circuit, PhysicsConfig, TestRun, TestRunRecorder, Train};
 use crate::state_hash::StateHasher;
 use crate::track::proximity::TrainPosition;
-use crate::track::{CoasterModel, ComfortableForceLimits, PieceKind, TrainConfiguration};
+use crate::track::{CoasterModel, DesignForceTargets, PieceKind, TrainConfiguration};
 
 /// A single dispatched train, from the station through one circuit or recovery.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -49,7 +49,7 @@ impl CoasterRun {
         configuration: &TrainConfiguration,
         model: &CoasterModel,
         config: PhysicsConfig,
-        limits: ComfortableForceLimits,
+        limits: DesignForceTargets,
     ) -> Self {
         Self::with_reports(
             circuit,
@@ -75,7 +75,7 @@ impl CoasterRun {
         model: Option<&CoasterModel>,
         config: PhysicsConfig,
         record_reports: bool,
-        limits: Option<ComfortableForceLimits>,
+        limits: Option<DesignForceTargets>,
     ) -> Self {
         let station = circuit
             .pieces

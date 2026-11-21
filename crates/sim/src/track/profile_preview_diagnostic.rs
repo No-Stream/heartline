@@ -202,7 +202,7 @@ fn actual_preview(
         return Err(());
     }
 
-    let limits = model.comfortable_force_limits;
+    let limits = model.design_force_targets;
     let sustained_minimum_g = preview
         .cars
         .iter()

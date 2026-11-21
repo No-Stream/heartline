@@ -23,7 +23,7 @@ pub use curves::{
     TrackSample, TrackState, Vec3, VerticalCurvature,
 };
 pub use models::{
-    CoasterModel, ComfortableForceLimits, ForceRating, ForceRatingAxis, ForceRatingBand,
+    CoasterModel, DesignForceTargets, ForceRating, ForceRatingAxis, ForceRatingBand,
     LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED, LAUNCH_MAX_SPEED_METRES_PER_SECOND,
     LaunchParameters, LaunchSpeedBounds, LaunchType, LiftRules, Material, SupportStyle,
     TrainConfiguration, coaster_models, family_coaster_model, hybrid_model, hyper_model,

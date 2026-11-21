@@ -372,7 +372,7 @@ fn installing_a_live_layout_preserves_the_coaster_model_force_limits() {
     let mut park = block_test_park();
     let layout = unverified_layout(&park);
     let model = park.construction.as_ref().unwrap().model().clone();
-    let limits = model.comfortable_force_limits;
+    let limits = model.design_force_targets;
     park.coaster_open = true;
     park.install_block_layout(layout.clone(), false);
 

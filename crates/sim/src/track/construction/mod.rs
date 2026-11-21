@@ -102,7 +102,7 @@ pub fn select_speed_matched_variant(
     select_speed_matched_variant_with_windows(
         candidates,
         entry_speed,
-        model.comfortable_force_limits.minimum_vertical_g,
+        model.design_force_targets.minimum_vertical_g,
         |piece| rated_speeds(model, piece),
     )
 }

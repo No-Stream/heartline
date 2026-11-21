@@ -492,7 +492,7 @@ fn assert_force_limits(
         usize::from(model.train.cars),
         "{description}: missing per-car forces"
     );
-    let limits = model.comfortable_force_limits;
+    let limits = model.design_force_targets;
     let headroom_g = if headroom_required { 0.25 } else { 0.0 };
     for car in candidate_peaks {
         let peaks = car.peaks;
@@ -1057,7 +1057,7 @@ fn force_margin_caps_strong_floater_in_five_hundredths_of_a_g() {
         cap.requested_target_g, cap.capped_target_g, cap.delivered_g, solved.calibration_runs
     );
     assert_eq!(cap.requested_target_g, -1.5);
-    let model_headroom_floor_g = model.comfortable_force_limits.minimum_vertical_g + 0.25;
+    let model_headroom_floor_g = model.design_force_targets.minimum_vertical_g + 0.25;
     assert!(cap.capped_target_g >= model_headroom_floor_g);
     assert!(cap.capped_target_g <= -0.75);
     let cap_steps = (cap.capped_target_g - cap.requested_target_g) / 0.05;

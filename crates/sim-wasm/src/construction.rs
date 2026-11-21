@@ -12,7 +12,7 @@ use theme_park_sim::track::shaped::{
 use theme_park_sim::track::{
     Bank, CoasterModel, Hand, Heartlining, HillFeel, HillTwist, PieceFamily,
 };
-use theme_park_sim::track::{ComfortableForceLimits, ForceRating, ForceRatingAxis};
+use theme_park_sim::track::{DesignForceTargets, ForceRating, ForceRatingAxis};
 use ts_rs::TS;
 
 #[derive(Serialize, TS)]
@@ -713,7 +713,7 @@ fn rated_speed_wire(model: &CoasterModel, piece: &Piece) -> Option<ConstructionR
 }
 
 pub(crate) fn force_limits_wire(
-    limits: ComfortableForceLimits,
+    limits: DesignForceTargets,
     model_key: &str,
 ) -> ConstructionForceLimitsWire {
     let bands = |axis| {
@@ -767,7 +767,7 @@ fn open_track_position(pieces: &[Piece], distance: f64) -> Vec3 {
 fn testing_sample_from_force_envelope(
     pieces: &[Piece],
     sample: PreviewForceSample,
-    limits: ComfortableForceLimits,
+    limits: DesignForceTargets,
 ) -> crate::reports::TestingSample {
     let vertical_force = if sample.minimum_vertical_g / limits.minimum_vertical_g
         > sample.maximum_vertical_g / limits.maximum_vertical_g
@@ -1096,7 +1096,7 @@ impl WasmSimulation {
     pub fn construction_force_preview(&self) -> Option<ConstructionForcePreviewWire> {
         let construction = self.construction.as_ref()?;
         let pieces = construction.pieces();
-        let limits = construction.model().comfortable_force_limits;
+        let limits = construction.model().design_force_targets;
         let preview = construction.force_preview(
             pieces,
             PhysicsConfig {
@@ -1191,7 +1191,7 @@ impl WasmSimulation {
             last_placed,
             launches,
             limits: force_limits_wire(
-                construction.model().comfortable_force_limits,
+                construction.model().design_force_targets,
                 construction.model().name,
             ),
         })
@@ -1250,7 +1250,7 @@ impl WasmSimulation {
                 },
             )
             .expect("construction contains a station");
-        let limits = construction.model().comfortable_force_limits;
+        let limits = construction.model().design_force_targets;
         let samples: Vec<_> = preview
             .report
             .samples
@@ -1310,7 +1310,7 @@ impl WasmSimulation {
             force_envelope_samples,
             piece_force_peaks: piece_force_peaks_wire(&preview.piece_force_peaks),
             limits: force_limits_wire(
-                construction.model().comfortable_force_limits,
+                construction.model().design_force_targets,
                 construction.model().name,
             ),
             rated_speed,
@@ -1693,7 +1693,7 @@ impl WasmSimulation {
                                 }),
                                 airtime_seconds: forces.as_ref().map(|force| force.airtime_seconds),
                                 limits: force_limits_wire(
-                                    construction.model().comfortable_force_limits,
+                                    construction.model().design_force_targets,
                                     construction.model().name,
                                 ),
                             })
@@ -2566,7 +2566,7 @@ impl WasmSimulation {
             ride,
             model_name: model.name.to_owned(),
             manufacturer: model.manufacturer.to_owned(),
-            limits: force_limits_wire(model.comfortable_force_limits, model.name),
+            limits: force_limits_wire(model.design_force_targets, model.name),
             report,
         })
         .expect("serialize ride info")

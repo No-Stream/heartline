@@ -4,7 +4,7 @@ use std::ops::Range;
 use super::{Circuit, ForceEvaluator, GForces, PhysicsConfig, TIME_STEP, Train};
 use crate::track::catalog::unmeasured_catalog;
 use crate::track::{
-    CoasterModel, ComfortableForceLimits, Piece, PieceId, TrackState, TrainConfiguration,
+    CoasterModel, DesignForceTargets, Piece, PieceId, TrackState, TrainConfiguration,
 };
 
 #[derive(Clone, Debug)]
@@ -805,7 +805,7 @@ fn rate_piece_on_track(
         track.context
     );
     let mut evaluators =
-        vec![ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP); usize::from(cars)];
+        vec![ForceEvaluator::new(model.design_force_targets, TIME_STEP); usize::from(cars)];
     let mut train = Train::new(
         &track.circuit,
         &config,
@@ -1049,7 +1049,7 @@ pub fn rate_sequence(
     ranges: &[Range<f64>],
     configuration: &TrainConfiguration,
     physics: PhysicsConfig,
-    limits: ComfortableForceLimits,
+    limits: DesignForceTargets,
     approach_start: f64,
     start_speed: f64,
 ) -> SequenceRating {
@@ -1477,7 +1477,7 @@ mod tests {
             context.element_start,
             target_speed,
         );
-        let mut cold_filter = ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP);
+        let mut cold_filter = ForceEvaluator::new(model.design_force_targets, TIME_STEP);
         let cold_lead_force = loop {
             train.step(&context.circuit);
             if let Some(reading) = train
@@ -1685,11 +1685,11 @@ mod tests {
             .expect("1 m/s above the rated maximum the eight-car train exceeds the vertical limit");
         assert_eq!(violation.axis, 0);
         assert!(
-            violation.force < model.comfortable_force_limits.minimum_vertical_g,
+            violation.force < model.design_force_targets.minimum_vertical_g,
             "{violation:?}"
         );
         assert!(
-            result.minimum_filtered_vertical < model.comfortable_force_limits.minimum_vertical_g,
+            result.minimum_filtered_vertical < model.design_force_targets.minimum_vertical_g,
             "{result:?}"
         );
     }
@@ -1731,10 +1731,8 @@ mod tests {
                 approach_start,
                 approach_speed,
             );
-            let mut evaluators = vec![
-                ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP);
-                usize::from(cars)
-            ];
+            let mut evaluators =
+                vec![ForceEvaluator::new(model.design_force_targets, TIME_STEP); usize::from(cars)];
             let mut minimum_vertical = f64::INFINITY;
             let mut first_violation = None;
             let mut cleared_element = false;
@@ -1808,7 +1806,7 @@ mod tests {
                 &[track.element_start..track.element_end],
                 &train,
                 unpowered(),
-                model.comfortable_force_limits,
+                model.design_force_targets,
                 sequence_start(&track),
                 speed,
             );
@@ -1911,7 +1909,7 @@ mod tests {
             &ranges,
             &model.train,
             unpowered(),
-            model.comfortable_force_limits,
+            model.design_force_targets,
             start,
             solved,
         );
@@ -1934,7 +1932,7 @@ mod tests {
             &[track.element_start..track.element_end],
             &model.train,
             unpowered(),
-            model.comfortable_force_limits,
+            model.design_force_targets,
             sequence_start(&track),
             10.0,
         );

@@ -6,7 +6,7 @@ use theme_park_sim::track::construction::Construction;
 use theme_park_sim::track::ride_file::{RideFile, RideHeading, RideStep};
 use theme_park_sim::track::shaped::ElementIntent;
 use theme_park_sim::track::{
-    CoasterModel, ComfortableForceLimits, Heading, Heartlining, HillFeel, PieceId, PieceKind,
+    CoasterModel, DesignForceTargets, Heading, Heartlining, HillFeel, PieceId, PieceKind,
     TrackState, catalog, family_coaster_model, hybrid_model, hyper_model, multi_launch_model,
     rated_speed_margin, rated_speeds, wooden_twister_model,
 };
@@ -281,7 +281,7 @@ fn assert_timber_margins(circuit: &Circuit, model: &CoasterModel, construction: 
         if construction { 2.0 } else { 0.0 },
     );
     let mut entries = vec![vec![false; model.train.cars as usize]; circuit.pieces().len()];
-    let limits = model.comfortable_force_limits;
+    let limits = model.design_force_targets;
     let mut minimum_speed_margin = f64::INFINITY;
     let mut minimum_force_margin = f64::INFINITY;
     for _ in 0..60_000 {
@@ -354,7 +354,7 @@ fn assert_timber_margins(circuit: &Circuit, model: &CoasterModel, construction: 
     panic!("train did not finish");
 }
 
-fn assert_timber_tumbler_report(run_name: &str, report: &TestRun, limits: ComfortableForceLimits) {
+fn assert_timber_tumbler_report(run_name: &str, report: &TestRun, limits: DesignForceTargets) {
     assert!(report.completed, "{run_name} ride did not complete");
     let stats = report.statistics;
     assert!(
@@ -399,7 +399,7 @@ fn assert_rides_in_band_with_design_margins(
     model: &CoasterModel,
     excitement_band: std::ops::RangeInclusive<f64>,
 ) -> Vec<TestRun> {
-    let limits = model.comfortable_force_limits;
+    let limits = model.design_force_targets;
     [(PhysicsConfig::default().lift_speed, 0.0), (5.0, 2.0)]
         .into_iter()
         .map(|(lift_speed, initial_speed)| {
@@ -478,7 +478,7 @@ fn daisy_dash_is_a_gentle_family_ride_under_both_physics_configs() {
     for (lift_speed, initial_speed) in [(PhysicsConfig::default().lift_speed, 0.0), (5.0, 2.0)] {
         let report = ride_test(&circuit, &model, lift_speed, initial_speed);
         let stats = report.statistics;
-        let limits = model.comfortable_force_limits;
+        let limits = model.design_force_targets;
         eprintln!(
             "Daisy Dash at lift speed {lift_speed}: excitement {:.2}, intensity {:.2}, nausea {:.2}; stats {stats:?}",
             report.excitement, report.intensity, report.nausea
@@ -683,7 +683,7 @@ fn timber_tumbler_meets_player_ride_targets_under_both_physics_configs() {
         assert_timber_tumbler_report(
             &format!("default physics car {car_index}"),
             report,
-            model.comfortable_force_limits,
+            model.design_force_targets,
         );
     }
     assert!(

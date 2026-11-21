@@ -8,7 +8,7 @@ use theme_park_sim::physics::{
 };
 use theme_park_sim::track::ride_file::{RideFile, RideStep};
 use theme_park_sim::track::{
-    CoasterModel, ComfortableForceLimits, PieceKind, rated_speed_margin, rated_speeds,
+    CoasterModel, DesignForceTargets, PieceKind, rated_speed_margin, rated_speeds,
 };
 
 pub(crate) type ShapedElementEntrySpeeds = BTreeMap<usize, (Option<f64>, Option<f64>)>;
@@ -108,7 +108,7 @@ pub(crate) fn format_force_headroom_results(results: &[ForceHeadroomResult]) -> 
 
 pub(crate) fn force_headroom_results(
     test_run: &TestRun,
-    limits: ComfortableForceLimits,
+    limits: DesignForceTargets,
     physics_configuration: &'static str,
 ) -> Vec<ForceHeadroomResult> {
     if !test_run.completed {
@@ -176,7 +176,7 @@ pub(crate) fn force_headroom_results(
 }
 
 fn unavailable_force_headroom_results(
-    limits: ComfortableForceLimits,
+    limits: DesignForceTargets,
     physics_configuration: &'static str,
     reason: String,
 ) -> Vec<ForceHeadroomResult> {
@@ -1271,7 +1271,7 @@ mod tests {
     fn force_headroom_uses_the_existing_quarter_g_margin_at_inclusive_boundaries() {
         let mut run = test_run();
         run.completed = true;
-        let limits = hybrid_model().comfortable_force_limits;
+        let limits = hybrid_model().design_force_targets;
         run.statistics.max_positive_vertical_g = limits.maximum_vertical_g - 0.25;
         run.statistics.max_negative_vertical_g = limits.minimum_vertical_g + 0.25;
         run.statistics.max_lateral_g = limits.maximum_lateral_g - 0.25;
@@ -1300,7 +1300,7 @@ mod tests {
         run.completed = false;
         run.furthest_distance = 13.5;
         run.notes.clear();
-        let limits = hybrid_model().comfortable_force_limits;
+        let limits = hybrid_model().design_force_targets;
 
         let results = super::force_headroom_results(&run, limits, "default physics");
 

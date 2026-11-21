@@ -378,10 +378,7 @@ mod wire_tests {
             .map(|model| {
                 (
                     model.name,
-                    crate::construction::force_limits_wire(
-                        model.comfortable_force_limits,
-                        model.name,
-                    ),
+                    crate::construction::force_limits_wire(model.design_force_targets, model.name),
                 )
             })
             .collect();

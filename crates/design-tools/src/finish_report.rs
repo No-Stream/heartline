@@ -32,7 +32,7 @@ pub(crate) fn check_completion(
     let circuit = Circuit::new([placed_pieces, &completion.geometry].concat())
         .map_err(|error| format!("finish option does not close the circuit: {error:?}"))?;
     let mut failures = rated_speed_margin_failures(&rated_speed_margins(&circuit, model)?);
-    let limits = model.comfortable_force_limits;
+    let limits = model.design_force_targets;
     failures.extend(
         [
             force_headroom_results(

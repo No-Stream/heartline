@@ -1,6 +1,6 @@
 use super::GForces;
 use crate::state_hash::StateHasher;
-use crate::track::ComfortableForceLimits;
+use crate::track::DesignForceTargets;
 
 const CUTOFF_HZ: f64 = 5.0;
 const BRIEF_ALLOWANCE_G: f64 = 0.5;
@@ -131,14 +131,14 @@ pub struct EvaluatedForce {
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ForceEvaluator {
     filter: ForceFilter,
-    limits: ComfortableForceLimits,
+    limits: DesignForceTargets,
     time_step: f64,
     durations: [f64; 3],
     excursion_side: [i8; 3],
 }
 
 impl ForceEvaluator {
-    pub fn new(limits: ComfortableForceLimits, time_step: f64) -> Self {
+    pub fn new(limits: DesignForceTargets, time_step: f64) -> Self {
         assert!(
             limits.minimum_vertical_g.is_finite()
                 && limits.maximum_vertical_g.is_finite()
@@ -262,7 +262,7 @@ mod tests {
     #[test]
     fn brief_four_and_a_half_g_peak_is_allowed_but_sustained_is_not() {
         let mut evaluator =
-            ForceEvaluator::new(wooden_twister_model().comfortable_force_limits, TIME_STEP);
+            ForceEvaluator::new(wooden_twister_model().design_force_targets, TIME_STEP);
         for _ in 0..200 {
             assert!(evaluator.update(force(1.0)).within_limits);
         }
@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn caps_and_duration_apply_on_each_axis() {
-        let limits = wooden_twister_model().comfortable_force_limits;
+        let limits = wooden_twister_model().design_force_targets;
         for axis in 0..3 {
             let reading = match axis {
                 0 => force(4.4),

@@ -234,7 +234,7 @@ impl PreviewCache {
         treat_as_open: bool,
     ) -> Option<PreviewOutput> {
         let configuration = &model.train;
-        let limits = model.comfortable_force_limits;
+        let limits = model.design_force_targets;
         let model_key = model.name;
         let _station = pieces
             .iter()

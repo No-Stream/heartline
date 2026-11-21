@@ -1,10 +1,10 @@
-use crate::track::ComfortableForceLimits;
+use crate::track::DesignForceTargets;
 pub use crate::track::{ForceRating as ForceBand, ForceRatingAxis as ForceAxis};
 
 pub fn force_band(
     axis: ForceAxis,
     value_g: f64,
-    limits: ComfortableForceLimits,
+    limits: DesignForceTargets,
     model_key: &str,
 ) -> ForceBand {
     limits.classify_force(axis, value_g, model_key)
@@ -13,7 +13,7 @@ pub fn force_band(
 pub(super) fn score_band_detail(
     axis: ForceAxis,
     band: ForceBand,
-    limits: ComfortableForceLimits,
+    limits: DesignForceTargets,
     model_key: &str,
 ) -> Option<(usize, f64)> {
     let boundary = |rating| {
@@ -41,11 +41,11 @@ pub(super) fn score_band_detail(
 #[cfg(test)]
 mod tests {
     use super::{ForceAxis, ForceBand, force_band};
-    use crate::track::ComfortableForceLimits;
+    use crate::track::DesignForceTargets;
 
     #[test]
     fn force_bands_match_overlay_boundaries_and_model_limits() {
-        let limits = ComfortableForceLimits {
+        let limits = DesignForceTargets {
             minimum_vertical_g: -1.5,
             maximum_vertical_g: 5.0,
             maximum_lateral_g: 1.5,
@@ -111,7 +111,7 @@ mod tests {
             force_band(ForceAxis::Vertical, 2.5, limits, "Timber Tumbler"),
             ForceBand::Good
         );
-        let wooden = ComfortableForceLimits {
+        let wooden = DesignForceTargets {
             maximum_vertical_g: 4.0,
             ..limits
         };
@@ -123,7 +123,7 @@ mod tests {
             force_band(ForceAxis::Vertical, 2.5, wooden, "Briar Blitz"),
             ForceBand::Great
         );
-        let stricter = ComfortableForceLimits {
+        let stricter = DesignForceTargets {
             minimum_vertical_g: -1.0,
             ..limits
         };

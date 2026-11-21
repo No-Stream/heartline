@@ -465,7 +465,7 @@ fn scan_train_element_from_start(
         start_speed,
     );
     let mut evaluators =
-        vec![ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP); usize::from(cars)];
+        vec![ForceEvaluator::new(model.design_force_targets, TIME_STEP); usize::from(cars)];
     // An excursion that began on an earlier piece belongs to that piece, as in the isolated rating.
     let mut excursion_began_before_element = vec![[false; 3]; usize::from(cars)];
     let mut cars_seen = vec![false; usize::from(cars)];
@@ -929,7 +929,7 @@ fn wooden_strong_floater_is_rated_and_available_on_briar_blitz() {
     let rating = rate_piece(&model, cars, piece, rated.maximum_entry, rating_physics())
         .expect("rating must complete");
     assert_eq!(
-        model.comfortable_force_limits.classify_force(
+        model.design_force_targets.classify_force(
             ForceRatingAxis::Airtime,
             rating.minimum_filtered_vertical,
             model.name,
@@ -968,7 +968,7 @@ fn every_ejector_hill_reaches_great_airtime_for_each_allowed_default_train() {
                 let rating = rate_piece(model, model.train.cars, piece, speed, rating_physics())
                     .expect("rating must complete");
                 rating.passed
-                    && model.comfortable_force_limits.classify_force(
+                    && model.design_force_targets.classify_force(
                         ForceRatingAxis::Airtime,
                         rating.minimum_filtered_vertical,
                         model.name,
@@ -1000,7 +1000,7 @@ fn every_floater_hill_gives_default_trains_at_most_good_airtime_at_its_maximum()
             let maximum = rated_window(&model, piece).maximum_entry;
             let rating = rate_piece(&model, model.train.cars, piece, maximum, rating_physics())
                 .expect("rating must complete");
-            let airtime = model.comfortable_force_limits.classify_force(
+            let airtime = model.design_force_targets.classify_force(
                 ForceRatingAxis::Airtime,
                 rating.minimum_filtered_vertical,
                 model.name,
@@ -1305,7 +1305,7 @@ fn banked_straight_compositions_pass_with_continuous_force_history() {
                 &tested_ranges,
                 &model.train,
                 rating_physics(),
-                model.comfortable_force_limits,
+                model.design_force_targets,
                 tested_ranges[0].start - 10.0,
                 rated.minimum_entry,
             );

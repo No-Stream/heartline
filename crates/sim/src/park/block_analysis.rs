@@ -158,7 +158,7 @@ impl Park {
                 .expect("open coaster has a block layout")
                 .clone(),
             model,
-            model.comfortable_force_limits,
+            model.design_force_targets,
         );
         self.coaster_operation = Some(operation);
         self.coaster_facility = Some(facility);
@@ -224,7 +224,7 @@ impl Park {
             self.coaster_operation = Some(BlockOperation::new_with_limits(
                 layout.clone(),
                 model,
-                model.comfortable_force_limits,
+                model.design_force_targets,
             ));
         }
         self.block_layout = Some(layout);

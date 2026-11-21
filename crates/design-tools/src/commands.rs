@@ -2043,10 +2043,10 @@ fn render_shaped_choices(session: &mut BuilderSession) -> Result<CommandReply, S
         (
             model.key,
             (
-                model.comfortable_force_limits.minimum_vertical_g,
-                model.comfortable_force_limits.maximum_vertical_g,
+                model.design_force_targets.minimum_vertical_g,
+                model.design_force_targets.maximum_vertical_g,
             ),
-            model.comfortable_force_limits.maximum_lateral_g,
+            model.design_force_targets.maximum_lateral_g,
             model.shaped_element_rules(),
         )
     };
@@ -2836,7 +2836,7 @@ fn shaped_element_report_rows(
                             format!("{delivered_g:.2} g"),
                             format!(
                                 "{:.2} g vertical",
-                                delivered_g - model.comfortable_force_limits.minimum_vertical_g
+                                delivered_g - model.design_force_targets.minimum_vertical_g
                             ),
                             format!("height {height_m:.1} m, span {span_m:.1} m"),
                         )
@@ -2871,8 +2871,8 @@ fn shaped_element_report_rows(
                             format!("vertical {vertical_g:.2} g, lateral {lateral_g:.2} g"),
                             format!(
                                 "{:.2} g vertical, {:.2} g lateral",
-                                model.comfortable_force_limits.maximum_vertical_g - vertical_g,
-                                model.comfortable_force_limits.maximum_lateral_g - lateral_g.abs()
+                                model.design_force_targets.maximum_vertical_g - vertical_g,
+                                model.design_force_targets.maximum_lateral_g - lateral_g.abs()
                             ),
                             format!("radius {radius_m:.1} m, bank {bank_degrees:.1} degrees"),
                         )
@@ -3418,7 +3418,7 @@ pub(crate) fn compare_estimates(
                 .map(force_peaks),
             measured_worst,
             placement_peak_contexts: peak_context_resolver.for_piece(piece_index, measured_worst),
-            limits: model.comfortable_force_limits,
+            limits: model.design_force_targets,
         });
     }
     Ok(evaluate_agreement(&inputs))
@@ -3833,12 +3833,12 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<CliResponse, String> {
         let force_headroom = [
             force_headroom_results(
                 &default_test_run,
-                model.comfortable_force_limits,
+                model.design_force_targets,
                 "default physics",
             ),
             force_headroom_results(
                 &test_run,
-                model.comfortable_force_limits,
+                model.design_force_targets,
                 "construction-test physics",
             ),
         ]
@@ -4122,7 +4122,7 @@ fn evaluate_expectations(
     }
     if let Some(expected) = expect.within_comfortable_force_limits {
         let stats = test_run.statistics;
-        let limits = model.comfortable_force_limits;
+        let limits = model.design_force_targets;
         let within_limits = stats.max_positive_vertical_g <= limits.maximum_vertical_g
             && stats.max_negative_vertical_g >= limits.minimum_vertical_g
             && stats.max_lateral_g <= limits.maximum_lateral_g

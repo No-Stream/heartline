@@ -4,7 +4,7 @@ use super::scoring::{ForceAxis, ForceBand, ForceBandDurations, ScoreBreakdown, f
 use super::{CarReading, Circuit, ForceEvaluator};
 use crate::state_hash::StateHasher;
 use crate::track::proximity::{ProximityEvent, TrainPosition, detect_dueling};
-use crate::track::{CoasterModel, ComfortableForceLimits, Piece, rated_speeds};
+use crate::track::{CoasterModel, DesignForceTargets, Piece, rated_speeds};
 use std::collections::BTreeMap;
 
 // Report the requested ejector and floater bands in rider-frame vertical g.
@@ -157,7 +157,7 @@ struct RatingInput {
     visited_ranges: Vec<(f64, f64)>,
     circuit_length: f64,
     completed: bool,
-    force_limits: ComfortableForceLimits,
+    force_limits: DesignForceTargets,
     force_bands: ForceBandDurations,
     statistics: RideStatistics,
     #[serde(default)]
@@ -324,7 +324,7 @@ fn write_ride_statistics(hash: &mut StateHasher, stats: RideStatistics) {
 fn record_force_bands(
     durations: &mut ForceBandDurations,
     reading: CarReading,
-    limits: ComfortableForceLimits,
+    limits: DesignForceTargets,
     model_key: &str,
     seconds: f64,
     location: super::features::Location,
@@ -1450,7 +1450,7 @@ fn force_advice(envelopes: &[&EnvelopeExceedance]) -> Vec<String> {
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct TestRunRecorder {
     circuit_length: f64,
-    force_limits: ComfortableForceLimits,
+    force_limits: DesignForceTargets,
     force_evaluator: ForceEvaluator,
     time_step: f64,
     violation_seconds: [f64; 3],
@@ -1595,9 +1595,9 @@ impl TestRunRecorder {
         assert!(circuit_length.is_finite() && circuit_length > 0.0);
         Self {
             circuit_length,
-            force_limits: crate::track::hybrid_model().comfortable_force_limits,
+            force_limits: crate::track::hybrid_model().design_force_targets,
             force_evaluator: ForceEvaluator::new(
-                crate::track::hybrid_model().comfortable_force_limits,
+                crate::track::hybrid_model().design_force_targets,
                 super::TIME_STEP,
             ),
             time_step: super::TIME_STEP,
@@ -1642,7 +1642,7 @@ impl TestRunRecorder {
         self.time_step = time_step;
     }
 
-    pub fn set_force_limits(&mut self, limits: ComfortableForceLimits) {
+    pub fn set_force_limits(&mut self, limits: DesignForceTargets) {
         assert!(
             !self.started,
             "cannot change force limits after recording starts"
@@ -1661,7 +1661,7 @@ impl TestRunRecorder {
 
     pub fn for_circuit_with_model(circuit: &Circuit, model: &CoasterModel) -> Self {
         let mut recorder = Self::new(circuit.length());
-        recorder.set_force_limits(model.comfortable_force_limits);
+        recorder.set_force_limits(model.design_force_targets);
         recorder.piece_starts.clone_from(&circuit.starts);
         recorder.piece_summaries = circuit
             .pieces
@@ -2891,7 +2891,7 @@ mod tests {
                 &model,
             );
         let mut evaluators: Vec<_> = (0..model.train.cars)
-            .map(|_| ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP))
+            .map(|_| ForceEvaluator::new(model.design_force_targets, TIME_STEP))
             .collect();
         let mut sampler = PreviewForcePeakRecorder::new(&circuit, model.train.cars);
         let mut completed = false;
@@ -3165,7 +3165,7 @@ mod tests {
             visited_ranges: Vec::new(),
             circuit_length: 10.0,
             completed: true,
-            force_limits: crate::track::ComfortableForceLimits {
+            force_limits: crate::track::DesignForceTargets {
                 minimum_vertical_g: -1.0,
                 maximum_vertical_g: 5.0,
                 maximum_lateral_g: 1.0,
@@ -3300,7 +3300,7 @@ mod tests {
         }];
         let features =
             super::super::features::ride_features(samples, &pieces, &[], circuit_length, true);
-        let limits = hybrid_model().comfortable_force_limits;
+        let limits = hybrid_model().design_force_targets;
         let mut bands = ForceBandDurations::default();
         for (index, sample) in samples.iter().enumerate() {
             if !super::super::features::is_active_sample(sample, &pieces) {
@@ -3365,7 +3365,7 @@ mod tests {
 
     #[test]
     fn excessive_force_details_record_peak_and_axis_durations() {
-        let limits = hybrid_model().comfortable_force_limits;
+        let limits = hybrid_model().design_force_targets;
         let mut bands = ForceBandDurations::default();
         let location = super::super::features::Location {
             piece_index: 0,
@@ -3834,13 +3834,13 @@ mod tests {
     fn recorder_rejects_force_limit_change_after_first_reading() {
         let mut recorder = TestRunRecorder::new(10.0);
         record(&mut recorder, reading(0.2, 0.0, 1.0, 0.0, 0.0));
-        recorder.set_force_limits(crate::track::wooden_twister_model().comfortable_force_limits);
+        recorder.set_force_limits(crate::track::wooden_twister_model().design_force_targets);
     }
 
     #[test]
     fn recorder_allows_brief_force_but_marks_sustained_force() {
         let mut recorder = TestRunRecorder::new(100.0);
-        recorder.set_force_limits(crate::track::wooden_twister_model().comfortable_force_limits);
+        recorder.set_force_limits(crate::track::wooden_twister_model().design_force_targets);
         for step in 0..200 {
             let vertical = if (40..60).contains(&step) || step >= 120 {
                 4.5
@@ -3874,7 +3874,7 @@ mod tests {
         let model = crate::track::hybrid_model();
         let circuit = super::super::demo_circuit();
         let mut original = TestRunRecorder::for_circuit_with_model(&circuit, &model);
-        original.set_force_limits(crate::track::wooden_twister_model().comfortable_force_limits);
+        original.set_force_limits(crate::track::wooden_twister_model().design_force_targets);
         for step in 0..80 {
             record(
                 &mut original,

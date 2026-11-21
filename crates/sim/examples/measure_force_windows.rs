@@ -47,7 +47,7 @@ fn rated_hill_airtime_within_feel_ceiling(piece: &Piece, model: &CoasterModel, s
 
     assert!(model.allows_piece(piece));
     let rating = rate_piece(model, model.train.cars, piece, speed, unpowered()).unwrap();
-    let airtime = model.comfortable_force_limits.classify_force(
+    let airtime = model.design_force_targets.classify_force(
         ForceRatingAxis::Airtime,
         rating.minimum_filtered_vertical,
         model.name,
@@ -287,7 +287,7 @@ fn force_side(force: f64, limits: (f64, f64)) -> i8 {
 fn connected_peak_forces(piece: &Piece, model: &CoasterModel, speed: f64) -> [PeakForce; 3] {
     let (circuit, element_range) =
         connected_measurement_track(model, model.train.cars, piece, speed);
-    let limits = model.comfortable_force_limits;
+    let limits = model.design_force_targets;
     let axis_limits = [
         (limits.minimum_vertical_g, limits.maximum_vertical_g),
         (-limits.maximum_lateral_g, limits.maximum_lateral_g),
@@ -430,7 +430,7 @@ fn diagnose(
     let old = piece.design_speeds.unwrap();
     println!(
         "limits: {:?}; catalog window {:.2}–{:.2} m/s",
-        model.comfortable_force_limits, old.minimum_entry, old.maximum_entry
+        model.design_force_targets, old.minimum_entry, old.maximum_entry
     );
     let mut speeds = vec![
         ("catalog minimum", old.minimum_entry),
@@ -720,7 +720,7 @@ fn scan(template: &'static Piece, model: &CoasterModel) -> ScannedWindow {
     }) {
         let cars = model.train.cars;
         let rating = rate_piece(model, cars, template, maximum_entry, unpowered()).unwrap();
-        let class = model.comfortable_force_limits.classify_force(
+        let class = model.design_force_targets.classify_force(
             ForceRatingAxis::Airtime,
             rating.minimum_filtered_vertical,
             model.name,
@@ -1002,7 +1002,7 @@ mod tests {
             .find(|piece| piece.id == PieceId::Corkscrew)
             .expect("catalog contains the corkscrew");
         let model = hybrid_model();
-        let limits = model.comfortable_force_limits;
+        let limits = model.design_force_targets;
         let rating = rate_piece(&model, 8, piece, 19.83, unpowered()).unwrap();
 
         assert!(rating.passed, "{rating:?}");
@@ -1137,7 +1137,7 @@ mod tests {
             .expect("catalog contains level BankLeft");
         let mut model = hyper_model();
         model.key = "no_passing_window_test_model";
-        model.comfortable_force_limits.maximum_vertical_g = 0.01;
+        model.design_force_targets.maximum_vertical_g = 0.01;
         let scan_result = scan(template, &model);
         assert_eq!(scan_result.minimum_entry, None);
         assert_eq!(scan_result.maximum_entry, None);
@@ -1188,7 +1188,7 @@ mod tests {
                 let airtime = |speed| {
                     let rating =
                         rate_piece(model, model.train.cars, piece, speed, unpowered()).unwrap();
-                    model.comfortable_force_limits.classify_force(
+                    model.design_force_targets.classify_force(
                         ForceRatingAxis::Airtime,
                         rating.minimum_filtered_vertical,
                         model.name,
@@ -1234,7 +1234,7 @@ mod tests {
 
         let classify_at = |speed| {
             let rating = rate_piece(&model, model.train.cars, piece, speed, unpowered()).unwrap();
-            model.comfortable_force_limits.classify_force(
+            model.design_force_targets.classify_force(
                 ForceRatingAxis::Airtime,
                 rating.minimum_filtered_vertical,
                 model.name,
@@ -1257,9 +1257,7 @@ mod tests {
         let baseline = scan_models(piece, std::slice::from_ref(&model));
         let mut restrictive_model = model.clone();
         restrictive_model.key = "restrictive_test_model";
-        restrictive_model
-            .comfortable_force_limits
-            .maximum_vertical_g = 3.2;
+        restrictive_model.design_force_targets.maximum_vertical_g = 3.2;
         let expanded = scan_models(piece, &[model, restrictive_model]);
 
         let baseline = &baseline[0];

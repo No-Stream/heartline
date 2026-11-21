@@ -1,4 +1,4 @@
-use theme_park_sim::track::{ComfortableForceLimits, ForceRatingAxis};
+use theme_park_sim::track::{DesignForceTargets, ForceRatingAxis};
 use theme_park_sim_wasm::reports::TestingSample;
 
 const ENTRY_SPEED_TOLERANCE_METRES_PER_SECOND: f64 = 0.5;
@@ -107,7 +107,7 @@ pub struct AgreementInput {
     pub measured_front: Option<ForcePeaks>,
     pub measured_worst: Option<ForcePeaks>,
     pub placement_peak_contexts: PlacementPeakContexts,
-    pub limits: ComfortableForceLimits,
+    pub limits: DesignForceTargets,
 }
 
 #[derive(Clone, Debug)]
@@ -481,7 +481,7 @@ mod tests {
         AgreementCheck, AgreementInput, CheckResult, ForcePeaks, PlacementFailureClassification,
         PlacementPeakContext, PlacementPeakContexts, evaluate_agreement,
     };
-    use theme_park_sim::track::ComfortableForceLimits;
+    use theme_park_sim::track::DesignForceTargets;
 
     fn force_peaks(minimum_vertical_g: f64, maximum_vertical_g: f64) -> ForcePeaks {
         ForcePeaks {
@@ -511,7 +511,7 @@ mod tests {
             measured_front: Some(measured_front),
             measured_worst: Some(measured_worst),
             placement_peak_contexts: PlacementPeakContexts::default(),
-            limits: ComfortableForceLimits {
+            limits: DesignForceTargets {
                 minimum_vertical_g: -1.5,
                 maximum_vertical_g: 5.0,
                 maximum_lateral_g: 1.5,

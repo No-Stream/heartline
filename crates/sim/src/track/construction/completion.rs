@@ -861,7 +861,7 @@ impl CompletionSearch {
         let car_spacing = model.train.length_metres / f64::from(model.train.cars);
         let train_mass_kg =
             f64::from(model.train.cars) * construction_preview_physics().car_mass_kg;
-        let limits = model.comfortable_force_limits;
+        let limits = model.design_force_targets;
         let mut start_distance: f64 = pieces[..self.original_length]
             .iter()
             .map(Piece::length)
@@ -1156,7 +1156,7 @@ fn worst_car_peaks(preview: &TrackPreview, piece_index: usize) -> ForcePeakValue
 /// Remaining g inside `limit - FORCE_HEADROOM_G` on the tightest axis, and that axis.
 fn force_headroom(
     peaks: ForcePeakValues,
-    limits: crate::track::ComfortableForceLimits,
+    limits: crate::track::DesignForceTargets,
 ) -> (f64, &'static str) {
     [
         (

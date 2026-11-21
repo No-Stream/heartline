@@ -68,7 +68,7 @@ pub struct LaunchParameters {
 /// Provisional game design targets for instantaneous rider forces, in multiples of gravity.
 /// Real ride safety and comfort also depend on duration, direction and restraint design.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ComfortableForceLimits {
+pub struct DesignForceTargets {
     pub minimum_vertical_g: f64,
     pub maximum_vertical_g: f64,
     pub maximum_lateral_g: f64,
@@ -123,7 +123,7 @@ pub fn great_positive_vertical_g(model_key: &str) -> f64 {
     }
 }
 
-impl ComfortableForceLimits {
+impl DesignForceTargets {
     /// How riders feel each force, from the gentlest band up; the force overlay shows these same bands. Anything past
     /// the model's comfortable limit is too much, and past 1.3 times the limit it is dangerous.
     pub fn rating_bands(self, axis: ForceRatingAxis, model_key: &str) -> Vec<ForceRatingBand> {
@@ -228,7 +228,7 @@ pub struct CoasterModel {
     pub allowed_pieces: Vec<PieceId>,
     pub sloped_turn_slopes: Vec<Slope>,
     pub minimum_radius_metres: f64,
-    pub comfortable_force_limits: ComfortableForceLimits,
+    pub design_force_targets: DesignForceTargets,
     pub minimum_height_cm: u16,
     pub allowed_inversions: Vec<Inversion>,
     pub lift_rules: Option<LiftRules>,
@@ -254,10 +254,10 @@ impl CoasterModel {
             hash.write_u8(*slope as u8);
         }
         hash.write_f64(self.minimum_radius_metres);
-        hash.write_f64(self.comfortable_force_limits.minimum_vertical_g);
-        hash.write_f64(self.comfortable_force_limits.maximum_vertical_g);
-        hash.write_f64(self.comfortable_force_limits.maximum_lateral_g);
-        hash.write_f64(self.comfortable_force_limits.maximum_longitudinal_g);
+        hash.write_f64(self.design_force_targets.minimum_vertical_g);
+        hash.write_f64(self.design_force_targets.maximum_vertical_g);
+        hash.write_f64(self.design_force_targets.maximum_lateral_g);
+        hash.write_f64(self.design_force_targets.maximum_longitudinal_g);
         hash.write_u16(self.minimum_height_cm);
         hash.write_len(self.allowed_inversions.len());
         for inversion in &self.allowed_inversions {
@@ -375,7 +375,7 @@ struct SavedCoasterModel {
     allowed_pieces: Vec<PieceId>,
     sloped_turn_slopes: Vec<Slope>,
     minimum_radius_metres: f64,
-    comfortable_force_limits: ComfortableForceLimits,
+    design_force_targets: DesignForceTargets,
     minimum_height_cm: u16,
     allowed_inversions: Vec<Inversion>,
     lift_rules: Option<LiftRules>,
@@ -407,7 +407,7 @@ impl<'de> serde::Deserialize<'de> for CoasterModel {
             allowed_pieces: saved.allowed_pieces,
             sloped_turn_slopes: saved.sloped_turn_slopes,
             minimum_radius_metres: saved.minimum_radius_metres,
-            comfortable_force_limits: saved.comfortable_force_limits,
+            design_force_targets: saved.design_force_targets,
             minimum_height_cm: saved.minimum_height_cm,
             allowed_inversions: saved.allowed_inversions,
             lift_rules: saved.lift_rules,
@@ -555,7 +555,7 @@ pub fn wooden_twister_model() -> CoasterModel {
         },
         sloped_turn_slopes: vec![Slope::UpGentle, Slope::DownGentle],
         minimum_radius_metres: 8.0,
-        comfortable_force_limits: ComfortableForceLimits {
+        design_force_targets: DesignForceTargets {
             minimum_vertical_g: -1.0,
             maximum_vertical_g: 4.0,
             maximum_lateral_g: 1.5,
@@ -773,7 +773,7 @@ pub fn hybrid_model() -> CoasterModel {
         },
         sloped_turn_slopes: vec![Slope::UpGentle, Slope::DownGentle],
         minimum_radius_metres: 5.0,
-        comfortable_force_limits: ComfortableForceLimits {
+        design_force_targets: DesignForceTargets {
             minimum_vertical_g: -1.5,
             maximum_vertical_g: 4.5,
             maximum_lateral_g: 1.5,
@@ -996,7 +996,7 @@ pub fn multi_launch_model() -> CoasterModel {
         },
         sloped_turn_slopes: vec![Slope::UpGentle, Slope::DownGentle],
         minimum_radius_metres: 5.0,
-        comfortable_force_limits: ComfortableForceLimits {
+        design_force_targets: DesignForceTargets {
             minimum_vertical_g: -1.5,
             maximum_vertical_g: 5.0,
             maximum_lateral_g: 1.5,
@@ -1127,7 +1127,7 @@ pub fn family_coaster_model() -> CoasterModel {
         },
         sloped_turn_slopes: vec![Slope::UpGentle, Slope::DownGentle],
         minimum_radius_metres: 8.0,
-        comfortable_force_limits: ComfortableForceLimits {
+        design_force_targets: DesignForceTargets {
             minimum_vertical_g: -0.6,
             maximum_vertical_g: 3.0,
             maximum_lateral_g: 1.0,
@@ -1291,7 +1291,7 @@ pub fn hyper_model() -> CoasterModel {
         },
         sloped_turn_slopes: vec![Slope::UpGentle, Slope::DownGentle],
         minimum_radius_metres: 8.0,
-        comfortable_force_limits: ComfortableForceLimits {
+        design_force_targets: DesignForceTargets {
             minimum_vertical_g: -1.5,
             maximum_vertical_g: 4.0,
             maximum_lateral_g: 1.2,
@@ -1342,7 +1342,7 @@ mod tests {
         allowed_pieces: Vec<PieceId>,
         sloped_turn_slopes: Vec<Slope>,
         minimum_radius_metres: f64,
-        comfortable_force_limits: ComfortableForceLimits,
+        design_force_targets: DesignForceTargets,
         minimum_height_cm: u16,
         allowed_inversions: Vec<Inversion>,
         lift_rules: Option<LiftRules>,
@@ -1363,7 +1363,7 @@ mod tests {
                 allowed_pieces: model.allowed_pieces.clone(),
                 sloped_turn_slopes: model.sloped_turn_slopes.clone(),
                 minimum_radius_metres: model.minimum_radius_metres,
-                comfortable_force_limits: model.comfortable_force_limits,
+                design_force_targets: model.design_force_targets,
                 minimum_height_cm: model.minimum_height_cm,
                 allowed_inversions: model.allowed_inversions.clone(),
                 lift_rules: model.lift_rules,

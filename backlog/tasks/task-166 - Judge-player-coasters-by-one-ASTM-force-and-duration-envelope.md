@@ -1,9 +1,10 @@
 ---
 id: TASK-166
 title: Judge player coasters by one ASTM force-and-duration envelope
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-21 16:05'
+updated_date: '2026-11-21 21:20'
 labels: []
 dependencies: []
 ordinal: 160000

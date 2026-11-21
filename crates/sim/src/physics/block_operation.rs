@@ -3,7 +3,7 @@ use crate::state_hash::StateHasher;
 use crate::track::blocks::BlockLayout;
 use crate::track::proximity::TrainPosition;
 use crate::track::{CoasterModel, TrainConfiguration, coaster_models};
-use crate::track::{ComfortableForceLimits, PieceKind};
+use crate::track::{DesignForceTargets, PieceKind};
 
 #[cfg(test)]
 mod powered_hold_tests;
@@ -25,7 +25,7 @@ pub struct BlockOperation {
     trains: Vec<OperatingTrain>,
     next_id: u64,
     record_reports: bool,
-    force_limits: Option<ComfortableForceLimits>,
+    force_limits: Option<DesignForceTargets>,
     model_key: Option<String>,
     interlock_triggered: bool,
     #[cfg(test)]
@@ -76,7 +76,7 @@ impl BlockOperation {
     pub fn new_with_limits(
         layout: BlockLayout,
         model: &CoasterModel,
-        limits: ComfortableForceLimits,
+        limits: DesignForceTargets,
     ) -> Self {
         Self::with_reports(layout, Some(model), true, Some(limits))
     }
@@ -90,7 +90,7 @@ impl BlockOperation {
         layout: BlockLayout,
         model: Option<&CoasterModel>,
         record_reports: bool,
-        force_limits: Option<ComfortableForceLimits>,
+        force_limits: Option<DesignForceTargets>,
     ) -> Self {
         assert_eq!(
             record_reports,
@@ -475,7 +475,7 @@ mod state_hash_tests {
         let model = hybrid_model();
         let config = PhysicsConfig::default();
         let layout = BlockLayout::unverified_baseline(&circuit, &model.train, config).unwrap();
-        let limits = model.comfortable_force_limits;
+        let limits = model.design_force_targets;
         let mut operation = BlockOperation::new_with_limits(layout, &model, limits);
         operation.dispatch();
         let expected = CoasterRun::new_with_limits(&circuit, &model.train, &model, config, limits);

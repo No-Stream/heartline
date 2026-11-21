@@ -406,7 +406,7 @@ fn speed_matched_turns_keep_the_heart_on_a_planar_path_with_a_steady_center() {
 fn airtime_rating_matches_the_force_overlay_bands() {
     use super::models::{ForceRating, ForceRatingAxis, family_coaster_model};
 
-    let steel_limits = hybrid_model().comfortable_force_limits;
+    let steel_limits = hybrid_model().design_force_targets;
     let airtime = |vertical_g| {
         steel_limits.classify_force(ForceRatingAxis::Airtime, vertical_g, "Timber Tumbler")
     };
@@ -425,7 +425,7 @@ fn airtime_rating_matches_the_force_overlay_bands() {
         ForceRating::Dangerous
     );
 
-    let family_limits = family_coaster_model().comfortable_force_limits;
+    let family_limits = family_coaster_model().design_force_targets;
     let family_airtime = |vertical_g| {
         family_limits.classify_force(ForceRatingAxis::Airtime, vertical_g, "Daisy Dash")
     };
@@ -2002,7 +2002,7 @@ fn coaster_models_use_peak_rider_force_limits() {
         expected_limits
     {
         let model = models.iter().find(|model| model.name == name).unwrap();
-        let limits = model.comfortable_force_limits;
+        let limits = model.design_force_targets;
         assert_eq!(limits.minimum_vertical_g, minimum_vertical, "{name}");
         assert_eq!(limits.maximum_vertical_g, maximum_vertical, "{name}");
         assert_eq!(limits.maximum_lateral_g, maximum_lateral, "{name}");

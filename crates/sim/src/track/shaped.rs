@@ -956,8 +956,8 @@ impl CoasterModel {
             default_strong_floater_g: -0.85,
             steel_ejector_g: -1.2,
             wooden_ejector_g: -0.8,
-            hill_pull_g: (self.comfortable_force_limits.maximum_vertical_g - 0.5).min(2.0),
-            turn_vertical_g: (self.comfortable_force_limits.maximum_vertical_g - 1.1)
+            hill_pull_g: (self.design_force_targets.maximum_vertical_g - 0.5).min(2.0),
+            turn_vertical_g: (self.design_force_targets.maximum_vertical_g - 1.1)
                 .min(1.0 / 75.0_f64.to_radians().cos()),
             maximum_bank_degrees: 75.0,
             minimum_turn_radius_m: self.minimum_radius_metres,
@@ -1200,7 +1200,7 @@ fn solve_hill_analytically(
     }
     let design_speed_mps = round_element_value(context.entry_speed_mps);
     let target_floor =
-        context.model.comfortable_force_limits.minimum_vertical_g + REQUIRED_FORCE_HEADROOM_G;
+        context.model.design_force_targets.minimum_vertical_g + REQUIRED_FORCE_HEADROOM_G;
     let mut target_g = requested_target_g.min(-0.05);
     if target_g < target_floor {
         let cap_steps = ((target_floor - target_g) / 0.05).ceil();
@@ -1578,7 +1578,7 @@ fn solve_turn(
             });
         }
     }
-    let model_limits = context.model.comfortable_force_limits;
+    let model_limits = context.model.design_force_targets;
     let target_vertical_g = rules.turn_vertical_g;
     if target_vertical_g < model_limits.minimum_vertical_g + 0.5
         || target_vertical_g > model_limits.maximum_vertical_g - 0.5
@@ -2078,7 +2078,7 @@ fn calibrate_piece(
 }
 
 fn force_headroom_for_candidate(model: &CoasterModel, cars: &[CandidateCarForces]) -> f64 {
-    let limits = model.comfortable_force_limits;
+    let limits = model.design_force_targets;
     cars.iter()
         .map(|car| {
             [
@@ -2319,7 +2319,7 @@ fn intent_matches_spec(
                 && *target_g <= 0.0
                 && delivered_g.is_finite()
                 && (*delivered_g - *target_g).abs() <= MAXIMUM_HILL_INTENT_ERROR_G
-                && (*delivered_g - model.comfortable_force_limits.minimum_vertical_g)
+                && (*delivered_g - model.design_force_targets.minimum_vertical_g)
                     >= REQUIRED_FORCE_HEADROOM_G
                 && height_m.is_finite()
                 && *height_m > 0.0
@@ -2354,7 +2354,7 @@ fn intent_matches_spec(
                 && *bank_degrees <= model.shaped_element_rules().maximum_bank_degrees
                 && vertical_g.is_finite()
                 && *vertical_g
-                    <= model.comfortable_force_limits.maximum_vertical_g - REQUIRED_FORCE_HEADROOM_G
+                    <= model.design_force_targets.maximum_vertical_g - REQUIRED_FORCE_HEADROOM_G
                 && lateral_g.is_finite()
                 && lateral_g.abs() <= MAXIMUM_FULLY_BANKED_LATERAL_G
                 && geometry.knots.iter().all(|knot| {
