@@ -483,7 +483,7 @@ function expectRideTargets(ride: RideFile, report: TestingReport, nativeCheck: N
   // a time window, ignoring brief spikes). The browser report has no sustained statistic, but its samples
   // must match the native samples within 1e-6, which reportCheckResults asserts.
   if (targets?.sustainedMaxVerticalG) {
-    const sustainedMaximum = nativeSustainedVerticalG(nativeCheck, "maximum vertical g");
+    const sustainedMaximum = nativeSustainedVerticalG(nativeCheck, "sustained maximum vertical g");
     expect(sustainedMaximum).toBeGreaterThanOrEqual(targets.sustainedMaxVerticalG[0]);
     expect(sustainedMaximum).toBeLessThanOrEqual(targets.sustainedMaxVerticalG[1]);
   }
