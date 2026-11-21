@@ -356,7 +356,14 @@ impl Construction {
         world: &World,
         obstacles: &[SupportObstacle],
     ) -> Result<(), ConstructionError> {
-        if self.state_hash() != completion.construction_hash {
+        if self.state_hash() != completion.construction_hash
+            || completion.pieces.len() != completion.geometry.len()
+            || completion
+                .pieces
+                .iter()
+                .zip(&completion.geometry)
+                .any(|(id, piece)| *id != piece.id)
+        {
             return Err(ConstructionError::InvalidCircuit);
         }
         let mut updated = self.copy_for_completion();
