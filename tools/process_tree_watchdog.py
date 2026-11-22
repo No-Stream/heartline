@@ -5,6 +5,8 @@ cgroup can be created. Memory is the sum of proportional set sizes (shared pages
 process in the command's session, sampled every two seconds. Anything still running when the command ends is killed.
 """
 
+from __future__ import annotations
+
 import argparse
 import logging
 import os
