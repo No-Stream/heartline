@@ -4,8 +4,8 @@ use crate::executor::{Executor, SequentialExecutor, ThreadedExecutor};
 use crate::facilities::{ParkFacilities, coaster_facility};
 use crate::guests::GuestId;
 use crate::guests::park::ParkGuests;
-use crate::park::Park;
 use crate::park::tick::COASTER_PLACE_ID;
+use crate::park::{CoasterId, Park};
 use crate::physics::{BlockOperation, PhysicsConfig, Train};
 use crate::track::blocks::BlockLayout;
 use crate::track::hybrid_model;
@@ -90,12 +90,14 @@ fn replay<E: Executor<WalkingGuest>>(executor: &E) -> Replay {
         demo_train,
         train_configuration,
     );
-    park.construction = Some(construction);
-    park.coaster_open = true;
-    park.coaster_operation = Some(BlockOperation::new(layout.clone(), &coaster_model));
-    park.coaster_facility = Some(facility);
-    park.block_layout = Some(layout);
-    park.desired_train_count = Some(2);
+    let coaster_id = CoasterId(0);
+    park.replace_coaster(coaster_id, construction);
+    let coaster = park.coaster_mut(coaster_id).expect("coaster was inserted");
+    coaster.coaster_open = true;
+    coaster.coaster_operation = Some(BlockOperation::new(layout.clone(), &coaster_model));
+    coaster.coaster_facility = Some(facility);
+    coaster.block_layout = Some(layout);
+    coaster.desired_train_count = Some(2);
 
     let mut events = Vec::new();
     let mut boarded_guest_count = 0;
@@ -103,7 +105,11 @@ fn replay<E: Executor<WalkingGuest>>(executor: &E) -> Replay {
     let mut completed_guest_count = 0;
     let mut maximum_occupied_trains = 0;
     for tick in 0..5000 {
-        let riders_before = park.coaster_riders.clone();
+        let riders_before = park
+            .coaster(coaster_id)
+            .expect("coaster remains present")
+            .coaster_riders
+            .clone();
         let rides_completed_before: Vec<_> = park
             .simulation
             .behaviors()
@@ -113,7 +119,11 @@ fn replay<E: Executor<WalkingGuest>>(executor: &E) -> Replay {
             .collect();
         park.tick_with(executor);
 
-        for (&train_id, riders) in &park.coaster_riders {
+        for (&train_id, riders) in &park
+            .coaster(coaster_id)
+            .expect("coaster remains present")
+            .coaster_riders
+        {
             if !riders_before.contains_key(&train_id) {
                 events.push(CoasterEvent {
                     tick,
@@ -125,7 +135,12 @@ fn replay<E: Executor<WalkingGuest>>(executor: &E) -> Replay {
             }
         }
         for (&train_id, riders) in &riders_before {
-            if park.coaster_riders.contains_key(&train_id) {
+            if park
+                .coaster(coaster_id)
+                .expect("coaster remains present")
+                .coaster_riders
+                .contains_key(&train_id)
+            {
                 continue;
             }
             let completed_riders = riders
@@ -149,10 +164,17 @@ fn replay<E: Executor<WalkingGuest>>(executor: &E) -> Replay {
             completed_train_count += 1;
             completed_guest_count += completed_riders;
         }
-        maximum_occupied_trains = maximum_occupied_trains.max(park.coaster_riders.len());
+        maximum_occupied_trains = maximum_occupied_trains.max(
+            park.coaster(coaster_id)
+                .expect("coaster remains present")
+                .coaster_riders
+                .len(),
+        );
     }
 
     let train_states = park
+        .coaster(coaster_id)
+        .expect("coaster remains present")
         .coaster_operation
         .as_ref()
         .unwrap()

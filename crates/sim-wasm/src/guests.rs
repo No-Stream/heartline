@@ -170,8 +170,11 @@ impl WasmSimulation {
 impl WasmSimulation {
     pub fn park_outcomes(&self) -> theme_park_sim::guests::ParkOutcomes {
         let mut facilities = self.facilities.guest_facilities(&self.world);
-        if self.coaster_open {
-            if let Some(coaster) = self.coaster_facility {
+        if let Some(coaster) = self
+            .editing_coaster()
+            .filter(|coaster| coaster.coaster_open)
+        {
+            if let Some(coaster) = coaster.coaster_facility {
                 facilities.push(coaster);
             }
         }

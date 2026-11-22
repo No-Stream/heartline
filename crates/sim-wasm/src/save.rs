@@ -5,9 +5,12 @@ use wasm_bindgen::prelude::*;
 use crate::WasmSimulation;
 use theme_park_sim::track::shaped::GeometryDigestMismatch;
 
+use crate::save_v6;
+
 const SAVE_HEADER_V4: &[u8] = b"TPSAVE\x04";
 const SAVE_HEADER_V5: &[u8] = b"TPSAVE\x05";
 const SAVE_HEADER_V6: &[u8] = b"TPSAVE\x06";
+const SAVE_HEADER_V7: &[u8] = b"TPSAVE\x07";
 const MAX_SAVE_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -15,6 +18,7 @@ pub(super) enum SaveVersion {
     V4,
     V5,
     V6,
+    V7,
 }
 
 #[derive(Debug)]
@@ -25,6 +29,7 @@ pub enum SaveLoadError {
     LegacyShapedV4Unsupported,
     LegacyForceLimitsUnsupported,
     ShapedGeometryDigestMismatch(GeometryDigestMismatch),
+    InvalidLegacyState(&'static str),
     Decode(postcard::Error),
     TrailingData,
 }
@@ -44,6 +49,7 @@ impl Display for SaveLoadError {
                 "Version 4 and 5 park saves containing recorded test runs or operating coasters cannot be loaded because they store legacy per-model evaluator limits",
             ),
             Self::ShapedGeometryDigestMismatch(mismatch) => Display::fmt(mismatch, formatter),
+            Self::InvalidLegacyState(reason) => formatter.write_str(reason),
             Self::Decode(error) => write!(formatter, "Could not load park: {error}"),
             Self::TrailingData => formatter.write_str("Could not load park: save has trailing data"),
         }
@@ -107,8 +113,19 @@ pub(super) fn checksum(bytes: &[u8]) -> u64 {
     })
 }
 
+#[cfg(test)]
+pub(crate) fn save_state_v6_for_test(simulation: &WasmSimulation) -> Vec<u8> {
+    let payload = save_v6::serialize_v6_for_test(simulation);
+    let mut bytes = SAVE_HEADER_V6.to_vec();
+    bytes.extend(checksum(&payload).to_le_bytes());
+    bytes.extend(payload);
+    bytes
+}
+
 pub(super) fn checked_payload(bytes: &[u8]) -> Result<(SaveVersion, &[u8]), SaveLoadError> {
-    let (version, data) = if let Some(data) = bytes.strip_prefix(SAVE_HEADER_V6) {
+    let (version, data) = if let Some(data) = bytes.strip_prefix(SAVE_HEADER_V7) {
+        (SaveVersion::V7, data)
+    } else if let Some(data) = bytes.strip_prefix(SAVE_HEADER_V6) {
         (SaveVersion::V6, data)
     } else if let Some(data) = bytes.strip_prefix(SAVE_HEADER_V5) {
         (SaveVersion::V5, data)
@@ -143,7 +160,7 @@ impl WasmSimulation {
     }
 
     fn save_state_native_with_limit(&self, limit: usize) -> Result<Vec<u8>, String> {
-        let mut bytes = SAVE_HEADER_V6.to_vec();
+        let mut bytes = SAVE_HEADER_V7.to_vec();
         let payload = theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
             postcard::serialize_with_flavor(self, LimitedBytes::new(limit))
         })
@@ -159,48 +176,68 @@ impl WasmSimulation {
 
     pub fn load_state_native_typed(bytes: &[u8]) -> Result<WasmSimulation, SaveLoadError> {
         let (version, payload) = checked_payload(bytes)?;
-        let decode = || {
+        let decode_v6 = || {
+            theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
+                postcard::take_from_bytes::<save_v6::WasmSimulationV6>(payload)
+            })
+        };
+        let decode_current = || {
             theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
                 postcard::take_from_bytes::<Self>(payload)
             })
         };
-        let (
-            decoded,
-            legacy_shaped_element_seen,
-            legacy_force_limits_seen,
-            geometry_digest_mismatch,
-        ) = match version {
+        let (decoded, geometry_digest_mismatch) = match version {
             SaveVersion::V4 => {
                 let ((decoded, shaped_seen), force_limits_seen) =
                     theme_park_sim::park::with_legacy_pre_v6_save_decode_context(|| {
-                        theme_park_sim::track::shaped::with_legacy_v4_save_decode_context(decode)
+                        theme_park_sim::track::shaped::with_legacy_v4_save_decode_context(decode_v6)
                     });
-                (decoded, shaped_seen, force_limits_seen, None)
+                let decoded = decoded
+                    .map_err(|error| decode_error(version, shaped_seen, force_limits_seen, error))
+                    .and_then(|(simulation, remaining)| {
+                        simulation
+                            .into_current()
+                            .map(|simulation| (simulation, remaining))
+                            .map_err(SaveLoadError::InvalidLegacyState)
+                    });
+                (decoded, None)
             }
             SaveVersion::V5 => {
                 let ((decoded, mismatch), force_limits_seen) =
                     theme_park_sim::park::with_legacy_pre_v6_save_decode_context(|| {
-                        theme_park_sim::track::shaped::with_current_save_decode_context(decode)
+                        theme_park_sim::track::shaped::with_current_save_decode_context(decode_v6)
                     });
-                (decoded, false, force_limits_seen, mismatch)
+                let decoded = decoded
+                    .map_err(|error| decode_error(version, false, force_limits_seen, error))
+                    .and_then(|(simulation, remaining)| {
+                        simulation
+                            .into_current()
+                            .map(|simulation| (simulation, remaining))
+                            .map_err(SaveLoadError::InvalidLegacyState)
+                    });
+                (decoded, mismatch)
             }
             SaveVersion::V6 => {
                 let (decoded, mismatch) =
-                    theme_park_sim::track::shaped::with_current_save_decode_context(decode);
-                (decoded, false, false, mismatch)
+                    theme_park_sim::track::shaped::with_current_save_decode_context(decode_v6);
+                let decoded =
+                    decoded
+                        .map_err(SaveLoadError::Decode)
+                        .and_then(|(simulation, remaining)| {
+                            simulation
+                                .into_current()
+                                .map(|simulation| (simulation, remaining))
+                                .map_err(SaveLoadError::InvalidLegacyState)
+                        });
+                (decoded, mismatch)
+            }
+            SaveVersion::V7 => {
+                let (decoded, mismatch) =
+                    theme_park_sim::track::shaped::with_current_save_decode_context(decode_current);
+                (decoded.map_err(SaveLoadError::Decode), mismatch)
             }
         };
-        let (mut simulation, remaining) = match decoded {
-            Ok(decoded) => decoded,
-            Err(error) => {
-                return Err(decode_error(
-                    version,
-                    legacy_shaped_element_seen,
-                    legacy_force_limits_seen,
-                    error,
-                ));
-            }
-        };
+        let (mut simulation, remaining) = decoded?;
         if let Some(mismatch) = geometry_digest_mismatch {
             return Err(SaveLoadError::ShapedGeometryDigestMismatch(mismatch));
         }

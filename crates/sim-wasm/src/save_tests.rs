@@ -138,6 +138,13 @@ fn shape_selection_id(intent: &ElementIntent) -> String {
     }
 }
 
+fn decompress_save_fixture(compressed_bytes: &[u8]) -> Vec<u8> {
+    let mut compressed = std::io::Cursor::new(compressed_bytes);
+    let mut bytes = Vec::new();
+    lzma_rs::xz_decompress(&mut compressed, &mut bytes).expect("decompress save fixture");
+    bytes
+}
+
 fn append_shaped_intent(session: &mut BuilderSession, intent: &ElementIntent) -> ElementSpec {
     session
         .select(&shape_selection_id(intent), true)
@@ -145,8 +152,7 @@ fn append_shaped_intent(session: &mut BuilderSession, intent: &ElementIntent) ->
     session.append_selected().expect("shaped intent places");
     session
         .simulation()
-        .construction
-        .as_ref()
+        .editing_construction()
         .expect("shaped ride construction remains active")
         .pieces()
         .last()
@@ -229,7 +235,7 @@ fn append_timber_tumbler_fixture(simulation: &mut WasmSimulation) -> Vec<PieceId
         }
     }
 
-    let pieces = simulation.construction.as_ref().unwrap().pieces();
+    let pieces = simulation.editing_construction().unwrap().pieces();
     assert!(
         pieces.iter().any(|piece| matches!(
             piece.family,
@@ -351,7 +357,7 @@ fn save_preserves_non_default_cars_per_train() {
         restored.construction_train_layout()
     );
     assert_eq!(
-        restored.construction.as_ref().unwrap().model().train.cars,
+        restored.editing_construction().unwrap().model().train.cars,
         4
     );
 }
@@ -360,14 +366,13 @@ fn save_preserves_non_default_cars_per_train() {
 fn save_round_trips_built_timber_tumbler_with_ejector_hill() {
     let mut original = WasmSimulation::new(42, 0, String::from("new"));
     let hill_piece_ids = append_timber_tumbler_fixture(&mut original);
-    assert!(original.construction.as_ref().unwrap().is_closed());
+    assert!(original.editing_construction().unwrap().is_closed());
 
     let bytes = original.save_state().unwrap();
     let mut restored = WasmSimulation::load_state(&bytes).unwrap();
     assert_eq!(original.state_hash(), restored.state_hash());
     let restored_hill_piece_ids: Vec<_> = restored
-        .construction
-        .as_ref()
+        .editing_construction()
         .unwrap()
         .pieces()
         .iter()
@@ -407,36 +412,91 @@ fn save_keeps_demo_and_player_test_reports() {
 }
 
 #[test]
-fn save_uses_v6_loads_classic_v4_and_v5_saves_and_rejects_legacy_v5_test_reports() {
-    let simulation = WasmSimulation::new(42, 20, String::from("demo"));
-    let mut bytes = simulation.save_state().unwrap();
-    assert_eq!(&bytes[..7], b"TPSAVE\x06");
-    for compatible_version in [4, 5] {
-        bytes[6] = compatible_version;
-        let restored = WasmSimulation::load_state_native(&bytes).unwrap();
-        assert_eq!(simulation.state_hash(), restored.state_hash());
+fn saves_use_v7_and_round_trip() {
+    let compatible_v6_bytes = decompress_save_fixture(include_bytes!(
+        "../tests/fixtures/coaster-grouping-v6-compatible.save.xz"
+    ));
+    assert!(compatible_v6_bytes.starts_with(b"TPSAVE\x06"));
+    let expected = WasmSimulation::load_state_native(&compatible_v6_bytes).unwrap();
+    let saved_v7 = expected.save_state().unwrap();
+    assert!(saved_v7.starts_with(b"TPSAVE\x07"));
+    let v7_round_trip = WasmSimulation::load_state_native(&saved_v7).unwrap();
+    assert_eq!(expected.state_hash(), v7_round_trip.state_hash());
+}
+
+#[test]
+fn legacy_v4_v5_saves_load_and_keep_running() {
+    let compatible_v6_bytes = decompress_save_fixture(include_bytes!(
+        "../tests/fixtures/coaster-grouping-v6-compatible.save.xz"
+    ));
+    for old_version in [4, 5] {
+        let mut legacy_bytes = compatible_v6_bytes.clone();
+        legacy_bytes[6] = old_version;
+        let mut expected = WasmSimulation::load_state_native(&compatible_v6_bytes).unwrap();
+        let mut restored = WasmSimulation::load_state_native(&legacy_bytes).unwrap();
+        assert_eq!(expected.state_hash(), restored.state_hash());
+
+        for _ in 0..10 {
+            expected.tick();
+            restored.tick();
+            assert_eq!(expected.state_hash(), restored.state_hash());
+        }
+
+        let saved_again = restored.save_state().unwrap();
+        let reloaded = WasmSimulation::load_state_native(&saved_again).unwrap();
+        assert_eq!(restored.state_hash(), reloaded.state_hash());
     }
 
-    for old_version in [1, 2, 3] {
-        bytes[6] = old_version;
+    let mut invalid_bytes = compatible_v6_bytes;
+    for unsupported_version in [1, 2, 3] {
+        invalid_bytes[6] = unsupported_version;
         assert!(matches!(
-            super::save::checked_payload(&bytes),
+            super::save::checked_payload(&invalid_bytes),
             Err(super::save::SaveLoadError::UnsupportedVersion)
         ));
     }
+}
 
-    let mut tested = WasmSimulation::new(42, 0, String::from("demo"));
-    assert_eq!(tested.ride_test("demo"), "");
-    let mut legacy_tested_bytes = tested.save_state().unwrap();
-    legacy_tested_bytes[6] = 5;
-    let error = match WasmSimulation::load_state_native_typed(&legacy_tested_bytes) {
-        Ok(_) => panic!("v5 save with recorded demo test report unexpectedly loaded"),
-        Err(error) => error,
-    };
-    assert!(matches!(
-        error,
-        super::save::SaveLoadError::LegacyForceLimitsUnsupported
+#[test]
+fn tested_open_v6_fixture_keeps_its_typed_v4_v5_rejection() {
+    let rich_v6_bytes = decompress_save_fixture(include_bytes!(
+        "../tests/fixtures/coaster-grouping-v6.save.xz"
     ));
+    let original = WasmSimulation::load_state_native(&rich_v6_bytes).unwrap();
+    let coaster = original.editing_coaster().unwrap();
+    assert!(coaster.construction_report.is_some());
+    assert!(coaster.coaster_operation.is_some());
+
+    for old_version in [4, 5] {
+        let mut legacy_bytes = rich_v6_bytes.clone();
+        legacy_bytes[6] = old_version;
+        let error = match WasmSimulation::load_state_native_typed(&legacy_bytes) {
+            Ok(_) => panic!("rich v{old_version} fixture unexpectedly loaded"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            super::save::SaveLoadError::LegacyForceLimitsUnsupported
+        ));
+    }
+}
+
+#[test]
+fn tested_open_v6_fixture_saves_and_reloads_as_v7_without_changing_hash() {
+    let rich_v6_bytes = decompress_save_fixture(include_bytes!(
+        "../tests/fixtures/coaster-grouping-v6.save.xz"
+    ));
+    let mut original = WasmSimulation::load_state_native(&rich_v6_bytes).unwrap();
+    let saved_v7 = original.save_state().unwrap();
+    assert!(saved_v7.starts_with(b"TPSAVE\x07"));
+    let mut restored = WasmSimulation::load_state_native(&saved_v7).unwrap();
+    assert_eq!(original.state_hash(), restored.state_hash());
+
+    for _ in 0..10 {
+        original.tick();
+        restored.tick();
+        assert_eq!(original.state_hash(), restored.state_hash());
+    }
 }
 
 #[test]
@@ -554,8 +614,9 @@ fn save_round_trips_horizon_hawk_shaped_ride_under_two_mebibytes() {
             if mismatch.expected != mismatch.actual
     ));
 
+    let v6_shaped_save = super::save::save_state_v6_for_test(original.simulation());
     let legacy_v4_shaped_save = replace_saved_spec_with_legacy_v4_geometry(
-        &bytes,
+        &v6_shaped_save,
         &first_spec_bytes,
         &legacy_first_spec_bytes,
     );

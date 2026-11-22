@@ -46,27 +46,33 @@ mod proximity_benchmark_tests {
         assert!(simulation.construction_can_close());
         simulation.construction_close();
         simulation.construction_test();
+        let coaster_id = simulation
+            .editing_coaster_id()
+            .expect("construction start selects the new coaster");
         let mut ride_ticks = 0;
         for _ in 0..9000 {
             simulation.tick();
             ride_ticks += 1;
-            if simulation.construction_report.is_some() {
+            if simulation
+                .editing_coaster()
+                .is_some_and(|coaster| coaster.construction_report.is_some())
+            {
                 break;
             }
         }
         let report = simulation
-            .construction_report
-            .clone()
+            .editing_coaster()
+            .and_then(|coaster| coaster.construction_report.clone())
             .expect("completed report");
         assert!(report.completed);
-        simulation.support_render_cache.clear();
+        simulation.clear_support_render_cache(coaster_id);
         for label in ["cold supports", "cached supports"] {
             let start = Instant::now();
             black_box(simulation.construction_placed_supports());
             let obstacles = simulation.proximity_obstacles();
-            let supports = simulation.proximity_supports();
+            let supports = simulation.proximity_supports(coaster_id);
             let support_ms = start.elapsed().as_secs_f64() * 1000.0;
-            let construction = simulation.construction.as_ref().unwrap();
+            let construction = simulation.editing_construction().unwrap();
             let demo_coaster = simulation.demo_coaster.as_ref().expect("demo park coaster");
             let start = Instant::now();
             let geometry = scan_proximity_with_supports(

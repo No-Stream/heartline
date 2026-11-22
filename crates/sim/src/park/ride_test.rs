@@ -1,7 +1,7 @@
 //! Headless test runs that rate a coaster without animating a builder test train.
 
-use super::Park;
 use super::tick::{add_proximity_and_theming, step_demo_train};
+use super::{CoasterId, Park};
 use crate::physics::{Circuit, ConstructionTestRunRecorder, PhysicsConfig, TestRun, Train};
 use crate::track::{CoasterModel, TrainConfiguration, hybrid_model};
 
@@ -86,18 +86,19 @@ fn run_test_to_outcome(
 impl Park {
     /// Rates a coaster immediately and stores the report. Does not touch the builder's test train,
     /// messages, guest ratings or live operation, so it also works while the coaster is open.
-    pub fn run_ride_test(&mut self, ride: RideKey) -> Result<(), String> {
+    pub fn run_ride_test(&mut self, ride: RideKey, coaster_id: CoasterId) -> Result<(), String> {
         match ride {
             RideKey::Demo => self.run_demo_test(),
-            RideKey::Player => self.run_player_test(),
+            RideKey::Player => self.run_player_test(coaster_id),
         }
     }
 
-    fn run_player_test(&mut self) -> Result<(), String> {
-        if !self.construction_can_test() {
+    fn run_player_test(&mut self, coaster_id: CoasterId) -> Result<(), String> {
+        if !self.construction_can_test(coaster_id) {
             return Err("A closed circuit longer than the train is required".into());
         }
-        let construction = self.construction.as_ref().expect("checked above");
+        let coaster = self.coaster(coaster_id).expect("checked above");
+        let construction = &coaster.construction;
         let circuit = construction.circuit().expect("checked above");
         let model = construction.model();
         let mut report = run_test_to_outcome(
@@ -110,11 +111,14 @@ impl Park {
                 .map(|coaster| (&coaster.circuit, coaster.train.clone())),
         )?;
         // The supports cache is derived from the track and excluded from the state hash.
-        self.refresh_construction_supports()
+        self.refresh_construction_supports(coaster_id)
             .map_err(|_| "Could not route supports for the placed track.".to_owned())?;
         let obstacles = self.proximity_obstacles();
-        let supports = self.proximity_supports();
-        let construction = self.construction.as_ref().expect("checked above");
+        let supports = self.proximity_supports(coaster_id);
+        let construction = &self
+            .coaster(coaster_id)
+            .expect("checked above")
+            .construction;
         add_proximity_and_theming(
             &self.world,
             construction.pieces(),
@@ -126,7 +130,9 @@ impl Park {
             &supports,
             std::slice::from_mut(&mut report),
         );
-        self.construction_report = Some(report);
+        self.coaster_mut(coaster_id)
+            .expect("checked above")
+            .construction_report = Some(report);
         Ok(())
     }
 

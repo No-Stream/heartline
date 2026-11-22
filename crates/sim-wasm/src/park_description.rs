@@ -661,7 +661,12 @@ mod tests {
         )
         .unwrap();
 
-        assert!(simulation.park.coaster_open);
+        assert!(
+            simulation
+                .editing_coaster()
+                .expect("park description has an edited coaster")
+                .coaster_open
+        );
         assert_eq!(simulation.guest_ids().len(), 48);
         let facilities: Value = serde_json::from_str(&simulation.facilities_json()).unwrap();
         assert!(

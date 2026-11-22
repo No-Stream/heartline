@@ -1,5 +1,5 @@
-use super::Park;
 use super::ride_test::RideKey;
+use super::{CoasterId, Park};
 use crate::facilities::ParkFacilities;
 use crate::guests::park::ParkGuests;
 use crate::physics::{PhysicsConfig, Train, demo_circuit};
@@ -109,25 +109,46 @@ fn state_hash_is_reproducible_and_covers_live_park_state() {
     assert_ne!(baseline_hash, train_changed.state_hash());
 
     let mut construction_changed = empty_park();
-    construction_changed.construction = Some(Construction::new(
-        TrackState {
-            x: 4,
-            y: 4,
-            z: 0,
-            ..TrackState::origin()
-        },
-        hybrid_model(),
-    ));
+    construction_changed.replace_coaster(
+        CoasterId(0),
+        Construction::new(
+            TrackState {
+                x: 4,
+                y: 4,
+                z: 0,
+                ..TrackState::origin()
+            },
+            hybrid_model(),
+        ),
+    );
     assert_ne!(baseline_hash, construction_changed.state_hash());
 
     let mut demo_report_changed = empty_park();
-    demo_report_changed.run_ride_test(RideKey::Demo).unwrap();
+    demo_report_changed
+        .run_ride_test(RideKey::Demo, CoasterId(0))
+        .unwrap();
     assert!(demo_report_changed.demo_report.is_some());
     assert_ne!(baseline_hash, demo_report_changed.state_hash());
 
     let mut nausea_rating_changed = empty_park();
-    nausea_rating_changed.coaster_ratings = Some((50, 31));
-    assert_ne!(baseline_hash, nausea_rating_changed.state_hash());
+    nausea_rating_changed.replace_coaster(
+        CoasterId(0),
+        Construction::new(
+            TrackState {
+                x: 4,
+                y: 4,
+                z: 0,
+                ..TrackState::origin()
+            },
+            hybrid_model(),
+        ),
+    );
+    let nausea_rating_baseline = nausea_rating_changed.state_hash();
+    nausea_rating_changed
+        .coaster_mut(CoasterId(0))
+        .unwrap()
+        .coaster_ratings = Some((50, 31));
+    assert_ne!(nausea_rating_baseline, nausea_rating_changed.state_hash());
 }
 
 #[test]

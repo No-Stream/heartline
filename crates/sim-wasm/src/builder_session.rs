@@ -21,7 +21,7 @@ pub struct BuilderSession {
     placed_piece_bridge_ids: Vec<Vec<usize>>,
 }
 
-const BUILDER_SESSION_SNAPSHOT_HEADER: &[u8] = b"TPBUILDER\x02";
+const BUILDER_SESSION_SNAPSHOT_HEADER: &[u8] = b"TPBUILDER\x03";
 
 #[derive(Serialize, Deserialize)]
 struct BuilderSessionSnapshot {
@@ -411,14 +411,13 @@ impl BuilderSession {
         self.end_speed_cache = None;
         let previous_piece_count = self
             .simulation
-            .construction
-            .as_ref()
+            .editing_construction()
             .map(|construction| construction.piece_ids().len());
         self.simulation.construction_finish_invalidate();
         self.simulation.construction_append();
         self.check_bridge_message("place selected piece")?;
         if let (Some(previous_piece_count), Some(construction)) =
-            (previous_piece_count, self.simulation.construction.as_ref())
+            (previous_piece_count, self.simulation.editing_construction())
         {
             if let Some(piece_ids) = construction.piece_ids().get(previous_piece_count..) {
                 if !piece_ids.is_empty() {
@@ -437,14 +436,13 @@ impl BuilderSession {
         self.end_speed_cache = None;
         let previous_piece_count = self
             .simulation
-            .construction
-            .as_ref()
+            .editing_construction()
             .map(|construction| construction.piece_ids().len());
         self.simulation
             .construction_append_resolved_typed(intent, spec)
             .map_err(|message| self.bridge_error("place saved shaped element", message))?;
         if let (Some(previous_piece_count), Some(construction)) =
-            (previous_piece_count, self.simulation.construction.as_ref())
+            (previous_piece_count, self.simulation.editing_construction())
         {
             if let Some(piece_ids) = construction.piece_ids().get(previous_piece_count..) {
                 if !piece_ids.is_empty() {
@@ -575,8 +573,7 @@ impl BuilderSession {
         }
         let previous_piece_count = self
             .simulation
-            .construction
-            .as_ref()
+            .editing_construction()
             .map(|construction| construction.piece_ids().len());
         self.simulation.construction_finish_preview();
         for _ in 1..rank {
@@ -585,7 +582,7 @@ impl BuilderSession {
         self.simulation.construction_finish_confirm();
         self.check_bridge_message("confirm finished coaster")?;
         if let (Some(previous_piece_count), Some(construction)) =
-            (previous_piece_count, self.simulation.construction.as_ref())
+            (previous_piece_count, self.simulation.editing_construction())
         {
             if let Some(new_piece_ids) = construction.piece_ids().get(previous_piece_count..) {
                 self.placed_piece_bridge_ids
@@ -603,8 +600,7 @@ impl BuilderSession {
     fn close_track(&mut self) -> Result<(), BuilderSessionError> {
         if self
             .simulation
-            .construction
-            .as_ref()
+            .editing_construction()
             .is_some_and(|construction| construction.is_closed())
         {
             return Err(self.bridge_error(
@@ -757,8 +753,7 @@ impl BuilderSession {
                 RideStep::Place(place) => {
                     let piece_index = self
                         .simulation
-                        .construction
-                        .as_ref()
+                        .editing_construction()
                         .expect("ride replay has active construction")
                         .pieces()
                         .len();
@@ -789,8 +784,7 @@ impl BuilderSession {
                 RideStep::Shape(shape) => {
                     let piece_index = self
                         .simulation
-                        .construction
-                        .as_ref()
+                        .editing_construction()
                         .expect("ride replay has active construction")
                         .pieces()
                         .len();
@@ -992,8 +986,7 @@ mod tests {
         let mut initial_construction = serde_json::to_value(
             session
                 .simulation()
-                .construction
-                .as_ref()
+                .editing_construction()
                 .expect("construction started"),
         )
         .unwrap();
@@ -1004,8 +997,7 @@ mod tests {
             .expect("construction serializes its next piece id");
         let initial_next_piece_id = session
             .simulation()
-            .construction
-            .as_ref()
+            .editing_construction()
             .expect("construction started")
             .next_piece_id();
 
@@ -1017,8 +1009,7 @@ mod tests {
         session.undo().unwrap();
         let construction = session
             .simulation()
-            .construction
-            .as_ref()
+            .editing_construction()
             .expect("construction remains active");
         assert_eq!(session.simulation().construction_track(), initial_track);
         assert_eq!(construction.next_piece_id(), initial_next_piece_id + 1);

@@ -98,12 +98,15 @@ pub(crate) fn run_park_report(arguments: &[String], json_mode: bool) -> Result<S
             return Err(format!("park coaster {} test failed: {error}", ride.name));
         }
         let test_run = simulation
-            .construction_report
-            .as_ref()
+            .editing_coaster()
+            .and_then(|coaster| coaster.construction_report.as_ref())
             .cloned()
             .ok_or_else(|| "park coaster test completed without a native report".to_owned())?;
+        let coaster_id = simulation
+            .editing_coaster_id()
+            .ok_or_else(|| "park coaster test completed without an edited coaster".to_owned())?;
         let (circuit, _) = simulation
-            .construction_circuit_and_train()
+            .construction_circuit_and_train(coaster_id)
             .ok_or_else(|| "park coaster test completed without a circuit".to_owned())?;
         let (_, estimates, _) = replay_with_estimates(&ride, false)?;
         let agreement = compare_estimates(&ride, &test_run, &estimates)?;
@@ -132,8 +135,7 @@ pub(crate) fn run_park_report(arguments: &[String], json_mode: bool) -> Result<S
         let train_count = simulation.construction_train_count();
         let sustained = test_run.sustained_force_peaks();
         let construction = simulation
-            .construction
-            .as_ref()
+            .editing_construction()
             .ok_or_else(|| "park coaster test completed without a construction".to_owned())?;
         let piece_names: Vec<_> = construction
             .pieces()

@@ -117,6 +117,7 @@ impl WasmSimulation {
         };
         Self {
             park,
+            editing: None,
             facility_message: String::new(),
             path_message: String::new(),
             terrain_message: String::new(),
@@ -483,7 +484,9 @@ impl WasmSimulation {
 
     pub fn construction_message(&self) -> String {
         if self.construction_message.is_empty() {
-            self.construction_outcome.clone().unwrap_or_default()
+            self.editing_coaster()
+                .and_then(|coaster| coaster.construction_outcome.clone())
+                .unwrap_or_default()
         } else {
             self.construction_message.clone()
         }
