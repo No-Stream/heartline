@@ -20,8 +20,9 @@ pub(crate) use crate::track::shaped::precision::canonicalize_element_spec;
 use crate::track::shaped::precision::{ELEMENT_SPEC_HALF_DECIMAL_STEP, round_element_value};
 use crate::track::supports::SupportObstacle;
 use crate::track::{
-    Bank, CoasterModel, Hand, Heading, HillFeel, HorizontalCurvature, Piece, PieceId, PieceKind,
-    Shape, Slope, TrackState, TrainConfiguration, VerticalCurvature, catalog,
+    Bank, CoasterModel, ENVELOPE_DISPLAY_LIMITS, Hand, Heading, HillFeel, HorizontalCurvature,
+    Piece, PieceId, PieceKind, Shape, Slope, TrackState, TrainConfiguration, VerticalCurvature,
+    catalog,
 };
 
 std::thread_local! {
@@ -123,13 +124,7 @@ const PROFILE_STEPS: usize = 512;
 const REQUIRED_FORCE_HEADROOM_G: f64 = 0.25;
 const MAXIMUM_HILL_INTENT_ERROR_G: f64 = 0.05;
 const MAXIMUM_FULLY_BANKED_LATERAL_G: f64 = 0.15;
-pub(crate) const MINIMUM_SHAPED_SPEED_MPS: f64 = 22.0;
-pub(crate) const MAXIMUM_SHAPED_SPEED_MPS: f64 = 36.0;
-const MINIMUM_SHAPED_TRAIN_CARS: u8 = 4;
-const MAXIMUM_SHAPED_TRAIN_CARS: u8 = 8;
 const MAXIMUM_SHAPED_PREVIEWS: u8 = 4;
-const HILL_HEIGHT_ENERGY_FRACTION: f64 = 0.4;
-const SHAPED_HILL_PULL_G: f64 = 3.3;
 const SHAPED_FLANK_SEARCH_STEPS: usize = 8;
 const SHAPED_HILL_NAME: &str = "Shaped airtime hill";
 const SHAPED_LEFT_TURN_NAME: &str = "Shaped banked turn left";
@@ -878,6 +873,9 @@ pub struct SolvedElement {
     pub spec: ElementSpec,
     pub calibration_runs: u8,
     pub cap_note: Option<FeelCapNote>,
+    /// True when the solved element sits inside the global ASTM comfort envelope but
+    /// pushes past this model's typical feel or design targets.
+    pub exceeds_model_feel: bool,
     pub(crate) calibration_seed: Option<CalibrationSeed>,
 }
 
@@ -933,35 +931,40 @@ pub enum SolveRefusal {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ShapedElementRules {
-    pub allow_airtime_hills: bool,
-    pub allow_fully_banked_turns: bool,
+pub struct ShapedProfile {
+    pub minimum_speed_mps: f64,
+    pub maximum_speed_mps: f64,
+    pub minimum_cars: u8,
+    pub maximum_cars: u8,
     pub default_floater_g: f64,
     pub default_strong_floater_g: f64,
-    pub steel_ejector_g: f64,
-    pub wooden_ejector_g: f64,
+    pub default_ejector_g: f64,
+    /// Hill feels typical of this model's vibe. Players may still choose other feels or step
+    /// strength up to the global ASTM comfort envelope, receiving a mild feel note.
+    pub typical_hill_feels: &'static [HillFeel],
+    pub strong_floater_minimum_speed_mps: f64,
+    pub strong_floater_minimum_target_g: f64,
     pub hill_pull_g: f64,
+    pub hill_height_energy_fraction: f64,
     pub turn_vertical_g: f64,
     pub maximum_bank_degrees: f64,
     pub minimum_turn_radius_m: f64,
     pub maximum_turn_radius_m: f64,
+    pub finish_turn_max_vertical_g: f64,
+    pub finish_turn_max_lateral_g: f64,
 }
 
-impl CoasterModel {
-    pub fn shaped_element_rules(&self) -> ShapedElementRules {
-        ShapedElementRules {
-            allow_airtime_hills: true,
-            allow_fully_banked_turns: true,
-            default_floater_g: -0.5,
-            default_strong_floater_g: -0.85,
-            steel_ejector_g: -1.2,
-            wooden_ejector_g: -0.8,
-            hill_pull_g: (self.design_force_targets.maximum_vertical_g - 0.5).min(2.0),
-            turn_vertical_g: (self.design_force_targets.maximum_vertical_g - 1.1)
-                .min(1.0 / crate::math::cos(75.0_f64.to_radians())),
-            maximum_bank_degrees: 75.0,
-            minimum_turn_radius_m: self.minimum_radius_metres,
-            maximum_turn_radius_m: 256.0,
+impl ShapedProfile {
+    pub fn allows_cars(self, cars: u8) -> bool {
+        (self.minimum_cars..=self.maximum_cars).contains(&cars)
+    }
+
+    pub fn default_hill_strength(self, feel: HillFeel) -> f64 {
+        match feel {
+            HillFeel::Floater => self.default_floater_g,
+            HillFeel::StrongFloater => self.default_strong_floater_g,
+            HillFeel::Ejector => self.default_ejector_g,
+            _ => unreachable!("only supported hill feelings have defaults"),
         }
     }
 }
@@ -994,8 +997,8 @@ pub fn solve_confirm(
     preview: &SolvedElement,
 ) -> Result<SolvedElement, SolveRefusal> {
     validate_context(context)?;
-    validate_scope(context)?;
-    if !preview_candidate_is_confirmed(intent, context, preview) {
+    let profile = validate_scope(context)?;
+    if !preview_candidate_is_confirmed(intent, context, profile, preview) {
         let maximum_previews = match intent {
             ElementIntent::Hill { .. } => MAXIMUM_SHAPED_PREVIEWS,
             ElementIntent::Turn { .. } => 3,
@@ -1015,13 +1018,14 @@ fn solve_with_preview_limit(
     preview_seed: Option<&SolvedElement>,
 ) -> Result<SolvedElement, SolveRefusal> {
     validate_context(context)?;
-    validate_scope(context)?;
+    let profile = validate_scope(context)?;
     match intent {
         ElementIntent::Hill {
             feel,
             strength_g,
             size,
         } => solve_hill(
+            profile,
             *feel,
             *strength_g,
             *size,
@@ -1031,6 +1035,7 @@ fn solve_with_preview_limit(
             context,
         ),
         ElementIntent::Turn { hand, size } => solve_turn(
+            profile,
             *hand,
             *size,
             maximum_previews.min(3),
@@ -1069,32 +1074,77 @@ fn validate_context(context: &SolveContext<'_>) -> Result<(), SolveRefusal> {
 }
 
 /// Whether the solver can shape elements for this model and train at some entry speed.
-pub(crate) fn model_supports_shaped_elements(
-    model: &CoasterModel,
-    train: &TrainConfiguration,
-) -> bool {
-    model.key == "hyper"
-        && (MINIMUM_SHAPED_TRAIN_CARS..=MAXIMUM_SHAPED_TRAIN_CARS).contains(&train.cars)
+pub fn model_supports_shaped_elements(model: &CoasterModel, train: &TrainConfiguration) -> bool {
+    model
+        .shaped_profile
+        .is_some_and(|profile| profile.allows_cars(train.cars))
 }
 
-fn validate_scope(context: &SolveContext<'_>) -> Result<(), SolveRefusal> {
-    if !model_supports_shaped_elements(context.model, context.train)
-        || context.entry_speed_mps > MAXIMUM_SHAPED_SPEED_MPS
+fn validate_scope(context: &SolveContext<'_>) -> Result<ShapedProfile, SolveRefusal> {
+    let Some(profile) = context.model.shaped_profile else {
+        return Err(SolveRefusal::UnsupportedScope);
+    };
+    if !profile.allows_cars(context.train.cars)
+        || context.entry_speed_mps > profile.maximum_speed_mps
     {
         return Err(SolveRefusal::UnsupportedScope);
     }
-    if context.entry_speed_mps < MINIMUM_SHAPED_SPEED_MPS {
+    if context.entry_speed_mps < profile.minimum_speed_mps {
         return Err(SolveRefusal::BelowMinimumSpeed {
             entry_speed_mps: context.entry_speed_mps,
-            minimum_speed_mps: MINIMUM_SHAPED_SPEED_MPS,
+            minimum_speed_mps: profile.minimum_speed_mps,
         });
     }
-    Ok(())
+    Ok(profile)
+}
+
+fn hill_within_model_vibe(
+    model: &CoasterModel,
+    profile: ShapedProfile,
+    feel: HillFeel,
+    requested_target_g: f64,
+) -> bool {
+    let design_floor = model.design_force_targets.minimum_vertical_g + REQUIRED_FORCE_HEADROOM_G;
+    profile.typical_hill_feels.contains(&feel) && requested_target_g >= design_floor - 1e-9
+}
+
+fn turn_within_model_vibe(
+    model: &CoasterModel,
+    design_speed_mps: f64,
+    requested_radius_m: Option<f64>,
+) -> bool {
+    let Some(radius_m) = requested_radius_m else {
+        return true;
+    };
+    let ideal_vertical_g = crate::math::hypot(
+        1.0,
+        crate::math::powi(design_speed_mps, 2) / (GRAVITY * radius_m),
+    );
+    ideal_vertical_g <= model.design_force_targets.maximum_vertical_g - REQUIRED_FORCE_HEADROOM_G
+}
+
+fn candidate_passes_force_budget(
+    model: &CoasterModel,
+    cars: &[CandidateCarForces],
+    within_vibe: bool,
+) -> (bool, f64) {
+    let every_car_within_limits = cars.iter().all(|car| car.within_limits);
+    if within_vibe {
+        let headroom_g = force_headroom_for_candidate(model, cars);
+        (
+            headroom_g >= REQUIRED_FORCE_HEADROOM_G && every_car_within_limits,
+            headroom_g,
+        )
+    } else {
+        let headroom_g = envelope_headroom_for_candidate(cars);
+        (every_car_within_limits, headroom_g)
+    }
 }
 
 fn preview_candidate_is_confirmed(
     intent: &ElementIntent,
     context: &SolveContext<'_>,
+    profile: ShapedProfile,
     candidate: &SolvedElement,
 ) -> bool {
     let Some(seed) = candidate.calibration_seed.as_ref() else {
@@ -1102,10 +1152,28 @@ fn preview_candidate_is_confirmed(
     };
     if seed.preview.cars.len() != usize::from(context.train.cars)
         || !intent_matches_spec(intent, &candidate.spec, context.model, context.entry)
-        || seed.preview.cars.iter().any(|car| !car.within_limits)
-        || force_headroom_for_candidate(context.model, &seed.preview.cars)
-            < REQUIRED_FORCE_HEADROOM_G
     {
+        return false;
+    }
+    let within_vibe = match intent {
+        ElementIntent::Hill {
+            feel, strength_g, ..
+        } => hill_within_model_vibe(context.model, profile, *feel, *strength_g),
+        ElementIntent::Turn { size, .. } => {
+            let requested_radius = match size {
+                TurnSizeHint::Auto => None,
+                TurnSizeHint::Radius(radius) => Some(*radius),
+            };
+            turn_within_model_vibe(
+                context.model,
+                round_element_value(context.entry_speed_mps),
+                requested_radius,
+            )
+        }
+    };
+    let (passes_budget, _) =
+        candidate_passes_force_budget(context.model, &seed.preview.cars, within_vibe);
+    if !passes_budget {
         return false;
     }
     match (&candidate.spec, intent) {
@@ -1130,7 +1198,9 @@ fn preview_candidate_is_confirmed(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn solve_hill(
+    profile: ShapedProfile,
     feel: HillFeel,
     strength_g: f64,
     size: HillSizeHint,
@@ -1141,6 +1211,7 @@ fn solve_hill(
 ) -> Result<SolvedElement, SolveRefusal> {
     match size {
         HillSizeHint::Auto => solve_hill_analytically(
+            profile,
             feel,
             strength_g,
             None,
@@ -1164,6 +1235,7 @@ fn solve_hill(
                 });
             }
             solve_hill_analytically(
+                profile,
                 feel,
                 strength_g,
                 Some(height_m),
@@ -1176,7 +1248,9 @@ fn solve_hill(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn solve_hill_analytically(
+    shaped_profile: ShapedProfile,
     feel: HillFeel,
     strength_g: f64,
     fixed_height_m: Option<f64>,
@@ -1199,8 +1273,16 @@ fn solve_hill_analytically(
         });
     }
     let design_speed_mps = round_element_value(context.entry_speed_mps);
-    let target_floor =
-        context.model.design_force_targets.minimum_vertical_g + REQUIRED_FORCE_HEADROOM_G;
+    let within_vibe =
+        hill_within_model_vibe(context.model, shaped_profile, feel, requested_target_g);
+    let target_floor = if within_vibe {
+        context.model.design_force_targets.minimum_vertical_g + REQUIRED_FORCE_HEADROOM_G
+    } else {
+        ENVELOPE_DISPLAY_LIMITS.minimum_vertical_g
+    };
+    let enforce_strong_floater_floor = within_vibe
+        && feel == HillFeel::StrongFloater
+        && context.entry_speed_mps >= shaped_profile.strong_floater_minimum_speed_mps;
     let mut target_g = requested_target_g.min(-0.05);
     if target_g < target_floor {
         let cap_steps = ((target_floor - target_g) / 0.05).ceil();
@@ -1229,15 +1311,14 @@ fn solve_hill_analytically(
     let mut last_headroom_g = f64::NEG_INFINITY;
     let mut last_delivered_g = None;
     if let Some((_, delivered_g, seed_crest_g, seed)) = seed {
-        last_headroom_g = force_headroom_for_candidate(context.model, &seed.preview.cars);
+        let (passes_budget, headroom_g) =
+            candidate_passes_force_budget(context.model, &seed.preview.cars, within_vibe);
+        last_headroom_g = headroom_g;
         last_delivered_g = Some(delivered_g);
-        if last_headroom_g < REQUIRED_FORCE_HEADROOM_G
-            || seed.preview.cars.iter().any(|car| !car.within_limits)
-        {
+        if !passes_budget {
             let next_target_g = (target_g + 0.05).min(-0.05);
-            if feel == HillFeel::StrongFloater
-                && context.entry_speed_mps >= 24.0
-                && next_target_g > -0.75
+            if enforce_strong_floater_floor
+                && next_target_g > shaped_profile.strong_floater_minimum_target_g
             {
                 return Err(SolveRefusal::InfeasibleTarget {
                     target_g,
@@ -1258,10 +1339,16 @@ fn solve_hill_analytically(
         // to the element-spec grid, as the design speed is, keeps both builds solving the same hill.
         crest_g = round_element_value(crest_g);
         let target_height_m = fixed_height_m.unwrap_or_else(|| {
-            crate::math::powi(design_speed_mps, 2) / (2.0 * GRAVITY) * HILL_HEIGHT_ENERGY_FRACTION
+            crate::math::powi(design_speed_mps, 2) / (2.0 * GRAVITY)
+                * shaped_profile.hill_height_energy_fraction
         });
-        let (profile, height_m, span_m, flank_angle_degrees) =
-            hill_profile_for_height(context, design_speed_mps, crest_g, target_height_m)?;
+        let (profile, height_m, span_m, flank_angle_degrees) = hill_profile_for_height(
+            context,
+            design_speed_mps,
+            shaped_profile.hill_pull_g,
+            crest_g,
+            target_height_m,
+        )?;
         let diagonal = context.entry.heading.index() % 2 != 0;
         let diagonal_scale = if diagonal {
             std::f64::consts::SQRT_2
@@ -1278,7 +1365,7 @@ fn solve_hill_analytically(
             height_m,
             span_m,
             target_height_m,
-            pull_g: SHAPED_HILL_PULL_G,
+            pull_g: shaped_profile.hill_pull_g,
             crest_g,
             flank_angle_degrees,
             profile_grid_half_tiles,
@@ -1294,7 +1381,8 @@ fn solve_hill_analytically(
         if preview.cars.len() != usize::from(context.train.cars) {
             return Err(SolveRefusal::PreviewTimedOut);
         }
-        let headroom_g = force_headroom_for_candidate(context.model, &preview.cars);
+        let (passes_budget, headroom_g) =
+            candidate_passes_force_budget(context.model, &preview.cars, within_vibe);
         last_headroom_g = headroom_g;
         let delivered_g = preview
             .cars
@@ -1306,6 +1394,8 @@ fn solve_hill_analytically(
                 available_headroom_g: headroom_g,
             })?;
         last_delivered_g = Some(delivered_g);
+        let exceeds_model_feel = !shaped_profile.typical_hill_feels.contains(&feel)
+            || candidate_exceeds_design_targets(context.model, &preview.cars);
 
         if provisional {
             let mut preview_spec = candidate_spec;
@@ -1330,6 +1420,7 @@ fn solve_hill_analytically(
                 spec: preview_spec,
                 calibration_runs: preview_count,
                 cap_note,
+                exceeds_model_feel,
                 calibration_seed: Some(CalibrationSeed {
                     preview,
                     hill_crest_g: Some(crest_g),
@@ -1337,13 +1428,10 @@ fn solve_hill_analytically(
             });
         }
 
-        if headroom_g < REQUIRED_FORCE_HEADROOM_G
-            || preview.cars.iter().any(|car| !car.within_limits)
-        {
+        if !passes_budget {
             let next_target_g = (target_g + 0.05).min(-0.05);
-            if feel == HillFeel::StrongFloater
-                && context.entry_speed_mps >= 24.0
-                && next_target_g > -0.75
+            if enforce_strong_floater_floor
+                && next_target_g > shaped_profile.strong_floater_minimum_target_g
             {
                 return Err(SolveRefusal::InfeasibleTarget {
                     target_g,
@@ -1385,6 +1473,7 @@ fn solve_hill_analytically(
                 spec: final_spec,
                 calibration_runs: preview_count,
                 cap_note,
+                exceeds_model_feel,
                 calibration_seed: None,
             });
         }
@@ -1413,14 +1502,14 @@ fn solve_hill_analytically(
 }
 
 pub fn default_hill_strength(feel: HillFeel, model: &CoasterModel) -> f64 {
-    let rules = model.shaped_element_rules();
+    if let Some(profile) = model.shaped_profile {
+        return profile.default_hill_strength(feel);
+    }
     match feel {
-        HillFeel::Floater => rules.default_floater_g,
-        HillFeel::StrongFloater => rules.default_strong_floater_g,
-        HillFeel::Ejector if model.track_material == crate::track::Material::Wood => {
-            rules.wooden_ejector_g
-        }
-        HillFeel::Ejector => rules.steel_ejector_g,
+        HillFeel::Floater => -0.5,
+        HillFeel::StrongFloater => -0.85,
+        HillFeel::Ejector if model.track_material == crate::track::Material::Wood => -0.8,
+        HillFeel::Ejector => -1.2,
         _ => unreachable!("only supported hill feelings have defaults"),
     }
 }
@@ -1428,6 +1517,7 @@ pub fn default_hill_strength(feel: HillFeel, model: &CoasterModel) -> f64 {
 fn hill_profile_for_height(
     context: &SolveContext<'_>,
     design_speed_mps: f64,
+    pull_g: f64,
     crest_g: f64,
     target_height_m: f64,
 ) -> Result<(SolvedProfile, f64, f64, f64), SolveRefusal> {
@@ -1442,7 +1532,7 @@ fn hill_profile_for_height(
         let flank_degrees = (low_flank_degrees + high_flank_degrees) / 2.0;
         let profile_spec = OfflineHillSpec {
             entry_speed_mps: design_speed_mps,
-            pull_g: SHAPED_HILL_PULL_G,
+            pull_g,
             crest_g,
             flank_angle_radians: flank_degrees.to_radians(),
             taper_angle_radians: Some(SHAPED_HILL_TAPER_ANGLE),
@@ -1473,7 +1563,7 @@ fn hill_profile_for_height(
     let (_, _, flank_degrees) = best.ok_or(SolveRefusal::InvalidGeometry)?;
     let profile_spec = OfflineHillSpec {
         entry_speed_mps: design_speed_mps,
-        pull_g: SHAPED_HILL_PULL_G,
+        pull_g,
         crest_g,
         flank_angle_radians: flank_degrees.to_radians(),
         taper_angle_radians: Some(SHAPED_HILL_TAPER_ANGLE),
@@ -1555,6 +1645,7 @@ pub(crate) fn synthesize_hill_profile(
 }
 
 fn solve_turn(
+    profile: ShapedProfile,
     hand: Hand,
     size: TurnSizeHint,
     maximum_previews: u8,
@@ -1563,23 +1654,16 @@ fn solve_turn(
     context: &mut SolveContext<'_>,
 ) -> Result<SolvedElement, SolveRefusal> {
     let design_speed_mps = round_element_value(context.entry_speed_mps);
-    let rules = context.model.shaped_element_rules();
-    if !rules.allow_fully_banked_turns {
-        return Err(SolveRefusal::InfeasibleTarget {
-            target_g: 0.0,
-            available_headroom_g: 0.0,
-        });
-    }
     if let TurnSizeHint::Radius(radius_m) = size {
         if !radius_m.is_finite() || radius_m <= 0.0 {
             return Err(SolveRefusal::InfeasibleTarget {
-                target_g: rules.turn_vertical_g,
+                target_g: profile.turn_vertical_g,
                 available_headroom_g: 0.0,
             });
         }
     }
     let model_limits = context.model.design_force_targets;
-    let target_vertical_g = rules.turn_vertical_g;
+    let target_vertical_g = profile.turn_vertical_g;
     if target_vertical_g < model_limits.minimum_vertical_g + 0.5
         || target_vertical_g > model_limits.maximum_vertical_g - 0.5
     {
@@ -1595,16 +1679,17 @@ fn solve_turn(
         TurnSizeHint::Radius(radius_m) => Some(radius_m),
     };
     if requested_radius_m.is_some_and(|radius| {
-        radius < rules.minimum_turn_radius_m || radius > rules.maximum_turn_radius_m
+        radius < profile.minimum_turn_radius_m || radius > profile.maximum_turn_radius_m
     }) {
         return Err(SolveRefusal::InfeasibleTarget {
             target_g: target_vertical_g,
             available_headroom_g: 0.0,
         });
     }
+    let within_vibe = turn_within_model_vibe(context.model, design_speed_mps, requested_radius_m);
 
     let mut peak_bank =
-        crate::math::acos(target_vertical_g.recip()).min(rules.maximum_bank_degrees.to_radians());
+        crate::math::acos(target_vertical_g.recip()).min(profile.maximum_bank_degrees.to_radians());
     let mut preview_count = 0_u8;
     if let Some(seed) = preview_seed
         && let ElementSpec::Turn { bank_degrees, .. } = seed.spec
@@ -1628,7 +1713,7 @@ fn solve_turn(
                 0.9
             };
         peak_bank = crate::math::atan(crate::math::tan(bank_degrees.to_radians()) * adjustment)
-            .min(rules.maximum_bank_degrees.to_radians());
+            .min(profile.maximum_bank_degrees.to_radians());
     }
     let mut last_headroom_g = f64::NEG_INFINITY;
     let mut last_lateral_g = f64::INFINITY;
@@ -1644,21 +1729,21 @@ fn solve_turn(
             peak_bank,
             speed_loss_fraction,
             radius_step,
-            rules.minimum_turn_radius_m,
+            profile.minimum_turn_radius_m,
             requested_radius_m,
         );
         peak_bank = resolved_bank;
-        if radius_m > rules.maximum_turn_radius_m {
+        if radius_m > profile.maximum_turn_radius_m {
             return Err(SolveRefusal::InfeasibleTarget {
                 target_g: target_vertical_g,
                 available_headroom_g: 0.0,
             });
         }
         let bank_degrees = peak_bank.to_degrees();
-        if bank_degrees > rules.maximum_bank_degrees {
+        if bank_degrees > profile.maximum_bank_degrees {
             return Err(SolveRefusal::InfeasibleTarget {
                 target_g: target_vertical_g,
-                available_headroom_g: rules.maximum_bank_degrees - bank_degrees,
+                available_headroom_g: profile.maximum_bank_degrees - bank_degrees,
             });
         }
         let geometry_peak_bank_radians = peak_bank;
@@ -1699,10 +1784,11 @@ fn solve_turn(
             .iter()
             .map(|car| car.peaks.maximum_lateral_g)
             .fold(0.0, f64::max);
-        let headroom_g = force_headroom_for_candidate(context.model, &preview.cars);
+        let (passes_budget, headroom_g) =
+            candidate_passes_force_budget(context.model, &preview.cars, within_vibe);
         last_headroom_g = headroom_g;
         last_lateral_g = lateral_g;
-        let every_car_within_limits = preview.cars.iter().all(|car| car.within_limits);
+        let exceeds_model_feel = candidate_exceeds_design_targets(context.model, &preview.cars);
         if provisional {
             let vertical_g = preview
                 .cars
@@ -1742,16 +1828,14 @@ fn solve_turn(
                 spec,
                 calibration_runs: preview_count,
                 cap_note: None,
+                exceeds_model_feel,
                 calibration_seed: Some(CalibrationSeed {
                     preview,
                     hill_crest_g: None,
                 }),
             });
         }
-        if lateral_g <= MAXIMUM_FULLY_BANKED_LATERAL_G
-            && headroom_g >= REQUIRED_FORCE_HEADROOM_G
-            && every_car_within_limits
-        {
+        if lateral_g <= MAXIMUM_FULLY_BANKED_LATERAL_G && passes_budget {
             let vertical_g = preview
                 .cars
                 .iter()
@@ -1790,6 +1874,7 @@ fn solve_turn(
                 spec,
                 calibration_runs: preview_count,
                 cap_note: None,
+                exceeds_model_feel,
                 calibration_seed: None,
             });
         }
@@ -1798,15 +1883,14 @@ fn solve_turn(
         }
         let adjustment = if requested_radius_m.is_some()
             && lateral_g > MAXIMUM_FULLY_BANKED_LATERAL_G
-            && headroom_g >= REQUIRED_FORCE_HEADROOM_G
-            && every_car_within_limits
+            && passes_budget
         {
             1.1
         } else {
             0.9
         };
         peak_bank = crate::math::atan(crate::math::tan(peak_bank) * adjustment)
-            .min(rules.maximum_bank_degrees.to_radians());
+            .min(profile.maximum_bank_degrees.to_radians());
     }
     Err(SolveRefusal::InfeasibleTarget {
         target_g: target_vertical_g,
@@ -1846,10 +1930,12 @@ pub(crate) fn automatic_turn_radius_m(
     entry_speed_mps: f64,
     physics: PhysicsConfig,
 ) -> f64 {
-    let rules = model.shaped_element_rules();
+    let profile = model
+        .shaped_profile
+        .expect("automatic turn radius requires a shaped profile");
     let design_speed_mps = round_element_value(entry_speed_mps);
-    let peak_bank = crate::math::acos(rules.turn_vertical_g.recip())
-        .min(rules.maximum_bank_degrees.to_radians());
+    let peak_bank = crate::math::acos(profile.turn_vertical_g.recip())
+        .min(profile.maximum_bank_degrees.to_radians());
     let speed_loss_fraction =
         estimated_turn_speed_loss_fraction(physics, train, design_speed_mps, peak_bank);
     let (_, radius_m, _) = super::curves::shaped_speed_turn_geometry(
@@ -1857,7 +1943,7 @@ pub(crate) fn automatic_turn_radius_m(
         peak_bank,
         speed_loss_fraction,
         turn_radius_grid_step(heading),
-        rules.minimum_turn_radius_m,
+        profile.minimum_turn_radius_m,
         None,
     );
     radius_m
@@ -2087,6 +2173,32 @@ fn force_headroom_for_candidate(model: &CoasterModel, cars: &[CandidateCarForces
         .fold(f64::INFINITY, f64::min)
 }
 
+fn envelope_headroom_for_candidate(cars: &[CandidateCarForces]) -> f64 {
+    let limits = ENVELOPE_DISPLAY_LIMITS;
+    cars.iter()
+        .map(|car| {
+            [
+                car.peaks.minimum_vertical_g - limits.minimum_vertical_g,
+                limits.maximum_vertical_g - car.peaks.maximum_vertical_g,
+                limits.maximum_lateral_g - car.peaks.maximum_lateral_g,
+                limits.maximum_longitudinal_g - car.peaks.maximum_longitudinal_g,
+            ]
+            .into_iter()
+            .fold(f64::INFINITY, f64::min)
+        })
+        .fold(f64::INFINITY, f64::min)
+}
+
+fn candidate_exceeds_design_targets(model: &CoasterModel, cars: &[CandidateCarForces]) -> bool {
+    let targets = model.design_force_targets;
+    cars.iter().any(|car| {
+        car.peaks.minimum_vertical_g < targets.minimum_vertical_g
+            || car.peaks.maximum_vertical_g > targets.maximum_vertical_g
+            || car.peaks.maximum_lateral_g > targets.maximum_lateral_g
+            || car.peaks.maximum_longitudinal_g > targets.maximum_longitudinal_g
+    })
+}
+
 impl crate::track::construction::Construction {
     pub fn shape_candidate(
         &self,
@@ -2240,6 +2352,9 @@ fn intent_matches_spec(
     model: &CoasterModel,
     entry: TrackState,
 ) -> bool {
+    let Some(shaped_profile) = model.shaped_profile else {
+        return false;
+    };
     if spec.cars() != model.train.cars || !spec.design_speed_mps().is_finite() {
         return false;
     }
@@ -2267,14 +2382,18 @@ fn intent_matches_spec(
                 return false;
             }
             let requested_target_g = *strength_g;
+            let within_vibe =
+                hill_within_model_vibe(model, shaped_profile, *feel, requested_target_g);
             let cap_steps = (target_g - requested_target_g) / 0.05;
+            let enforce_strong_floater_floor = within_vibe
+                && *feel == HillFeel::StrongFloater
+                && *design_speed_mps >= shaped_profile.strong_floater_minimum_speed_mps;
             let target_matches = (target_g - requested_target_g).abs() <= 1e-9
                 || (cap_steps > 0.0
                     && (cap_steps - cap_steps.round()).abs() <= 1e-8
                     && *target_g <= -0.05
-                    && (*feel != HillFeel::StrongFloater
-                        || *design_speed_mps < 24.0
-                        || *target_g <= -0.75));
+                    && (!enforce_strong_floater_floor
+                        || *target_g <= shaped_profile.strong_floater_minimum_target_g));
             let size_matches = match size {
                 HillSizeHint::Auto => true,
                 HillSizeHint::Height(height) => {
@@ -2303,6 +2422,13 @@ fn intent_matches_spec(
                 && resolved_points
                     .windows(2)
                     .all(|pair| pair[0][0] < pair[1][0]);
+            let delivery_within_floor = if within_vibe {
+                (*delivered_g - model.design_force_targets.minimum_vertical_g)
+                    >= REQUIRED_FORCE_HEADROOM_G
+            } else {
+                *delivered_g
+                    >= ENVELOPE_DISPLAY_LIMITS.minimum_vertical_g - MAXIMUM_HILL_INTENT_ERROR_G
+            };
             target_matches
                 && size_matches
                 && profile_is_valid
@@ -2313,8 +2439,7 @@ fn intent_matches_spec(
                 && *target_g <= 0.0
                 && delivered_g.is_finite()
                 && (*delivered_g - *target_g).abs() <= MAXIMUM_HILL_INTENT_ERROR_G
-                && (*delivered_g - model.design_force_targets.minimum_vertical_g)
-                    >= REQUIRED_FORCE_HEADROOM_G
+                && delivery_within_floor
                 && height_m.is_finite()
                 && *height_m > 0.0
                 && span_m.is_finite()
@@ -2323,6 +2448,7 @@ fn intent_matches_spec(
         (
             ElementIntent::Turn { hand, size },
             ElementSpec::Turn {
+                design_speed_mps,
                 hand: resolved_hand,
                 vertical_g,
                 lateral_g,
@@ -2340,15 +2466,25 @@ fn intent_matches_spec(
             } else {
                 2.0 * std::f64::consts::SQRT_2
             };
-            turn_radius_matches_intent(*size, *radius_m, grid_step, model.shaped_element_rules())
+            let requested_radius = match size {
+                TurnSizeHint::Auto => None,
+                TurnSizeHint::Radius(radius) => Some(*radius),
+            };
+            let within_vibe = turn_within_model_vibe(model, *design_speed_mps, requested_radius);
+            let max_allowed_vertical_g = if within_vibe {
+                model.design_force_targets.maximum_vertical_g - REQUIRED_FORCE_HEADROOM_G
+            } else {
+                // ASTM F2291 allows brief +6.0 g peaks; solver calibration already checks EnvelopeEvaluator.
+                6.0
+            };
+            turn_radius_matches_intent(*size, *radius_m, grid_step, shaped_profile)
                 && geometry.knots.len() == super::curves::SPEED_TURN_STEPS + 1
                 && geometry.length.is_finite()
                 && geometry.length > 0.0
                 && bank_degrees.is_finite()
-                && *bank_degrees <= model.shaped_element_rules().maximum_bank_degrees
+                && *bank_degrees <= shaped_profile.maximum_bank_degrees
                 && vertical_g.is_finite()
-                && *vertical_g
-                    <= model.design_force_targets.maximum_vertical_g - REQUIRED_FORCE_HEADROOM_G
+                && *vertical_g <= max_allowed_vertical_g
                 && lateral_g.is_finite()
                 && lateral_g.abs() <= MAXIMUM_FULLY_BANKED_LATERAL_G
                 && geometry.knots.iter().all(|knot| {
@@ -2363,11 +2499,11 @@ fn turn_radius_matches_intent(
     size: TurnSizeHint,
     radius_m: f64,
     grid_step_m: f64,
-    rules: ShapedElementRules,
+    profile: ShapedProfile,
 ) -> bool {
     if !radius_m.is_finite()
-        || radius_m < rules.minimum_turn_radius_m
-        || radius_m > rules.maximum_turn_radius_m
+        || radius_m < profile.minimum_turn_radius_m
+        || radius_m > profile.maximum_turn_radius_m
         || !stored_radius_is_grid_aligned(radius_m, grid_step_m)
     {
         return false;
@@ -2376,8 +2512,8 @@ fn turn_radius_matches_intent(
         TurnSizeHint::Auto => true,
         TurnSizeHint::Radius(requested_radius_m) => {
             if !requested_radius_m.is_finite()
-                || requested_radius_m < rules.minimum_turn_radius_m
-                || requested_radius_m > rules.maximum_turn_radius_m
+                || requested_radius_m < profile.minimum_turn_radius_m
+                || requested_radius_m > profile.maximum_turn_radius_m
             {
                 return false;
             }
@@ -2538,37 +2674,60 @@ mod provisional_hill_reporting_tests {
 mod turn_radius_guard_tests {
     use super::*;
 
-    fn test_rules() -> ShapedElementRules {
-        ShapedElementRules {
-            allow_airtime_hills: true,
-            allow_fully_banked_turns: true,
+    fn test_profile() -> ShapedProfile {
+        ShapedProfile {
+            minimum_speed_mps: 20.0,
+            maximum_speed_mps: 36.0,
+            minimum_cars: 4,
+            maximum_cars: 8,
             default_floater_g: -0.5,
             default_strong_floater_g: -0.85,
-            steel_ejector_g: -1.2,
-            wooden_ejector_g: -0.8,
+            default_ejector_g: -1.2,
+            typical_hill_feels: &[HillFeel::Floater, HillFeel::StrongFloater],
+            strong_floater_minimum_speed_mps: 24.0,
+            strong_floater_minimum_target_g: -0.75,
             hill_pull_g: 2.0,
+            hill_height_energy_fraction: 0.4,
             turn_vertical_g: 3.0,
             maximum_bank_degrees: 75.0,
             minimum_turn_radius_m: 5.0,
             maximum_turn_radius_m: 256.0,
+            finish_turn_max_vertical_g: 3.5,
+            finish_turn_max_lateral_g: 0.6,
         }
     }
 
     #[test]
     fn explicit_radius_matches_its_grid_value_and_stays_within_model_limits() {
-        let rules = test_rules();
+        let profile = test_profile();
         let size = TurnSizeHint::Radius(64.0);
 
-        assert!(turn_radius_matches_intent(size, 64.0, 2.0, rules));
-        assert!(!turn_radius_matches_intent(size, 80.0, 2.0, rules));
-        assert!(!turn_radius_matches_intent(size, 62.0, 2.0, rules));
-        assert!(!turn_radius_matches_intent(size, 258.0, 2.0, rules));
+        assert!(turn_radius_matches_intent(size, 64.0, 2.0, profile));
+        assert!(!turn_radius_matches_intent(size, 80.0, 2.0, profile));
+        assert!(!turn_radius_matches_intent(size, 62.0, 2.0, profile));
+        assert!(!turn_radius_matches_intent(size, 258.0, 2.0, profile));
         assert!(!turn_radius_matches_intent(
             TurnSizeHint::Radius(258.0),
             256.0,
             2.0,
-            rules
+            profile
         ));
+    }
+
+    #[test]
+    fn solver_source_names_no_coaster_model_key() {
+        let source = include_str!("shaped.rs");
+        let production_source = source
+            .split("\n#[cfg(test)]\n")
+            .next()
+            .expect("shaped.rs has production source before tests");
+        for model in crate::track::coaster_models() {
+            let quoted_key = format!("\"{}\"", model.key);
+            assert!(
+                !production_source.contains(&quoted_key),
+                "shaped.rs production code must read ShapedProfile instead of naming model key {quoted_key}"
+            );
+        }
     }
 
     #[test]

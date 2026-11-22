@@ -14,9 +14,8 @@ use crate::physics::{
     ForcePeakValues, GRAVITY, PhysicsConfig, PreviewCache, PreviewStatus, TestSample, TrackPreview,
 };
 use crate::track::shaped::{
-    ElementIntent, ElementSpec, MAXIMUM_SHAPED_SPEED_MPS, MINIMUM_SHAPED_SPEED_MPS,
-    ShapedConstructionError, SolveContext, SolveRefusal, TurnSizeHint, automatic_turn_radius_m,
-    model_supports_shaped_elements, solve, turn_exit,
+    ElementIntent, ElementSpec, ShapedConstructionError, SolveContext, SolveRefusal, TurnSizeHint,
+    automatic_turn_radius_m, model_supports_shaped_elements, solve, turn_exit,
 };
 use crate::track::{
     Bank, ENVELOPE_DISPLAY_LIMITS, Hand, HorizontalCurvature, RatedSpeeds, Slope,
@@ -52,11 +51,6 @@ pub const FORCE_HEADROOM_G: f64 = 0.25;
 /// Shaped turns solved per search depth across the beam, chosen by the rank their routes would
 /// have; each solve costs one to three short simulations.
 const SHAPED_TURNS_PER_DEPTH: usize = 2;
-/// The owner's ceiling for sustained positive force on steel coasters (3.0 to 3.5 g). Finish
-/// turns hold their worst-car peak under it, which keeps the sustained force under it too.
-const MAXIMUM_SHAPED_TURN_VERTICAL_G: f64 = 3.5;
-/// The owner's lateral ceiling on steel coasters, checked on finish turns.
-const MAXIMUM_SHAPED_TURN_LATERAL_G: f64 = 0.6;
 /// Straight track a shaped turn leaves before the station entry. A train waiting in the
 /// station rests its last cars on the track behind the entry, and on a steeply banked turn they
 /// feel lateral force at dispatch: on Horizon Hawk, 0.62 g with one tile of straight and 0.44 g
@@ -709,6 +703,9 @@ impl CompletionSearch {
         let model = node.construction.model();
         let end = node.construction.end();
         let estimated_speed = node.speed_squared_estimate.max(0.0).sqrt();
+        let Some(profile) = model.shaped_profile else {
+            return Vec::new();
+        };
         if !self.physics_checked
             || !model_supports_shaped_elements(model, &model.train)
             || end.heading.index() % 2 != 0
@@ -716,11 +713,10 @@ impl CompletionSearch {
             || end.bank != Bank::Level
             || end.horizontal_curvature != HorizontalCurvature::Straight
             || end.vertical_curvature != VerticalCurvature::Straight
-            || !(MINIMUM_SHAPED_SPEED_MPS..=MAXIMUM_SHAPED_SPEED_MPS).contains(&estimated_speed)
+            || !(profile.minimum_speed_mps..=profile.maximum_speed_mps).contains(&estimated_speed)
         {
             return Vec::new();
         }
-        let rules = model.shaped_element_rules();
         let automatic_radius = automatic_turn_radius_m(
             model,
             &model.train,
@@ -728,18 +724,22 @@ impl CompletionSearch {
             estimated_speed,
             construction_preview_physics(),
         );
+        let max_vertical_g = match self.judge {
+            FinishForceJudge::DesignTargets => profile.finish_turn_max_vertical_g,
+            FinishForceJudge::Envelope => ENVELOPE_DISPLAY_LIMITS.maximum_vertical_g,
+        };
         // Positive force grows roughly with the inverse radius at the automatic turn's bank.
         let force_limited_radius = automatic_radius
-            * (crate::math::powi(rules.turn_vertical_g, 2) - 1.0).sqrt()
-            / (crate::math::powi(MAXIMUM_SHAPED_TURN_VERTICAL_G, 2) - 1.0).sqrt();
-        let smallest_step = (force_limited_radius.max(rules.minimum_turn_radius_m)
+            * (crate::math::powi(profile.turn_vertical_g, 2) - 1.0).sqrt()
+            / (crate::math::powi(max_vertical_g, 2) - 1.0).sqrt();
+        let smallest_step = (force_limited_radius.max(profile.minimum_turn_radius_m)
             / SHAPED_TURN_RADIUS_STEP_METRES)
             .ceil() as u32;
         // Calibration banks a turn one grid step wider than the automatic size within the
         // lateral limit, but not two (measured at 22.8 and 23.0 m/s).
         let largest_step = ((automatic_radius + SHAPED_TURN_RADIUS_STEP_METRES)
             .min(distance(end, self.target))
-            .min(rules.maximum_turn_radius_m)
+            .min(profile.maximum_turn_radius_m)
             / SHAPED_TURN_RADIUS_STEP_METRES)
             .floor() as u32;
         [Hand::Left, Hand::Right]
@@ -801,18 +801,25 @@ impl CompletionSearch {
             preview_cache: &mut cache,
             physics,
         };
+        let Some(profile) = model.shaped_profile else {
+            return;
+        };
+        let max_vertical_g = match self.judge {
+            FinishForceJudge::DesignTargets => profile.finish_turn_max_vertical_g,
+            FinishForceJudge::Envelope => ENVELOPE_DISPLAY_LIMITS.maximum_vertical_g,
+        };
         let refusal = match solve(&intent, &mut context) {
             Ok(solved) => {
                 let ElementSpec::Turn { vertical_g, .. } = solved.spec else {
                     unreachable!("a turn intent solves to a turn")
                 };
                 assert_eq!(shaped_turn_intent(&solved.spec), intent);
-                if vertical_g <= MAXIMUM_SHAPED_TURN_VERTICAL_G {
+                if vertical_g <= max_vertical_g {
                     self.try_candidate(solved.piece, world, obstacles);
                     return;
                 }
                 format!(
-                    "{:?} turn of radius {:.0} m at {entry_speed_mps:.1} m/s reaches {vertical_g:.2} g, over the {MAXIMUM_SHAPED_TURN_VERTICAL_G:.1} g positive-force target",
+                    "{:?} turn of radius {:.0} m at {entry_speed_mps:.1} m/s reaches {vertical_g:.2} g, over the {max_vertical_g:.1} g positive-force target",
                     turn.hand, turn.radius_m
                 )
             }
@@ -950,16 +957,18 @@ impl CompletionSearch {
                             ),
                         });
                     }
-                    if piece.element_spec().is_some() {
+                    if piece.element_spec().is_some()
+                        && let Some(profile) = model.shaped_profile
+                    {
                         for (observed_g, target_g, axis) in [
                             (
                                 worst_car_peaks.maximum_lateral_g.abs(),
-                                MAXIMUM_SHAPED_TURN_LATERAL_G,
+                                profile.finish_turn_max_lateral_g,
                                 "lateral",
                             ),
                             (
                                 worst_car_peaks.maximum_vertical_g,
-                                MAXIMUM_SHAPED_TURN_VERTICAL_G,
+                                profile.finish_turn_max_vertical_g,
                                 "positive vertical",
                             ),
                         ] {

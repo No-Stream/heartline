@@ -297,6 +297,8 @@ pub struct CoasterModel {
     pub cars_per_train: std::ops::RangeInclusive<u8>,
     #[serde(skip)]
     pub ui_description: &'static str,
+    #[serde(skip)]
+    pub shaped_profile: Option<crate::track::shaped::ShapedProfile>,
     #[serde(with = "crate::save::catalog_text")]
     pub manufacturer: crate::save::CatalogText,
     #[serde(with = "crate::save::catalog_text")]
@@ -358,7 +360,7 @@ impl CoasterModel {
 
     pub fn allows_piece(&self, piece: &Piece) -> bool {
         (self.allowed_pieces.contains(&piece.id)
-            || is_resolved_shaped_piece(piece, self.shaped_element_rules()))
+            || is_resolved_shaped_piece(piece, self.shaped_profile))
             && (piece.entry.heading == piece.exit.heading
                 || piece.entry.slope == Slope::Level
                 || self.sloped_turn_slopes.contains(&piece.entry.slope))
@@ -396,17 +398,19 @@ impl CoasterModel {
 
 fn is_resolved_shaped_piece(
     piece: &Piece,
-    rules: crate::track::shaped::ShapedElementRules,
+    profile: Option<crate::track::shaped::ShapedProfile>,
 ) -> bool {
     use crate::track::shaped::ElementSpec;
 
+    let Some(profile) = profile else {
+        return false;
+    };
+
     match (&piece.id, &piece.shape) {
-        (PieceId::ShapedHill, Shape::ShapedProfile { spec }) if rules.allow_airtime_hills => {
+        (PieceId::ShapedHill, Shape::ShapedProfile { spec }) => {
             matches!(spec.as_ref(), ElementSpec::Hill { .. })
         }
-        (PieceId::ShapedTurnLeft, Shape::ResolvedBank { spec })
-            if rules.allow_fully_banked_turns =>
-        {
+        (PieceId::ShapedTurnLeft, Shape::ResolvedBank { spec }) => {
             matches!(
                 spec.as_ref(),
                 ElementSpec::Turn {
@@ -416,14 +420,12 @@ fn is_resolved_shaped_piece(
                     bank_degrees,
                     ..
                 } if lateral_g.abs() <= 0.15
-                    && *radius_m >= rules.minimum_turn_radius_m
-                    && *radius_m <= rules.maximum_turn_radius_m
-                    && *bank_degrees <= rules.maximum_bank_degrees
+                    && *radius_m >= profile.minimum_turn_radius_m
+                    && *radius_m <= profile.maximum_turn_radius_m
+                    && *bank_degrees <= profile.maximum_bank_degrees
             )
         }
-        (PieceId::ShapedTurnRight, Shape::ResolvedBank { spec })
-            if rules.allow_fully_banked_turns =>
-        {
+        (PieceId::ShapedTurnRight, Shape::ResolvedBank { spec }) => {
             matches!(
                 spec.as_ref(),
                 ElementSpec::Turn {
@@ -433,9 +435,9 @@ fn is_resolved_shaped_piece(
                     bank_degrees,
                     ..
                 } if lateral_g.abs() <= 0.15
-                    && *radius_m >= rules.minimum_turn_radius_m
-                    && *radius_m <= rules.maximum_turn_radius_m
-                    && *bank_degrees <= rules.maximum_bank_degrees
+                    && *radius_m >= profile.minimum_turn_radius_m
+                    && *radius_m <= profile.maximum_turn_radius_m
+                    && *bank_degrees <= profile.maximum_bank_degrees
             )
         }
         _ => false,
@@ -479,6 +481,7 @@ impl<'de> serde::Deserialize<'de> for CoasterModel {
             key: identity.key,
             cars_per_train: identity.cars_per_train,
             ui_description: identity.ui_description,
+            shaped_profile: identity.shaped_profile,
             manufacturer: saved.manufacturer,
             name: saved.name,
             description: saved.description,
@@ -514,6 +517,7 @@ pub fn wooden_twister_model() -> CoasterModel {
         key: "wooden_twister",
         cars_per_train: 4..=12,
         ui_description: "Twisting wooden track on a dense wooden structure, with a chain lift and articulated trains.",
+        shaped_profile: None,
         manufacturer: "Great Coaster Workshop",
         name: "Briar Blitz",
         description: "An articulated wooden twister with a chain lift and dense timber structure. The steel-structure loop is a plausible extension.",
@@ -670,6 +674,7 @@ pub fn hybrid_model() -> CoasterModel {
         key: "hybrid",
         cars_per_train: 4..=8,
         ui_description: "Steel box track on a wooden structure.",
+        shaped_profile: None,
         manufacturer: "Rocky Road Construction",
         name: "Timber Tumbler",
         description: "Steel box track on a wooden structure. Some elements are plausible extensions beyond the rides that inspired this model.",
@@ -896,6 +901,7 @@ pub fn multi_launch_model() -> CoasterModel {
         key: "velocity_viper",
         cars_per_train: 3..=6,
         ui_description: "Multi-launch steel track and columns with short, standard, and long launch sections.",
+        shaped_profile: None,
         manufacturer: "Impulse Engineering",
         name: "Velocity Viper",
         description: "A steel coaster with linear motor launches. Some elements are plausible extensions beyond the rides that inspired this model.",
@@ -1121,6 +1127,7 @@ pub fn family_coaster_model() -> CoasterModel {
         key: "family_coaster",
         cars_per_train: 4..=10,
         ui_description: "A gentle steel family coaster with a curving lift, soft floaty hills and turns banked for speed. Children from 100 cm can ride.",
+        shaped_profile: None,
         manufacturer: "Windmill Ride Works",
         name: "Daisy Dash",
         description: "A low steel family coaster with a tyre-driven curving lift, gentle drops, floaty family hills and turns banked for speed. No inversions.",
@@ -1240,6 +1247,28 @@ pub fn family_coaster_model() -> CoasterModel {
     }
 }
 
+const HYPER_SHAPED_PROFILE: crate::track::shaped::ShapedProfile =
+    crate::track::shaped::ShapedProfile {
+        minimum_speed_mps: 22.0,
+        maximum_speed_mps: 36.0,
+        minimum_cars: 4,
+        maximum_cars: 8,
+        default_floater_g: -0.5,
+        default_strong_floater_g: -0.85,
+        default_ejector_g: -1.2,
+        typical_hill_feels: &[super::HillFeel::Floater, super::HillFeel::StrongFloater],
+        strong_floater_minimum_speed_mps: 24.0,
+        strong_floater_minimum_target_g: -0.75,
+        hill_pull_g: 3.3,
+        hill_height_energy_fraction: 0.4,
+        turn_vertical_g: 2.9,
+        maximum_bank_degrees: 75.0,
+        minimum_turn_radius_m: 8.0,
+        maximum_turn_radius_m: 256.0,
+        finish_turn_max_vertical_g: 3.5,
+        finish_turn_max_lateral_g: 0.6,
+    };
+
 /// A steel hyper coaster: a tall straight chain lift, a 60-degree first drop, long floater camelbacks and wide
 /// turns banked for speed, with four-across trains and no inversions or launches.
 pub fn hyper_model() -> CoasterModel {
@@ -1247,6 +1276,7 @@ pub fn hyper_model() -> CoasterModel {
         key: "hyper",
         cars_per_train: 4..=8,
         ui_description: "A tall steel hyper coaster with a straight chain lift, a steep first drop, long floater camelbacks and wide turns banked for speed. Four riders across, no inversions.",
+        shaped_profile: Some(HYPER_SHAPED_PROFILE),
         manufacturer: "Boulder & Marlin",
         name: "Horizon Hawk",
         description: "A steel hyper coaster with a straight chain lift, a 60-degree first drop, long floater camelbacks, wide turns banked for speed and four-across open trains. No inversions or launches.",

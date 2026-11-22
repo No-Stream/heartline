@@ -2042,7 +2042,7 @@ fn render_shaped_choices(session: &mut BuilderSession) -> Result<CommandReply, S
         ),
     ];
     let current_selection = session.simulation().construction_selected();
-    let (model_key, vertical_limits, lateral_limit, rules) = {
+    let (model_key, vertical_limits, lateral_limit, profile) = {
         let construction = session
             .simulation()
             .construction
@@ -2056,7 +2056,7 @@ fn render_shaped_choices(session: &mut BuilderSession) -> Result<CommandReply, S
                 model.design_force_targets.maximum_vertical_g,
             ),
             model.design_force_targets.maximum_lateral_g,
-            model.shaped_element_rules(),
+            model.shaped_profile,
         )
     };
     let mut rows = Vec::with_capacity(SHAPED_SELECTIONS.len());
@@ -2072,20 +2072,24 @@ fn render_shaped_choices(session: &mut BuilderSession) -> Result<CommandReply, S
             .cloned()
             .or_else(|| preview.get("previewUnavailableReason").cloned())
             .unwrap_or_else(|| json!(""));
+        let model_limits = profile.map(|profile| {
+            json!({
+                "verticalG": [vertical_limits.0, vertical_limits.1],
+                "lateralG": lateral_limit,
+                "floaterG": profile.default_floater_g,
+                "strongFloaterG": profile.default_strong_floater_g,
+                "ejectorG": profile.default_ejector_g,
+                "turnRadiusM": [profile.minimum_turn_radius_m, profile.maximum_turn_radius_m],
+                "maximumBankDegrees": profile.maximum_bank_degrees,
+                "speedRangeMps": [profile.minimum_speed_mps, profile.maximum_speed_mps],
+                "carsRange": [profile.minimum_cars, profile.maximum_cars],
+            })
+        });
         rows.push(json!({
             "id": id,
             "name": name,
             "group": "shapes",
-            "modelLimits": {
-                "verticalG": [vertical_limits.0, vertical_limits.1],
-                "lateralG": lateral_limit,
-                "floaterG": rules.default_floater_g,
-                "strongFloaterG": rules.default_strong_floater_g,
-                "steelEjectorG": rules.steel_ejector_g,
-                "woodenEjectorG": rules.wooden_ejector_g,
-                "turnRadiusM": [rules.minimum_turn_radius_m, rules.maximum_turn_radius_m],
-                "maximumBankDegrees": rules.maximum_bank_degrees,
-            },
+            "modelLimits": model_limits,
             "refusal": refusal,
             "wouldTunnel": preview["wouldTunnel"],
             "ratedWindow": null,
@@ -2101,19 +2105,26 @@ fn render_shaped_choices(session: &mut BuilderSession) -> Result<CommandReply, S
         }));
     }
     restore_selection(session, &current_selection)?;
-    let mut text = format!(
-        "Model {model_key} limits: vertical {:+.2} to {:+.2} g, lateral up to {:.2} g; default hill targets floater {:+.2} g, strong floater {:+.2} g, ejector steel {:+.2} g or wood {:+.2} g; turn radius {:.1} to {:.1} m, bank up to {:.1} degrees.\n",
-        vertical_limits.0,
-        vertical_limits.1,
-        lateral_limit,
-        rules.default_floater_g,
-        rules.default_strong_floater_g,
-        rules.steel_ejector_g,
-        rules.wooden_ejector_g,
-        rules.minimum_turn_radius_m,
-        rules.maximum_turn_radius_m,
-        rules.maximum_bank_degrees,
-    );
+    let mut text = if let Some(profile) = profile {
+        format!(
+            "Model {model_key} limits: vertical {:+.2} to {:+.2} g, lateral up to {:.2} g; speed {:.0} to {:.0} m/s ({}–{} cars); default hill targets floater {:+.2} g, strong floater {:+.2} g, ejector {:+.2} g; turn radius {:.1} to {:.1} m, bank up to {:.1} degrees.\n",
+            vertical_limits.0,
+            vertical_limits.1,
+            lateral_limit,
+            profile.minimum_speed_mps,
+            profile.maximum_speed_mps,
+            profile.minimum_cars,
+            profile.maximum_cars,
+            profile.default_floater_g,
+            profile.default_strong_floater_g,
+            profile.default_ejector_g,
+            profile.minimum_turn_radius_m,
+            profile.maximum_turn_radius_m,
+            profile.maximum_bank_degrees,
+        )
+    } else {
+        format!("Model {model_key} does not support shaped elements.\n")
+    };
     text.push_str(
         "id                                   name                     design m/s delivered g size                 refusal\n",
     );

@@ -1037,34 +1037,71 @@ fn browse_uses_one_preview_and_confirmation_reuses_it_for_the_secant() {
 }
 
 #[test]
-fn force_margin_caps_strong_floater_in_five_hundredths_of_a_g() {
+fn force_margin_caps_hill_targets_past_astm_envelope_in_five_hundredths_of_a_g() {
     let model = hyper_model();
     let (_, _, solved) = solve_with_prefix(
         ElementIntent::Hill {
             feel: HillFeel::StrongFloater,
-            strength_g: -1.5,
+            strength_g: -1.8,
             size: HillSizeHint::Auto,
         },
         &model,
         4,
         34.0,
     )
-    .expect("strong-floater target is capped to a feasible hyper target");
+    .expect("target past the ASTM envelope is capped to a feasible hyper target");
     let cap = solved
         .cap_note
         .expect("capped intent reports the selected cap");
-    eprintln!(
-        "strong-floater cap requested={:.2} g capped={:.2} g delivered={:.2} g previews={}",
-        cap.requested_target_g, cap.capped_target_g, cap.delivered_g, solved.calibration_runs
+    assert_eq!(cap.requested_target_g, -1.8);
+    assert!(
+        cap.capped_target_g >= theme_park_sim::track::ENVELOPE_DISPLAY_LIMITS.minimum_vertical_g
     );
-    assert_eq!(cap.requested_target_g, -1.5);
-    let model_headroom_floor_g = model.design_force_targets.minimum_vertical_g + 0.25;
-    assert!(cap.capped_target_g >= model_headroom_floor_g);
-    assert!(cap.capped_target_g <= -0.75);
     let cap_steps = (cap.capped_target_g - cap.requested_target_g) / 0.05;
     assert!((cap_steps - cap_steps.round()).abs() <= 1e-8);
     assert!((cap.delivered_g - cap.capped_target_g).abs() <= 0.05);
+    assert!(solved.exceeds_model_feel);
     assert!((1..=4).contains(&solved.calibration_runs));
+}
+
+#[test]
+fn hyper_allows_true_ejector_and_intense_manual_turns_up_to_astm_envelope() {
+    let model = hyper_model();
+    let (_, _, floater) = solve_with_prefix(
+        ElementIntent::Hill {
+            feel: HillFeel::Floater,
+            strength_g: default_hill_strength(HillFeel::Floater, &model),
+            size: HillSizeHint::Auto,
+        },
+        &model,
+        8,
+        34.0,
+    )
+    .expect("typical hyper floater solves");
+    assert!(!floater.exceeds_model_feel);
+
+    let (_, _, ejector) = solve_with_prefix(
+        ElementIntent::Hill {
+            feel: HillFeel::Ejector,
+            strength_g: default_hill_strength(HillFeel::Ejector, &model),
+            size: HillSizeHint::Auto,
+        },
+        &model,
+        8,
+        34.0,
+    )
+    .expect("true ejector hill solves on hyper within ASTM envelope");
+    let ElementSpec::Hill {
+        target_g,
+        delivered_g,
+        ..
+    } = ejector.spec
+    else {
+        panic!("hill intent resolved to a turn");
+    };
+    assert_eq!(target_g, -1.2);
+    assert!((delivered_g - target_g).abs() <= 0.05);
+    assert!(ejector.exceeds_model_feel);
 }
 
 #[test]

@@ -1,10 +1,10 @@
 ---
 id: TASK-167
 title: Shaped elements for every coaster model
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-21 16:05'
-updated_date: '2026-11-21 21:25'
+updated_date: '2026-11-22 04:52'
 labels: []
 dependencies: []
 ordinal: 161000

@@ -56,9 +56,13 @@ fn preview_actual_trains_on_offline_profiles() {
             model.train.cars = cars;
             for entry_speed_mps in ENTRY_SPEEDS_MPS {
                 for (feel, crest_g) in hill_feels(&model) {
+                    let pull_g = model.shaped_profile.map_or_else(
+                        || (model.design_force_targets.maximum_vertical_g - 0.5).min(2.0),
+                        |profile| profile.hill_pull_g,
+                    );
                     let spec = OfflineHillSpec {
                         entry_speed_mps,
-                        pull_g: model.shaped_element_rules().hill_pull_g,
+                        pull_g,
                         crest_g,
                         flank_angle_radians: 35.0_f64.to_radians(),
                         taper_angle_radians: None,
