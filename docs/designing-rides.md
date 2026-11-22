@@ -108,7 +108,7 @@ Shaped elements are supported on all five coaster models, each driven by its own
 
 | Model | Cars | Entry speed | Typical hill feels | Default targets (`floater` / `strong-floater` / `ejector`) | Auto turn vertical / max bank | Finish turn ceiling |
 | --- | --- | --- | --- | --- | --- | --- |
-| `hyper` (Horizon Hawk) | 4–8 | 22–36 m/s | `floater`, `strong-floater` | -0.50 / -0.85 / -1.20 g | 2.9 g / 75° | 3.5 g vert, 0.6 g lat |
+| `hyper` (Horizon Hawk) | 4–8 | 22–44 m/s | `floater`, `strong-floater` | -0.50 / -0.85 / -1.20 g | 2.9 g / 75° | 3.5 g vert, 0.6 g lat |
 | `velocity_viper` (Velocity Viper) | 3–6 | 20–36 m/s | `floater`, `strong-floater`, `ejector` | -0.50 / -0.85 / -1.05 g | 3.2 g / 75° | 3.5 g vert, 0.6 g lat |
 | `hybrid` (Timber Tumbler) | 4–8 | 20–36 m/s | `floater`, `strong-floater`, `ejector` | -0.50 / -0.85 / -1.05 g | 3.1 g / 75° | 3.5 g vert, 0.6 g lat |
 | `wooden_twister` (Briar Blitz) | 4–12 | 18–30 m/s | `floater`, `strong-floater` | -0.50 / -0.60 / -0.80 g | 1.9 g / 60° | 3.5 g vert, 0.6 g lat |
@@ -344,6 +344,10 @@ The 68 m turn delivers 3.4 g vertical with 0.1 g lateral, and the 24 m strong fl
 The ending is where the earlier attempts failed. After the last banked turn, the train is still doing 27 m/s, so two `Brakes` pieces take it to 23.3 m/s. `LevelToGentleUp`, two `OneTileGentleUp` and `GentleUpToLevel` climb to 24 m, and `LevelToGentleDown`, `OneTileGentleDown` and `LongGentleDownToLevel` come back down to 10 m, the station's height. Three automatically sized banked turns (38, 38 and 36 m), a 28 m left turn, a straight, a 36 m right turn and two straights then line the train up with the station, and `close` ends the ride. The result has 44 steps and 41 pieces.
 
 The check passes under both physics configurations. In the construction test and under default physics respectively, excitement is 7.42 and 6.71, sustained maximum vertical force is 3.31 and 3.28 g, sustained airtime is -0.94 and -0.91 g, and peak lateral force is 0.44 and 0.14 g, with 7 airtime moments in both. The tightest margins are construction-test forward force (0.08 g of headroom, on the first drop) and the `WideSixtyDownToLevel` rated window (+0.99 m/s). The focused browser agreement test passed for this ride before it merged (TASK-156 notes); I did not rerun it for this guide.
+
+## Giga drops on the hyper
+
+A first drop of 90 m or more ends in `GigaSixtyDownToLevel`, which is solved for 3.5 g at a 43.5 m/s bottom speed and drops about 44 m by itself. Sky Harrier (`content/rides/sky-harrier.ride.json`) uses a 104 m crest, `WideLevelToSixtyDown`, two `SixtyDown` and the giga pullout: a 94 m drop that the eight-car train leaves at 42.5 m/s with 3.25 to 3.33 g in the pullout. The rear car reaches the pullout about 4.7 m/s faster than the front car, so its rated-window margin (about +0.3 m/s in the construction test) is the one to watch; a third `SixtyDown` above the pullout pushes it out of its window. `WideSixtyDownToLevel` stays the pullout for Horizon Hawk-sized drops of about 60 m.
 
 ## Where to look next
 
