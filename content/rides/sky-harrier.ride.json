@@ -27,11 +27,11 @@
     ],
     "maxLateralG": 0.6,
     "inversions": 0,
-    "airtimeMomentsAtLeast": 5,
+    "airtimeMomentsAtLeast": 6,
     "withinComfortableForceLimits": true,
     "launches": 0,
-    "biggestDropAtLeast": 85,
-    "maxSpeedAtLeast": 40,
+    "biggestDropAtLeast": 90,
+    "maxSpeedAtLeast": 41,
     "features": {
       "piecePrefixesAtLeast": {
         "ShapedHill": 5,
@@ -70,6 +70,12 @@
       "place": "OneTileGentleUp"
     },
     {
+      "place": "OneTileGentleUp"
+    },
+    {
+      "place": "OneTileGentleUp"
+    },
+    {
       "place": "GentleUpToLevel"
     },
     {
@@ -79,7 +85,31 @@
       "place": "WideLevelToSixtyDown"
     },
     {
+      "place": "SixtyDown"
+    },
+    {
+      "place": "SixtyDown"
+    },
+    {
       "place": "GigaSixtyDownToLevel"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "OneTileStraight"
+    },
+    {
+      "place": "HalfTileStraight"
     },
     {
       "intent": {
@@ -93,20 +123,20 @@
       },
       "spec": {
         "kind": "hill",
-        "design_speed_mps": 41.212945,
+        "design_speed_mps": 42.094393,
         "cars": 8,
         "target_g": -0.95,
-        "delivered_g": -0.944022,
-        "height_m": 43.848749,
-        "span_m": 262,
+        "delivered_g": -0.943385,
+        "height_m": 44.02643,
+        "span_m": 272,
         "train_length_metres": "20",
         "target_height_m": "44",
         "pull_g": "3.3",
-        "crest_g": "-1.062655",
-        "flank_angle_degrees": "33.08203125",
-        "profile_grid_half_tiles": 131,
+        "crest_g": "-1.061969",
+        "flank_angle_degrees": "31.94140625",
+        "profile_grid_half_tiles": 136,
         "diagonal": false,
-        "geometry_digest": "3170132530321776190"
+        "geometry_digest": "16355224788048924215"
       }
     },
     {
@@ -120,18 +150,18 @@
       },
       "spec": {
         "kind": "turn",
-        "design_speed_mps": 39.913552,
+        "design_speed_mps": 40.730341,
         "cars": 8,
         "hand": "Left",
-        "vertical_g": 3.070085,
-        "lateral_g": 0.091535,
+        "vertical_g": 3.208788,
+        "lateral_g": 0.124358,
         "radius_m": 100,
         "bank_degrees": 69.828729,
         "train_length_metres": "20",
         "geometry_peak_bank_radians": "1.2187412274858929",
-        "geometry_speed_loss_fraction": "0.012646613812252865",
+        "geometry_speed_loss_fraction": "0.01305021450003756",
         "geometry_radius_m": "100",
-        "geometry_digest": "5756101657070187131"
+        "geometry_digest": "2306670921806581849"
       }
     },
     {
@@ -145,18 +175,18 @@
       },
       "spec": {
         "kind": "turn",
-        "design_speed_mps": 38.985903,
+        "design_speed_mps": 39.79205,
         "cars": 8,
         "hand": "Left",
-        "vertical_g": 3.070538,
-        "lateral_g": 0.092877,
+        "vertical_g": 3.179625,
+        "lateral_g": 0.114884,
         "radius_m": 96,
         "bank_degrees": 69.828729,
         "train_length_metres": "20",
         "geometry_peak_bank_radians": "1.2187412274858929",
-        "geometry_speed_loss_fraction": "0.01219814916121928",
+        "geometry_speed_loss_fraction": "0.012587274459400671",
         "geometry_radius_m": "96",
-        "geometry_digest": "15889327753997758124"
+        "geometry_digest": "10340322287114651490"
       }
     },
     {
@@ -171,20 +201,20 @@
       },
       "spec": {
         "kind": "hill",
-        "design_speed_mps": 38.105928,
+        "design_speed_mps": 38.902427,
         "cars": 8,
         "target_g": -1.05,
-        "delivered_g": -1.042721,
-        "height_m": 36.118509,
-        "span_m": 222,
+        "delivered_g": -1.045319,
+        "height_m": 36.151991,
+        "span_m": 230,
         "train_length_metres": "20",
         "target_height_m": "36",
         "pull_g": "3.3",
-        "crest_g": "-1.151112",
-        "flank_angle_degrees": "32.2265625",
-        "profile_grid_half_tiles": 111,
+        "crest_g": "-1.151688",
+        "flank_angle_degrees": "31.0859375",
+        "profile_grid_half_tiles": 115,
         "diagonal": false,
-        "geometry_digest": "10080375788036899288"
+        "geometry_digest": "1697387302879478203"
       }
     },
     {
@@ -198,18 +228,18 @@
       },
       "spec": {
         "kind": "turn",
-        "design_speed_mps": 37.038919,
+        "design_speed_mps": 37.786429,
         "cars": 8,
         "hand": "Right",
-        "vertical_g": 2.804001,
-        "lateral_g": 0.073558,
+        "vertical_g": 2.897113,
+        "lateral_g": 0.054653,
         "radius_m": 96,
         "bank_degrees": 69.828729,
         "train_length_metres": "20",
         "geometry_peak_bank_radians": "1.2187412274858929",
-        "geometry_speed_loss_fraction": "0.011291188757015999",
+        "geometry_speed_loss_fraction": "0.011633906259969481",
         "geometry_radius_m": "96",
-        "geometry_digest": "1953161943412972431"
+        "geometry_digest": "9555588242827334972"
       }
     },
     {
@@ -223,18 +253,18 @@
       },
       "spec": {
         "kind": "turn",
-        "design_speed_mps": 36.183214,
+        "design_speed_mps": 36.921687,
         "cars": 8,
         "hand": "Left",
-        "vertical_g": 2.786561,
-        "lateral_g": 0.080866,
+        "vertical_g": 2.902445,
+        "lateral_g": 0.057295,
         "radius_m": 92,
         "bank_degrees": 69.828729,
         "train_length_metres": "20",
         "geometry_peak_bank_radians": "1.2187412274858929",
-        "geometry_speed_loss_fraction": "0.010907272079728126",
+        "geometry_speed_loss_fraction": "0.01123806152763911",
         "geometry_radius_m": "92",
-        "geometry_digest": "17176859943958260529"
+        "geometry_digest": "9862268899311124639"
       }
     },
     {
@@ -249,20 +279,20 @@
       },
       "spec": {
         "kind": "hill",
-        "design_speed_mps": 35.369979,
+        "design_speed_mps": 36.100585,
         "cars": 8,
         "target_g": -1.05,
-        "delivered_g": -1.045656,
-        "height_m": 29.943462,
-        "span_m": 192,
+        "delivered_g": -1.045538,
+        "height_m": 29.875145,
+        "span_m": 200,
         "train_length_metres": "20",
         "target_height_m": "30",
         "pull_g": "3.3",
-        "crest_g": "-1.140675",
-        "flank_angle_degrees": "30.80078125",
-        "profile_grid_half_tiles": 96,
+        "crest_g": "-1.141001",
+        "flank_angle_degrees": "29.66015625",
+        "profile_grid_half_tiles": 100,
         "diagonal": false,
-        "geometry_digest": "5736606927767095544"
+        "geometry_digest": "15961201665670037078"
       }
     },
     {
@@ -280,20 +310,20 @@
       },
       "spec": {
         "kind": "hill",
-        "design_speed_mps": 32.974987,
+        "design_speed_mps": 33.688639,
         "cars": 8,
         "target_g": -0.95,
-        "delivered_g": -0.94771,
-        "height_m": 23.864496,
-        "span_m": 168,
+        "delivered_g": -0.947121,
+        "height_m": 23.994298,
+        "span_m": 174,
         "train_length_metres": "20",
         "target_height_m": "24",
         "pull_g": "3.3",
-        "crest_g": "-1.026567",
-        "flank_angle_degrees": "27.6640625",
-        "profile_grid_half_tiles": 84,
+        "crest_g": "-1.026802",
+        "flank_angle_degrees": "26.80859375",
+        "profile_grid_half_tiles": 87,
         "diagonal": false,
-        "geometry_digest": "13534611482549236395"
+        "geometry_digest": "4566175479424686424"
       }
     },
     {
@@ -307,18 +337,18 @@
       },
       "spec": {
         "kind": "turn",
-        "design_speed_mps": 32.192765,
+        "design_speed_mps": 32.874417,
         "cars": 8,
         "hand": "Left",
-        "vertical_g": 3.122126,
-        "lateral_g": 0.101925,
+        "vertical_g": 3.280202,
+        "lateral_g": 0.071342,
         "radius_m": 64,
-        "bank_degrees": 69.828729,
+        "bank_degrees": 71.532593,
         "train_length_metres": "20",
-        "geometry_peak_bank_radians": "1.2187412274858929",
-        "geometry_speed_loss_fraction": "0.009235427679576526",
+        "geometry_peak_bank_radians": "1.2484792782993068",
+        "geometry_speed_loss_fraction": "0.008642903414423718",
         "geometry_radius_m": "64",
-        "geometry_digest": "18159091565561968496"
+        "geometry_digest": "3314590078545650171"
       }
     },
     {
@@ -333,20 +363,20 @@
       },
       "spec": {
         "kind": "hill",
-        "design_speed_mps": 31.654222,
+        "design_speed_mps": 32.328111,
         "cars": 8,
         "target_g": -0.95,
-        "delivered_g": -0.947693,
-        "height_m": 20.090307,
-        "span_m": 154,
+        "delivered_g": -0.947506,
+        "height_m": 20.106549,
+        "span_m": 160,
         "train_length_metres": "20",
         "target_height_m": "20",
         "pull_g": "3.3",
-        "crest_g": "-1.017693",
-        "flank_angle_degrees": "25.3828125",
-        "profile_grid_half_tiles": 77,
+        "crest_g": "-1.018039",
+        "flank_angle_degrees": "24.52734375",
+        "profile_grid_half_tiles": 80,
         "diagonal": false,
-        "geometry_digest": "2104689612899724511"
+        "geometry_digest": "8191131322521020187"
       }
     },
     {
@@ -360,18 +390,18 @@
       },
       "spec": {
         "kind": "turn",
-        "design_speed_mps": 30.951499,
+        "design_speed_mps": 31.597134,
         "cars": 8,
         "hand": "Left",
-        "vertical_g": 3.236337,
-        "lateral_g": 0.146524,
+        "vertical_g": 3.418386,
+        "lateral_g": 0.109821,
         "radius_m": 56,
-        "bank_degrees": 69.828729,
+        "bank_degrees": 71.532593,
         "train_length_metres": "20",
-        "geometry_peak_bank_radians": "1.2187412274858929",
-        "geometry_speed_loss_fraction": "0.00875517555169893",
+        "geometry_peak_bank_radians": "1.2484792782993068",
+        "geometry_speed_loss_fraction": "0.008184198812012548",
         "geometry_radius_m": "56",
-        "geometry_digest": "2421460547969752874"
+        "geometry_digest": "17394409635899435679"
       }
     },
     {
@@ -385,18 +415,18 @@
       },
       "spec": {
         "kind": "turn",
-        "design_speed_mps": 30.484661,
+        "design_speed_mps": 31.121057,
         "cars": 8,
         "hand": "Right",
-        "vertical_g": 3.395006,
-        "lateral_g": 0.105752,
+        "vertical_g": 3.511475,
+        "lateral_g": 0.139049,
         "radius_m": 52,
         "bank_degrees": 71.532593,
         "train_length_metres": "20",
         "geometry_peak_bank_radians": "1.2484792782993068",
-        "geometry_speed_loss_fraction": "0.007799490480141328",
+        "geometry_speed_loss_fraction": "0.008017877243734485",
         "geometry_radius_m": "52",
-        "geometry_digest": "18088454985932266528"
+        "geometry_digest": "15409706754571799629"
       }
     },
     {
@@ -404,37 +434,31 @@
         "turn": {
           "hand": "Left",
           "size": {
-            "Radius": 58
+            "Radius": 52
           }
         }
       },
       "spec": {
         "kind": "turn",
-        "design_speed_mps": 30.045484,
+        "design_speed_mps": 30.679781,
         "cars": 8,
         "hand": "Left",
-        "vertical_g": 2.97009,
-        "lateral_g": 0.073236,
-        "radius_m": 58,
-        "bank_degrees": 69.828729,
+        "vertical_g": 3.43819,
+        "lateral_g": 0.126229,
+        "radius_m": 52,
+        "bank_degrees": 71.532593,
         "train_length_metres": "20",
-        "geometry_peak_bank_radians": "1.2187412274858929",
-        "geometry_speed_loss_fraction": "0.008416554249697308",
-        "geometry_radius_m": "58",
-        "geometry_digest": "2566778010803582163"
+        "geometry_peak_bank_radians": "1.2484792782993068",
+        "geometry_speed_loss_fraction": "0.00786596858846212",
+        "geometry_radius_m": "52",
+        "geometry_digest": "8119980639742911379"
       }
     },
     {
-      "place": "OneTileStraight"
+      "place": "Straight"
     },
     {
-      "place": "OneTileStraight"
-    },
-    {
-      "place": "OneTileStraight"
-    },
-    {
-      "place": "HalfTileStraight"
+      "place": "Straight"
     },
     {
       "place": "Brakes"

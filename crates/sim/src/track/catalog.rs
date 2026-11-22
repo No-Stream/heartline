@@ -838,7 +838,7 @@ fn build_catalog() -> Vec<Piece> {
                         }),
                         GigaSixtyDownToLevel => Some(RatedSpeeds {
                             minimum_entry: 2.0,
-                            maximum_entry: (crate::math::powi(42.0_f64, 2)
+                            maximum_entry: (crate::math::powi(43.5_f64, 2)
                                 - 2.0 * 9.81 * GIGA_SIXTY_PULL.endpoint()[1])
                                 .sqrt(),
                         }),

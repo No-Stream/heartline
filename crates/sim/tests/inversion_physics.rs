@@ -6,8 +6,7 @@ use theme_park_sim::physics::{Circuit, CoasterRun, GRAVITY, PhysicsConfig, Train
 use theme_park_sim::track::rated_windows::measured_rated_window;
 use theme_park_sim::track::{
     Heading, Piece, PieceId, PieceKind, TrackState, catalog, coaster_models, feel_rated_speeds,
-    hybrid_model, hyper_model, multi_launch_model, rated_speed_margin, rated_speeds,
-    wooden_twister_model,
+    hybrid_model, hyper_model, multi_launch_model, rated_speeds, wooden_twister_model,
 };
 
 fn circuit_with_elements(elements: &[PieceId]) -> (Circuit, f64, f64) {
@@ -341,7 +340,7 @@ fn wide_sixty_degree_drop_passes_full_trains_at_both_rated_endpoints() {
 }
 
 #[test]
-fn giga_sixty_degree_pullout_handles_full_trains_at_giga_speeds() {
+fn giga_sixty_degree_pullout_delivers_a_giga_pullout_across_its_design_window() {
     let model = hyper_model();
     let piece = catalog()
         .iter()
@@ -349,32 +348,28 @@ fn giga_sixty_degree_pullout_handles_full_trains_at_giga_speeds() {
         .expect("giga 60-degree pullout is in the catalog");
     assert!(model.allows_piece(piece));
 
-    let rated = rated_speeds(&model, piece).expect("giga pullout has a rated window");
-    assert!(rated.maximum_entry >= 41.0, "rated window: {rated:?}");
+    // A 90-100 m drop (wide crest, two 60-degree straights, this pullout) brings the front car in at about
+    // 29 m/s and the rear car of an eight-car train about 4.7 m/s faster, so the design window must reach past
+    // 35 m/s for every car to keep the 1.5 m/s rated-window margin.
     let design_window = feel_rated_speeds(&model, piece).expect("giga pullout has a design window");
-    assert!(rated_speed_margin(design_window, 41.0) >= 0.0);
-    let mut measured_peaks = Vec::new();
-    for entry_speed in [39.0, 41.0, 43.0] {
-        let rating = rate_piece(&model, model.train.cars, piece, entry_speed, unpowered())
-            .expect("giga pullout force rating completes");
-        if entry_speed <= 41.0 {
-            assert!(
-                rating.passed,
-                "{} cars at {entry_speed:.1} m/s: {rating:?}",
-                model.train.cars
-            );
-        }
-        let maximum_vertical_g = rating.maximum_filtered_force[0];
-        measured_peaks.push((entry_speed, maximum_vertical_g));
-        eprintln!(
-            "GigaSixtyDownToLevel at {entry_speed:.1} m/s: peak filtered vertical {maximum_vertical_g:.3} g (rating passed: {})",
-            rating.passed
-        );
-    }
     assert!(
-        measured_peaks[..2].iter().all(|(_, peak)| *peak <= 3.75),
-        "peak filtered vertical g exceeds 3.75 at a target entry speed: {measured_peaks:?}"
+        design_window.maximum_entry >= 35.2,
+        "design window: {design_window:?}"
     );
+    let rate = |entry_speed: f64| {
+        rate_piece(&model, model.train.cars, piece, entry_speed, unpowered())
+            .expect("giga pullout force rating completes")
+    };
+
+    let giga_drop_rating = rate(29.0);
+    let giga_drop_peak_g = giga_drop_rating.maximum_filtered_force[0];
+    assert!(giga_drop_rating.passed, "{giga_drop_rating:?}");
+    assert!(
+        (3.0..=3.75).contains(&giga_drop_peak_g),
+        "a giga drop's pullout should pull 3.0 to 3.75 g, got {giga_drop_peak_g:.3} g"
+    );
+    let window_edge_rating = rate(design_window.maximum_entry);
+    assert!(window_edge_rating.passed, "{window_edge_rating:?}");
 }
 
 #[test]
@@ -396,17 +391,22 @@ fn giga_pullout_finishes_a_roughly_95_metre_full_train_drop_at_ride_speed() {
     };
 
     append(Station, false, &mut state, &mut pieces);
-    for id in [LevelToSixtyUp, SixtyUp, SixtyUp, SixtyUp, SixtyUpToLevel] {
+    for id in [
+        LevelToSixtyUp,
+        SixtyUp,
+        SixtyUp,
+        SixtyUp,
+        SixtyUp,
+        SixtyUpToLevel,
+    ] {
         append(id, true, &mut state, &mut pieces);
     }
     let drop_start = pieces.iter().map(Piece::length).sum::<f64>();
-    let wide_descent = template(WideLevelToSixtyDown).at(state).unwrap();
-    assert!(model.allows_piece(&wide_descent));
-    let drop_height_start = wide_descent.entry.position().z;
-    state = wide_descent.exit;
-    let wide_descent_end = drop_start + wide_descent.length();
-    pieces.push(wide_descent);
-
+    let drop_height_start = state.position().z;
+    for id in [WideLevelToSixtyDown, SixtyDown, SixtyDown] {
+        append(id, false, &mut state, &mut pieces);
+    }
+    let pullout_start = pieces.iter().map(Piece::length).sum::<f64>();
     let giga_pullout = template(GigaSixtyDownToLevel).at(state).unwrap();
     assert!(model.allows_piece(&giga_pullout));
     let net_drop = drop_height_start - giga_pullout.exit.position().z;
@@ -415,7 +415,7 @@ fn giga_pullout_finishes_a_roughly_95_metre_full_train_drop_at_ride_speed() {
         "full drop is {net_drop:.1} m"
     );
     state = giga_pullout.exit;
-    let giga_pullout_end = wide_descent_end + giga_pullout.length();
+    let giga_pullout_end = pullout_start + giga_pullout.length();
     pieces.push(giga_pullout);
 
     for _ in 0..4 {
@@ -423,8 +423,8 @@ fn giga_pullout_finishes_a_roughly_95_metre_full_train_drop_at_ride_speed() {
     }
     let circuit = Circuit::open(pieces).expect("giga drop track connects through the exit tail");
     let ranges = [
-        drop_start..wide_descent_end,
-        wide_descent_end..giga_pullout_end,
+        drop_start..pullout_start,
+        pullout_start..giga_pullout_end,
         giga_pullout_end..giga_pullout_end + template(Straight).length(),
     ];
     let physics = PhysicsConfig {
@@ -437,7 +437,7 @@ fn giga_pullout_finishes_a_roughly_95_metre_full_train_drop_at_ride_speed() {
         &ranges,
         &model.train,
         physics,
-        ForceJudge::Envelope,
+        ForceJudge::DesignTargets(model.design_force_targets),
         drop_start - 1.0,
         5.0,
     );
@@ -447,10 +447,10 @@ fn giga_pullout_finishes_a_roughly_95_metre_full_train_drop_at_ride_speed() {
         model.train.cars
     );
     let bottom_speed = rating.minimum_speeds[2];
-    eprintln!("95 m giga drop: {net_drop:.1} m, full-train bottom speed {bottom_speed:.2} m/s");
+    eprintln!("giga drop: {net_drop:.1} m, full-train bottom speed {bottom_speed:.2} m/s");
     assert!(
-        (39.0..=41.0).contains(&bottom_speed),
-        "95 m drop reaches {bottom_speed:.2} m/s at the bottom"
+        (41.0..=44.0).contains(&bottom_speed),
+        "the giga drop reaches {bottom_speed:.2} m/s at the bottom, outside the hyper shaped-element range"
     );
 }
 
