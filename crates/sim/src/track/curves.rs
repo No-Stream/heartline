@@ -935,9 +935,13 @@ pub(crate) fn shaped_speed_turn_geometry(
     let (mut raw_radius_m, mut length_m, mut knots) =
         integrate_shaped_turn_at_bank(design_speed_mps, resolved_bank, speed_loss_fraction)
             .expect("shaped turn heart-curvature has a real solution");
-    if raw_radius_m < minimum_radius_m {
-        resolved_bank =
-            crate::math::atan(crate::math::tan(resolved_bank) * raw_radius_m / minimum_radius_m);
+    for _ in 0..8 {
+        if raw_radius_m >= minimum_radius_m {
+            break;
+        }
+        resolved_bank = crate::math::atan(
+            crate::math::tan(resolved_bank) * raw_radius_m / minimum_radius_m * 0.99,
+        );
         (raw_radius_m, length_m, knots) =
             integrate_shaped_turn_at_bank(design_speed_mps, resolved_bank, speed_loss_fraction)
                 .expect("radius-limited shaped turn has a real solution");

@@ -1011,8 +1011,11 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     const readout = shapedElementReadout(shape, units);
     shapeMessage.textContent = "";
     shapeMessage.hidden = true;
-    shapeReadoutElement.replaceChildren(...readout.map((line) => {
+    shapeReadoutElement.replaceChildren(...readout.map((line, index) => {
       const paragraph = document.createElement("p");
+      if (shape.exceedsModelFeel && shape.spec && index === readout.length - 1) {
+        paragraph.className = "builder__shape-feel-note";
+      }
       paragraph.textContent = line;
       return paragraph;
     }));

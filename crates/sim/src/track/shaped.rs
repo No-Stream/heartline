@@ -1384,15 +1384,44 @@ fn solve_hill_analytically(
         let (passes_budget, headroom_g) =
             candidate_passes_force_budget(context.model, &preview.cars, within_vibe);
         last_headroom_g = headroom_g;
-        let delivered_g = preview
+        let sustained_delivered_g = preview
             .cars
             .iter()
             .filter_map(|car| car.sustained_minimum_vertical_g)
-            .reduce(f64::min)
-            .ok_or(SolveRefusal::InfeasibleTarget {
-                target_g,
-                available_headroom_g: headroom_g,
-            })?;
+            .reduce(f64::min);
+        let Some(delivered_g) = sustained_delivered_g else {
+            if provisional || preview_count >= maximum_previews {
+                return Err(SolveRefusal::InfeasibleTarget {
+                    target_g,
+                    available_headroom_g: headroom_g,
+                });
+            }
+            let peak_min_g = preview
+                .cars
+                .iter()
+                .map(|car| car.peaks.minimum_vertical_g)
+                .fold(f64::INFINITY, f64::min);
+            if !peak_min_g.is_finite() {
+                return Err(SolveRefusal::InfeasibleTarget {
+                    target_g,
+                    available_headroom_g: headroom_g,
+                });
+            }
+            let next_crest_g = match previous_attempt {
+                Some((previous_crest, previous_delivered)) => {
+                    let slope = (peak_min_g - previous_delivered) / (crest_g - previous_crest);
+                    if !slope.is_finite() || slope.abs() < 1e-6 {
+                        crest_g + (target_g - peak_min_g).min(-0.15)
+                    } else {
+                        crest_g + (target_g - peak_min_g) / slope
+                    }
+                }
+                None => crest_g + (target_g - peak_min_g).min(-0.15),
+            };
+            previous_attempt = Some((crest_g, peak_min_g));
+            crest_g = next_crest_g;
+            continue;
+        };
         last_delivered_g = Some(delivered_g);
         let exceeds_model_feel = !shaped_profile.typical_hill_feels.contains(&feel)
             || candidate_exceeds_design_targets(context.model, &preview.cars);
@@ -1688,8 +1717,13 @@ fn solve_turn(
     }
     let within_vibe = turn_within_model_vibe(context.model, design_speed_mps, requested_radius_m);
 
-    let mut peak_bank =
-        crate::math::acos(target_vertical_g.recip()).min(profile.maximum_bank_degrees.to_radians());
+    let initial_bank = if !within_vibe && let Some(radius_m) = requested_radius_m {
+        crate::math::atan(crate::math::powi(design_speed_mps, 2) / (GRAVITY * radius_m))
+            .max(crate::math::acos(target_vertical_g.recip()))
+    } else {
+        crate::math::acos(target_vertical_g.recip())
+    };
+    let mut peak_bank = initial_bank.min(profile.maximum_bank_degrees.to_radians());
     let mut preview_count = 0_u8;
     if let Some(seed) = preview_seed
         && let ElementSpec::Turn { bank_degrees, .. } = seed.spec
@@ -1718,62 +1752,84 @@ fn solve_turn(
     let mut last_headroom_g = f64::NEG_INFINITY;
     let mut last_lateral_g = f64::INFINITY;
     while preview_count < maximum_previews {
-        let speed_loss_fraction = estimated_turn_speed_loss_fraction(
-            context.physics,
-            context.train,
-            design_speed_mps,
-            peak_bank,
-        );
-        let (_, radius_m, resolved_bank) = super::curves::shaped_speed_turn_geometry(
-            design_speed_mps,
-            peak_bank,
-            speed_loss_fraction,
-            radius_step,
-            profile.minimum_turn_radius_m,
-            requested_radius_m,
-        );
+        let mut speed_loss_fraction;
+        let mut radius_m;
+        let mut resolved_bank;
+        let mut candidate_spec;
+        let mut piece;
+        let mut radius_adjustments = 0_u8;
+        loop {
+            speed_loss_fraction = estimated_turn_speed_loss_fraction(
+                context.physics,
+                context.train,
+                design_speed_mps,
+                peak_bank,
+            );
+            let (_, candidate_radius_m, candidate_bank) = super::curves::shaped_speed_turn_geometry(
+                design_speed_mps,
+                peak_bank,
+                speed_loss_fraction,
+                radius_step,
+                profile.minimum_turn_radius_m,
+                requested_radius_m,
+            );
+            radius_m = candidate_radius_m;
+            resolved_bank = candidate_bank;
+            if radius_m > profile.maximum_turn_radius_m {
+                return Err(SolveRefusal::InfeasibleTarget {
+                    target_g: target_vertical_g,
+                    available_headroom_g: 0.0,
+                });
+            }
+            let bank_degrees = resolved_bank.to_degrees();
+            if bank_degrees > profile.maximum_bank_degrees {
+                return Err(SolveRefusal::InfeasibleTarget {
+                    target_g: target_vertical_g,
+                    available_headroom_g: profile.maximum_bank_degrees - bank_degrees,
+                });
+            }
+            let geometry = super::curves::regenerate_shaped_speed_turn_geometry(
+                design_speed_mps,
+                resolved_bank,
+                speed_loss_fraction,
+                radius_m,
+            )
+            .map_err(|_| SolveRefusal::InvalidGeometry)?;
+            candidate_spec = ElementSpec::Turn {
+                design_speed_mps,
+                cars: context.train.cars,
+                train_length_metres: context.train.length_metres,
+                hand,
+                vertical_g: crate::math::cos(resolved_bank).recip(),
+                lateral_g: 0.0,
+                radius_m,
+                bank_degrees,
+                geometry_peak_bank_radians: resolved_bank,
+                geometry_speed_loss_fraction: speed_loss_fraction,
+                geometry_radius_m: radius_m,
+                geometry_digest: 0,
+                geometry,
+            };
+            canonicalize_element_spec(&mut candidate_spec);
+            candidate_spec.set_resolved_geometry_digest();
+            piece = piece_from_spec(context.entry, &candidate_spec)?;
+            if requested_radius_m.is_some()
+                || piece.maximum_curvature() <= 1.0 / context.model.minimum_radius_metres
+            {
+                break;
+            }
+            radius_adjustments += 1;
+            if radius_adjustments > 32 {
+                return Err(SolveRefusal::InfeasibleTarget {
+                    target_g: target_vertical_g,
+                    available_headroom_g: 0.0,
+                });
+            }
+            peak_bank = crate::math::atan(crate::math::tan(resolved_bank) * 0.95);
+        }
         peak_bank = resolved_bank;
-        if radius_m > profile.maximum_turn_radius_m {
-            return Err(SolveRefusal::InfeasibleTarget {
-                target_g: target_vertical_g,
-                available_headroom_g: 0.0,
-            });
-        }
         let bank_degrees = peak_bank.to_degrees();
-        if bank_degrees > profile.maximum_bank_degrees {
-            return Err(SolveRefusal::InfeasibleTarget {
-                target_g: target_vertical_g,
-                available_headroom_g: profile.maximum_bank_degrees - bank_degrees,
-            });
-        }
-        let geometry_peak_bank_radians = peak_bank;
-        let geometry_speed_loss_fraction = speed_loss_fraction;
-        let geometry_radius_m = radius_m;
-        let geometry = super::curves::regenerate_shaped_speed_turn_geometry(
-            design_speed_mps,
-            geometry_peak_bank_radians,
-            geometry_speed_loss_fraction,
-            geometry_radius_m,
-        )
-        .map_err(|_| SolveRefusal::InvalidGeometry)?;
-        let mut candidate_spec = ElementSpec::Turn {
-            design_speed_mps,
-            cars: context.train.cars,
-            train_length_metres: context.train.length_metres,
-            hand,
-            vertical_g: crate::math::cos(peak_bank).recip(),
-            lateral_g: 0.0,
-            radius_m,
-            bank_degrees,
-            geometry_peak_bank_radians,
-            geometry_speed_loss_fraction,
-            geometry_radius_m,
-            geometry_digest: 0,
-            geometry,
-        };
-        canonicalize_element_spec(&mut candidate_spec);
-        candidate_spec.set_resolved_geometry_digest();
-        let piece = piece_from_spec(context.entry, &candidate_spec)?;
+        let rail_radius_ok = piece.maximum_curvature() <= 1.0 / context.model.minimum_radius_metres;
         let preview = calibrate_piece(context, &piece)?;
         preview_count += 1;
         if preview.cars.len() != usize::from(context.train.cars) {
@@ -1835,7 +1891,7 @@ fn solve_turn(
                 }),
             });
         }
-        if lateral_g <= MAXIMUM_FULLY_BANKED_LATERAL_G && passes_budget {
+        if lateral_g <= MAXIMUM_FULLY_BANKED_LATERAL_G && passes_budget && rail_radius_ok {
             let vertical_g = preview
                 .cars
                 .iter()

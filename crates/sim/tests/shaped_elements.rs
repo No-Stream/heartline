@@ -918,32 +918,555 @@ fn shaped_elements_below_twenty_two_metres_per_second_return_typed_refusals() {
     }
 }
 
+fn coasting_prefix(model: &CoasterModel, speed_mps: f64) -> (Vec<Piece>, f64) {
+    let templates = catalog();
+    let straight_template = templates
+        .iter()
+        .find(|piece| piece.id == PieceId::Straight)
+        .expect("catalog includes straight track");
+    let mut prefix = lift_prefix(model, speed_mps + 2.0);
+    let coast_count = (model.train.length_metres / straight_template.length()).ceil() as usize + 1;
+    for _ in 0..coast_count {
+        let straight = straight_template
+            .at(prefix.last().expect("prefix has pieces").exit)
+            .expect("straight pieces connect");
+        prefix.push(straight);
+    }
+    let mut lift_speed = speed_mps + 0.3;
+    for _ in 0..6 {
+        let mut cache = PreviewCache::default();
+        let preview = cache
+            .preview(
+                &prefix,
+                model,
+                PhysicsConfig {
+                    lift_speed,
+                    ..PhysicsConfig::default()
+                },
+            )
+            .expect("prefix contains a station");
+        let observed = preview.end_speed_mps.expect("preview reaches end");
+        let error = speed_mps - observed;
+        if error.abs() <= 0.002 {
+            break;
+        }
+        lift_speed += error;
+    }
+    (prefix, lift_speed)
+}
+
+fn solve_with_coasting_prefix(
+    intent: ElementIntent,
+    base_model: &CoasterModel,
+    cars: u8,
+    speed_mps: f64,
+) -> Result<
+    (
+        CoasterModel,
+        Vec<Piece>,
+        f64,
+        theme_park_sim::track::shaped::SolvedElement,
+    ),
+    SolveRefusal,
+> {
+    let model = model_with_train_length(base_model, cars);
+    let (prefix, lift_speed) = coasting_prefix(&model, speed_mps);
+    let physics = PhysicsConfig {
+        lift_speed,
+        ..PhysicsConfig::default()
+    };
+    let mut preview_cache = PreviewCache::default();
+    let preview = preview_cache
+        .preview(&prefix, &model, physics)
+        .expect("prefix contains a station");
+    assert_eq!(preview.status, PreviewStatus::ReachedEnd);
+    let observed = preview.end_speed_mps.expect("preview reaches end");
+    assert!(
+        (observed - speed_mps).abs() <= 0.01,
+        "coasting prefix delivered {observed:.4} m/s, requested {speed_mps:.4} m/s"
+    );
+    let entry = prefix.last().expect("prefix has a station").exit;
+    let mut context = SolveContext {
+        entry,
+        entry_speed_mps: observed,
+        model: &model,
+        train: &model.train,
+        prefix: &prefix,
+        preview_cache: &mut preview_cache,
+        physics,
+    };
+    let solved = solve(&intent, &mut context)?;
+    Ok((model, prefix, lift_speed, solved))
+}
+
+fn simulate_with_coasting_preview(
+    prefix: &[Piece],
+    model: &CoasterModel,
+    candidate: &Piece,
+    entry_speed_mps: f64,
+    base_lift_speed: f64,
+    speed_offset_mps: f64,
+) -> TrackPreview {
+    let lift_speed = base_lift_speed + speed_offset_mps;
+    let physics = PhysicsConfig {
+        lift_speed,
+        ..PhysicsConfig::default()
+    };
+    let mut cache = PreviewCache::default();
+    let entry = cache
+        .preview(prefix, model, physics)
+        .expect("prefix contains a station");
+    assert_eq!(entry.status, PreviewStatus::ReachedEnd);
+    let observed = entry.end_speed_mps.expect("preview reaches end");
+    assert!(
+        (observed - entry_speed_mps).abs() <= 0.05,
+        "coasting preview delivered {observed:.3} m/s vs requested {entry_speed_mps:.3} m/s"
+    );
+    let candidate_index = prefix.len();
+    let mut pieces = prefix.to_vec();
+    pieces.push(candidate.clone());
+    pieces.extend(runout_from(candidate, &model.train));
+    let preview = cache
+        .preview_all_cars(&pieces, model, physics)
+        .expect("candidate circuit contains a station");
+    assert_eq!(
+        preview.status,
+        PreviewStatus::ReachedEnd,
+        "candidate failed to carry the train through its runout"
+    );
+    assert_candidate_readings(&preview.report, candidate_index, model);
+    preview
+}
+
+fn assert_coasting_hill_force_contract(
+    prefix: &[Piece],
+    model: &CoasterModel,
+    piece: &Piece,
+    design_speed_mps: f64,
+    base_lift_speed: f64,
+    capped_target_g: f64,
+    description: &str,
+) {
+    let candidate_index = prefix.len();
+    for speed_offset_mps in [-0.5, 0.0, 0.5] {
+        let entry_speed_mps = design_speed_mps + speed_offset_mps;
+        let preview = simulate_with_coasting_preview(
+            prefix,
+            model,
+            piece,
+            entry_speed_mps,
+            base_lift_speed,
+            speed_offset_mps,
+        );
+        let construction_test =
+            simulate_with_construction_test_physics(prefix, model, piece, entry_speed_mps);
+        let design_speed = speed_offset_mps == 0.0;
+        assert_force_limits(
+            &preview.report,
+            candidate_index,
+            model,
+            design_speed,
+            &format!("{description}, preview physics at {entry_speed_mps:.1} m/s"),
+        );
+        assert_force_limits(
+            &construction_test,
+            candidate_index,
+            model,
+            design_speed,
+            &format!("{description}, construction-test physics at {entry_speed_mps:.1} m/s"),
+        );
+        if design_speed {
+            let runtime_airtime =
+                worst_car_sustained_airtime(&preview.report, candidate_index, model);
+            let construction_airtime =
+                worst_car_sustained_airtime(&construction_test, candidate_index, model);
+            assert!(
+                (runtime_airtime - capped_target_g).abs() <= 0.10,
+                "{description}: preview worst-car airtime {runtime_airtime:.3} g differs from capped target {capped_target_g:.3} g"
+            );
+            assert!(
+                (construction_airtime - capped_target_g).abs() <= 0.15,
+                "{description}: construction-test worst-car airtime {construction_airtime:.3} g differs from capped target {capped_target_g:.3} g"
+            );
+        }
+    }
+}
+
+fn assert_coasting_turn_lateral_contract(
+    prefix: &[Piece],
+    model: &CoasterModel,
+    piece: &Piece,
+    design_speed_mps: f64,
+    base_lift_speed: f64,
+    description: &str,
+) {
+    let candidate_index = prefix.len();
+    for speed_offset_mps in [-0.5, 0.0, 0.5] {
+        let entry_speed_mps = design_speed_mps + speed_offset_mps;
+        let preview = simulate_with_coasting_preview(
+            prefix,
+            model,
+            piece,
+            entry_speed_mps,
+            base_lift_speed,
+            speed_offset_mps,
+        );
+        let construction_test =
+            simulate_with_construction_test_physics(prefix, model, piece, entry_speed_mps);
+        let design_speed = speed_offset_mps == 0.0;
+        assert_force_limits(
+            &preview.report,
+            candidate_index,
+            model,
+            design_speed,
+            &format!("{description}, preview physics at {entry_speed_mps:.1} m/s"),
+        );
+        assert_force_limits(
+            &construction_test,
+            candidate_index,
+            model,
+            design_speed,
+            &format!("{description}, construction-test physics at {entry_speed_mps:.1} m/s"),
+        );
+        let lateral_limit_g = if design_speed { 0.15 } else { 0.25 };
+        for (physics_name, report) in [
+            ("preview", &preview.report),
+            ("construction-test", &construction_test),
+        ] {
+            let observed_lateral = worst_car_lateral(report, candidate_index, model);
+            assert!(
+                observed_lateral <= lateral_limit_g,
+                "{description}: {physics_name} lateral {observed_lateral:.3} g exceeds {lateral_limit_g:.2} g at {entry_speed_mps:.1} m/s"
+            );
+        }
+    }
+}
+
+fn design_speeds_for_profile(profile: theme_park_sim::track::ShapedProfile) -> Vec<f64> {
+    let min = profile.minimum_speed_mps + 0.02;
+    let max = profile.maximum_speed_mps - 0.02;
+    let mut speeds = Vec::new();
+    let mut current = profile.minimum_speed_mps;
+    while current < profile.maximum_speed_mps - 0.5 {
+        speeds.push(current.clamp(min, max));
+        current += if profile.maximum_speed_mps - profile.minimum_speed_mps <= 12.0 {
+            2.0
+        } else {
+            4.0
+        };
+    }
+    if speeds
+        .last()
+        .is_none_or(|&last| (profile.maximum_speed_mps - last).abs() > 0.5)
+    {
+        speeds.push(max);
+    }
+    speeds
+}
+
+fn assert_model_shaped_matrix(base_model: CoasterModel) {
+    let mut failures = Vec::new();
+    let profile = base_model
+        .shaped_profile
+        .unwrap_or_else(|| panic!("{} is missing a ShapedProfile", base_model.key));
+    let speeds = design_speeds_for_profile(profile);
+    let feels: Vec<_> = profile
+        .typical_hill_feels
+        .iter()
+        .copied()
+        .map(|feel| (feel, profile.default_hill_strength(feel)))
+        .collect();
+    let mut model_failures = 0usize;
+    let mut model_passes = 0usize;
+    for cars in profile.minimum_cars..=profile.maximum_cars {
+        let mut previous_heights_m = vec![None; feels.len()];
+        let mut previous_radius_m = None;
+        for &speed_mps in &speeds {
+            for (feel_index, &(feel, requested_target_g)) in feels.iter().enumerate() {
+                let description = format!(
+                    "{} {cars}-car {feel:?} at {speed_mps:.1} m/s",
+                    base_model.key
+                );
+                let solved_result = solve_with_coasting_prefix(
+                    ElementIntent::Hill {
+                        feel,
+                        strength_g: requested_target_g,
+                        size: HillSizeHint::Auto,
+                    },
+                    &base_model,
+                    cars,
+                    speed_mps,
+                );
+                let (model, prefix, lift_speed, solved) = match solved_result {
+                    Ok(tuple) => tuple,
+                    Err(refusal) => {
+                        failures.push(format!("{description}: refused {refusal:?}"));
+                        model_failures += 1;
+                        continue;
+                    }
+                };
+                assert_preview_budget(&solved, &description);
+                assert!(
+                    !solved.exceeds_model_feel,
+                    "{description}: typical feel default should stay within model feel"
+                );
+                let ElementSpec::Hill {
+                    target_g,
+                    delivered_g,
+                    height_m,
+                    design_speed_mps,
+                    cars: resolved_cars,
+                    ..
+                } = &solved.spec
+                else {
+                    panic!("hill intent resolved to a turn");
+                };
+                assert_eq!(*resolved_cars, cars);
+                assert!((design_speed_mps - speed_mps).abs() <= 0.01);
+                assert!(
+                    (delivered_g - target_g).abs() <= 0.05,
+                    "{description} records {delivered_g:.3} g for target {target_g:.3} g"
+                );
+                assert!(*height_m > 0.0);
+                assert_eq!(solved.piece.entry, prefix.last().unwrap().exit);
+                assert_grid_connector(solved.piece.exit);
+                assert!(model.allows_piece(&solved.piece));
+                let minimum_radius_m = solved.piece.maximum_curvature().recip();
+                if minimum_radius_m < model.minimum_radius_metres {
+                    failures.push(format!(
+                        "{description}: rail radius {minimum_radius_m:.3} m < model min {:.3} m",
+                        model.minimum_radius_metres
+                    ));
+                    model_failures += 1;
+                    continue;
+                }
+                if let Some(previous_height_m) = previous_heights_m[feel_index]
+                    && *height_m < previous_height_m - 0.5
+                {
+                    failures.push(format!(
+                        "{description}: height decreased {previous_height_m:.3} -> {height_m:.3} m"
+                    ));
+                    model_failures += 1;
+                }
+                previous_heights_m[feel_index] = Some(*height_m);
+                let contract = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    assert_coasting_hill_force_contract(
+                        &prefix,
+                        &model,
+                        &solved.piece,
+                        speed_mps,
+                        lift_speed,
+                        *target_g,
+                        &description,
+                    );
+                }));
+                if let Err(err) = contract {
+                    let msg = err
+                        .downcast_ref::<String>()
+                        .map(String::as_str)
+                        .or_else(|| err.downcast_ref::<&str>().copied())
+                        .unwrap_or("contract panic");
+                    failures.push(format!("{description}: {msg}"));
+                    model_failures += 1;
+                } else {
+                    model_passes += 1;
+                }
+            }
+
+            let turn_description =
+                format!("{} {cars}-car turn at {speed_mps:.1} m/s", base_model.key);
+            let solved_result = solve_with_coasting_prefix(
+                ElementIntent::Turn {
+                    hand: Hand::Left,
+                    size: TurnSizeHint::Auto,
+                },
+                &base_model,
+                cars,
+                speed_mps,
+            );
+            let (model, prefix, lift_speed, solved) = match solved_result {
+                Ok(tuple) => tuple,
+                Err(refusal) => {
+                    failures.push(format!("{turn_description}: refused {refusal:?}"));
+                    model_failures += 1;
+                    continue;
+                }
+            };
+            assert_preview_budget(&solved, &turn_description);
+            assert!(
+                !solved.exceeds_model_feel,
+                "{turn_description}: auto turn should stay within model feel"
+            );
+            let ElementSpec::Turn {
+                radius_m,
+                bank_degrees,
+                design_speed_mps,
+                cars: resolved_cars,
+                ..
+            } = &solved.spec
+            else {
+                panic!("turn intent resolved to a hill");
+            };
+            assert_eq!(*resolved_cars, cars);
+            assert!((design_speed_mps - speed_mps).abs() <= 0.01);
+            assert!(*bank_degrees <= profile.maximum_bank_degrees);
+            assert!(*radius_m >= model.minimum_radius_metres);
+            if let Some(previous_radius_m) = previous_radius_m
+                && *radius_m < previous_radius_m
+            {
+                failures.push(format!(
+                    "{turn_description}: radius decreased {previous_radius_m:.3} -> {radius_m:.3} m"
+                ));
+                model_failures += 1;
+            }
+            previous_radius_m = Some(*radius_m);
+            assert_eq!(solved.piece.entry, prefix.last().unwrap().exit);
+            assert_grid_connector(solved.piece.exit);
+            assert!(model.allows_piece(&solved.piece));
+            let minimum_radius_m = solved.piece.maximum_curvature().recip();
+            if minimum_radius_m < model.minimum_radius_metres {
+                failures.push(format!(
+                    "{turn_description}: rail radius {minimum_radius_m:.3} m < model min {:.3} m",
+                    model.minimum_radius_metres
+                ));
+                model_failures += 1;
+                continue;
+            }
+            let contract = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                assert_coasting_turn_lateral_contract(
+                    &prefix,
+                    &model,
+                    &solved.piece,
+                    speed_mps,
+                    lift_speed,
+                    &turn_description,
+                );
+            }));
+            if let Err(err) = contract {
+                let msg = err
+                    .downcast_ref::<String>()
+                    .map(String::as_str)
+                    .or_else(|| err.downcast_ref::<&str>().copied())
+                    .unwrap_or("contract panic");
+                failures.push(format!("{turn_description}: {msg}"));
+                model_failures += 1;
+            } else {
+                model_passes += 1;
+            }
+        }
+    }
+    eprintln!(
+        "MATRIX {}: {} passed, {} failed",
+        base_model.key, model_passes, model_failures
+    );
+    assert!(
+        failures.is_empty(),
+        "{} matrix had {} failure(s):\n{}",
+        base_model.key,
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn shaped_matrix_covers_every_coaster_model() {
+    for model in theme_park_sim::track::coaster_models() {
+        assert!(
+            model.shaped_profile.is_some(),
+            "{} is missing a ShapedProfile",
+            model.key
+        );
+    }
+}
+
+#[test]
+fn shaped_matrix_hyper() {
+    assert_model_shaped_matrix(hyper_model());
+}
+
+#[test]
+fn shaped_matrix_velocity_viper() {
+    assert_model_shaped_matrix(theme_park_sim::track::multi_launch_model());
+}
+
+#[test]
+fn shaped_matrix_timber_tumbler() {
+    assert_model_shaped_matrix(theme_park_sim::track::hybrid_model());
+}
+
+#[test]
+fn shaped_matrix_briar_blitz() {
+    assert_model_shaped_matrix(theme_park_sim::track::wooden_twister_model());
+}
+
+#[test]
+fn shaped_matrix_daisy_dash() {
+    assert_model_shaped_matrix(theme_park_sim::track::family_coaster_model());
+}
+
 #[test]
 fn shaped_elements_refuse_models_train_sizes_and_speeds_outside_supported_scope() {
-    let hyper = hyper_model();
-    let non_hyper = theme_park_sim::track::coaster_models()
-        .into_iter()
-        .find(|model| model.key != "hyper")
-        .expect("another coaster model exists");
-    for (model, cars, speed_mps) in [
-        (&non_hyper, 4, 30.0),
-        (&hyper, 3, 30.0),
-        (&hyper, 9, 30.0),
-        (&hyper, 4, 36.01),
-    ] {
-        let result = solve_with_prefix(
+    let mut unprofiled = hyper_model();
+    unprofiled.shaped_profile = None;
+    assert_eq!(
+        solve_with_prefix(
             ElementIntent::Turn {
                 hand: Hand::Left,
                 size: TurnSizeHint::Auto,
             },
-            model,
-            cars,
-            speed_mps,
+            &unprofiled,
+            4,
+            30.0,
+        )
+        .unwrap_err(),
+        SolveRefusal::UnsupportedScope,
+        "model without a shaped profile must refuse"
+    );
+
+    for model in theme_park_sim::track::coaster_models() {
+        let profile = model
+            .shaped_profile
+            .unwrap_or_else(|| panic!("{} must have a shaped profile", model.key));
+        for (cars, speed_mps) in [
+            (profile.minimum_cars - 1, profile.minimum_speed_mps),
+            (profile.maximum_cars + 1, profile.minimum_speed_mps),
+            (profile.minimum_cars, profile.maximum_speed_mps + 0.01),
+        ] {
+            let result = solve_with_prefix(
+                ElementIntent::Turn {
+                    hand: Hand::Left,
+                    size: TurnSizeHint::Auto,
+                },
+                &model,
+                cars,
+                speed_mps,
+            );
+            assert_eq!(
+                result.unwrap_err(),
+                SolveRefusal::UnsupportedScope,
+                "{} {cars}-car turn at {speed_mps:.2} m/s did not return a scope refusal",
+                model.key
+            );
+        }
+        let below_speed = profile.minimum_speed_mps - 0.01;
+        let low_speed = solve_with_prefix(
+            ElementIntent::Turn {
+                hand: Hand::Left,
+                size: TurnSizeHint::Auto,
+            },
+            &model,
+            profile.minimum_cars,
+            below_speed,
         );
-        assert_eq!(
-            result.unwrap_err(),
-            SolveRefusal::UnsupportedScope,
-            "{} {cars}-car turn at {speed_mps:.2} m/s did not return a scope refusal",
+        assert!(
+            matches!(
+                low_speed,
+                Err(SolveRefusal::BelowMinimumSpeed {
+                    minimum_speed_mps,
+                    ..
+                }) if (minimum_speed_mps - profile.minimum_speed_mps).abs() < 1e-9
+            ),
+            "{} below-min turn did not return typed BelowMinimumSpeed: {low_speed:?}",
             model.key
         );
     }
@@ -1102,6 +1625,35 @@ fn hyper_allows_true_ejector_and_intense_manual_turns_up_to_astm_envelope() {
     assert_eq!(target_g, -1.2);
     assert!((delivered_g - target_g).abs() <= 0.05);
     assert!(ejector.exceeds_model_feel);
+
+    // Non-hyper models also allow players to push past typical model vibe up to the ASTM envelope.
+    let daisy = theme_park_sim::track::family_coaster_model();
+    let (_, _, _, daisy_strong) = solve_with_coasting_prefix(
+        ElementIntent::Hill {
+            feel: HillFeel::StrongFloater,
+            strength_g: -0.85,
+            size: HillSizeHint::Auto,
+        },
+        &daisy,
+        10,
+        20.0,
+    )
+    .expect("Daisy Dash allows strong floater within ASTM envelope");
+    assert!(daisy_strong.exceeds_model_feel);
+
+    let briar = theme_park_sim::track::wooden_twister_model();
+    let (_, _, _, briar_ejector) = solve_with_coasting_prefix(
+        ElementIntent::Hill {
+            feel: HillFeel::Ejector,
+            strength_g: -0.8,
+            size: HillSizeHint::Auto,
+        },
+        &briar,
+        12,
+        24.0,
+    )
+    .expect("Briar Blitz allows ejector within ASTM envelope");
+    assert!(briar_ejector.exceeds_model_feel);
 }
 
 #[test]

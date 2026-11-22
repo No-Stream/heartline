@@ -89,6 +89,31 @@ function checkHorizonHawkArcParity(wasmModulePath, nativeBinaryPath) {
   if (hillSelectionMismatch) {
     throw new Error(`Horizon Hawk first shaped hill selection differs across targets: ${hillSelectionMismatch}`);
   }
+  const parityCases = JSON.parse(wasm.shaped_parity_cases_json());
+  if (parityCases.length < 10) {
+    throw new Error(`Expected at least 10 per-model parity cases (5 models × hill + turn), got ${parityCases.length}`);
+  }
+  const perModelParity = [];
+  for (const parityCase of parityCases) {
+    const benchmark = new wasm.ShapedSolveBenchmark(parityCase.id);
+    benchmark.prepare();
+    benchmark.solve();
+    const wasmResult = JSON.parse(benchmark.result_json());
+    const nativeResult = JSON.parse(runProcess(nativeBinaryPath, ['--single', parityCase.id]));
+    delete nativeResult.elapsed_ms;
+    const mismatch = firstMismatch(nativeResult, wasmResult, parityCase.id);
+    if (mismatch) {
+      throw new Error(`Native vs WASM shaped parity failed on ${parityCase.id}: ${mismatch}`);
+    }
+    if (nativeResult.spec_hash !== wasmResult.spec_hash) {
+      throw new Error(`Spec hash mismatch on ${parityCase.id}: native ${nativeResult.spec_hash}, wasm ${wasmResult.spec_hash}`);
+    }
+    perModelParity.push({
+      id: parityCase.id,
+      spec_hash: nativeResult.spec_hash,
+      identical: true,
+    });
+  }
   process.stdout.write(`${JSON.stringify({
     ride: 'Horizon Hawk',
     piece: 'first shaped turn',
@@ -98,6 +123,8 @@ function checkHorizonHawkArcParity(wasmModulePath, nativeBinaryPath) {
     wasm_sha256: wasmDigest,
     force_previews_within_tolerance: true,
     first_hill_selected_shape: nativeHillSelection.spec,
+    per_model_parity_cases: perModelParity.length,
+    per_model_parity: perModelParity,
     identical: true,
   })}\n`);
 }

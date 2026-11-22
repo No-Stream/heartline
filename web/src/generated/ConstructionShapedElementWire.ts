@@ -3,4 +3,4 @@ import type { ConstructionShapeRefusalWire } from "./ConstructionShapeRefusalWir
 import type { ConstructionShapeSpecWire } from "./ConstructionShapeSpecWire";
 import type { PieceShapeReport } from "./PieceShapeReport";
 
-export type ConstructionShapedElementWire = { selection: string, kind: "hill" | "turn", feel: string | null, hand: "left" | "right" | null, strengthG: number | null, fixedSize: number | null, spec: ConstructionShapeSpecWire | null, refusal: ConstructionShapeRefusalWire | null, pieceShape: PieceShapeReport | null, };
+export type ConstructionShapedElementWire = { selection: string, kind: "hill" | "turn", feel: string | null, hand: "left" | "right" | null, strengthG: number | null, fixedSize: number | null, modelName: string, exceedsModelFeel: boolean, spec: ConstructionShapeSpecWire | null, refusal: ConstructionShapeRefusalWire | null, pieceShape: PieceShapeReport | null, };

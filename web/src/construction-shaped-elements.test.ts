@@ -61,6 +61,8 @@ describe("shaped element selections", () => {
       hand: null,
       strengthG: -0.5,
       fixedSize: null,
+      modelName: "Horizon Hawk",
+      exceedsModelFeel: false,
       spec: {
         kind: "hill",
         designSpeedMps: 34,
@@ -84,6 +86,40 @@ describe("shaped element selections", () => {
     ]);
   });
 
+  it("adds a mild feel note when a shaped element pushes past the model's typical feel inside the ASTM envelope", () => {
+    expect(shapedElementReadout({
+      selection: "shape:hill:ejector:-1.2:auto",
+      kind: "hill",
+      feel: "ejector",
+      hand: null,
+      strengthG: -1.2,
+      fixedSize: null,
+      modelName: "Horizon Hawk",
+      exceedsModelFeel: true,
+      spec: {
+        kind: "hill",
+        designSpeedMps: 34,
+        cars: 8,
+        targetG: -1.2,
+        deliveredG: -1.19,
+        verticalG: null,
+        lateralG: null,
+        heightM: 30,
+        spanM: 120,
+        radiusM: null,
+        bankDegrees: null,
+        geometryDigest: "0123456789abcdef",
+      },
+      refusal: null,
+      pieceShape: null,
+    }, "metric")).toEqual([
+      "Design speed: 122 km/h · 8-car train",
+      "Airtime target: −1.2 g · calibrated: −1.19 g",
+      "Resolved size: 30 m high × 120 m span",
+      "Within the comfort envelope, stronger than a typical Horizon Hawk.",
+    ]);
+  });
+
   it("shows a typed shaped-element refusal without inventing a force readout", () => {
     expect(shapedElementReadout({
       selection: "shape:hill:ejector:-1.2:auto",
@@ -92,6 +128,8 @@ describe("shaped element selections", () => {
       hand: null,
       strengthG: -1.2,
       fixedSize: null,
+      modelName: "Horizon Hawk",
+      exceedsModelFeel: false,
       spec: null,
       refusal: { kind: "stall", entrySpeedMps: 14, heightM: 28 },
       pieceShape: null,
@@ -108,6 +146,8 @@ describe("shaped element selections", () => {
       hand: "left",
       strengthG: null,
       fixedSize: 68,
+      modelName: "Horizon Hawk",
+      exceedsModelFeel: false,
       spec: null,
       refusal: { kind: "geometryDigestMismatch", expected: 1n, actual: 2n },
       pieceShape: null,

@@ -512,12 +512,34 @@ pub fn coaster_models() -> Vec<CoasterModel> {
     ]
 }
 
+const BRIAR_BLITZ_SHAPED_PROFILE: crate::track::shaped::ShapedProfile =
+    crate::track::shaped::ShapedProfile {
+        minimum_speed_mps: 18.0,
+        maximum_speed_mps: 30.0,
+        minimum_cars: 4,
+        maximum_cars: 12,
+        default_floater_g: -0.5,
+        default_strong_floater_g: -0.6,
+        default_ejector_g: -0.8,
+        typical_hill_feels: &[super::HillFeel::Floater, super::HillFeel::StrongFloater],
+        strong_floater_minimum_speed_mps: 20.0,
+        strong_floater_minimum_target_g: -0.55,
+        hill_pull_g: 2.8,
+        hill_height_energy_fraction: 0.4,
+        turn_vertical_g: 1.9,
+        maximum_bank_degrees: 60.0,
+        minimum_turn_radius_m: 8.0,
+        maximum_turn_radius_m: 256.0,
+        finish_turn_max_vertical_g: 3.5,
+        finish_turn_max_lateral_g: 0.6,
+    };
+
 pub fn wooden_twister_model() -> CoasterModel {
     CoasterModel {
         key: "wooden_twister",
         cars_per_train: 4..=12,
         ui_description: "Twisting wooden track on a dense wooden structure, with a chain lift and articulated trains.",
-        shaped_profile: None,
+        shaped_profile: Some(BRIAR_BLITZ_SHAPED_PROFILE),
         manufacturer: "Great Coaster Workshop",
         name: "Briar Blitz",
         description: "An articulated wooden twister with a chain lift and dense timber structure. The steel-structure loop is a plausible extension.",
@@ -669,12 +691,38 @@ pub fn wooden_twister_model() -> CoasterModel {
         },
     }
 }
+const TIMBER_TUMBLER_SHAPED_PROFILE: crate::track::shaped::ShapedProfile =
+    crate::track::shaped::ShapedProfile {
+        minimum_speed_mps: 20.0,
+        maximum_speed_mps: 36.0,
+        minimum_cars: 4,
+        maximum_cars: 8,
+        default_floater_g: -0.5,
+        default_strong_floater_g: -0.85,
+        default_ejector_g: -1.05,
+        typical_hill_feels: &[
+            super::HillFeel::Floater,
+            super::HillFeel::StrongFloater,
+            super::HillFeel::Ejector,
+        ],
+        strong_floater_minimum_speed_mps: 20.0,
+        strong_floater_minimum_target_g: -0.75,
+        hill_pull_g: 3.3,
+        hill_height_energy_fraction: 0.4,
+        turn_vertical_g: 3.1,
+        maximum_bank_degrees: 75.0,
+        minimum_turn_radius_m: 5.0,
+        maximum_turn_radius_m: 256.0,
+        finish_turn_max_vertical_g: 3.5,
+        finish_turn_max_lateral_g: 0.6,
+    };
+
 pub fn hybrid_model() -> CoasterModel {
     CoasterModel {
         key: "hybrid",
         cars_per_train: 4..=8,
         ui_description: "Steel box track on a wooden structure.",
-        shaped_profile: None,
+        shaped_profile: Some(TIMBER_TUMBLER_SHAPED_PROFILE),
         manufacturer: "Rocky Road Construction",
         name: "Timber Tumbler",
         description: "Steel box track on a wooden structure. Some elements are plausible extensions beyond the rides that inspired this model.",
@@ -896,12 +944,38 @@ pub fn hybrid_model() -> CoasterModel {
     }
 }
 
+const VELOCITY_VIPER_SHAPED_PROFILE: crate::track::shaped::ShapedProfile =
+    crate::track::shaped::ShapedProfile {
+        minimum_speed_mps: 20.0,
+        maximum_speed_mps: 36.0,
+        minimum_cars: 3,
+        maximum_cars: 6,
+        default_floater_g: -0.5,
+        default_strong_floater_g: -0.85,
+        default_ejector_g: -1.05,
+        typical_hill_feels: &[
+            super::HillFeel::Floater,
+            super::HillFeel::StrongFloater,
+            super::HillFeel::Ejector,
+        ],
+        strong_floater_minimum_speed_mps: 22.0,
+        strong_floater_minimum_target_g: -0.75,
+        hill_pull_g: 3.3,
+        hill_height_energy_fraction: 0.4,
+        turn_vertical_g: 3.2,
+        maximum_bank_degrees: 75.0,
+        minimum_turn_radius_m: 5.0,
+        maximum_turn_radius_m: 256.0,
+        finish_turn_max_vertical_g: 3.5,
+        finish_turn_max_lateral_g: 0.6,
+    };
+
 pub fn multi_launch_model() -> CoasterModel {
     CoasterModel {
         key: "velocity_viper",
         cars_per_train: 3..=6,
         ui_description: "Multi-launch steel track and columns with short, standard, and long launch sections.",
-        shaped_profile: None,
+        shaped_profile: Some(VELOCITY_VIPER_SHAPED_PROFILE),
         manufacturer: "Impulse Engineering",
         name: "Velocity Viper",
         description: "A steel coaster with linear motor launches. Some elements are plausible extensions beyond the rides that inspired this model.",
@@ -1120,6 +1194,28 @@ pub fn multi_launch_model() -> CoasterModel {
     }
 }
 
+const DAISY_DASH_SHAPED_PROFILE: crate::track::shaped::ShapedProfile =
+    crate::track::shaped::ShapedProfile {
+        minimum_speed_mps: 14.0,
+        maximum_speed_mps: 22.0,
+        minimum_cars: 4,
+        maximum_cars: 10,
+        default_floater_g: -0.25,
+        default_strong_floater_g: -0.85,
+        default_ejector_g: -1.2,
+        typical_hill_feels: &[super::HillFeel::Floater],
+        strong_floater_minimum_speed_mps: 16.0,
+        strong_floater_minimum_target_g: -0.75,
+        hill_pull_g: 2.50,
+        hill_height_energy_fraction: 0.55,
+        turn_vertical_g: 1.9,
+        maximum_bank_degrees: 60.0,
+        minimum_turn_radius_m: 8.0,
+        maximum_turn_radius_m: 256.0,
+        finish_turn_max_vertical_g: 2.75,
+        finish_turn_max_lateral_g: 0.6,
+    };
+
 /// A gentle steel family coaster: a curved low lift, 45-degree drops at most, floaty family hills,
 /// turns banked for speed and no inversions, so children from 100 cm can ride.
 pub fn family_coaster_model() -> CoasterModel {
@@ -1127,7 +1223,7 @@ pub fn family_coaster_model() -> CoasterModel {
         key: "family_coaster",
         cars_per_train: 4..=10,
         ui_description: "A gentle steel family coaster with a curving lift, soft floaty hills and turns banked for speed. Children from 100 cm can ride.",
-        shaped_profile: None,
+        shaped_profile: Some(DAISY_DASH_SHAPED_PROFILE),
         manufacturer: "Windmill Ride Works",
         name: "Daisy Dash",
         description: "A low steel family coaster with a tyre-driven curving lift, gentle drops, floaty family hills and turns banked for speed. No inversions.",

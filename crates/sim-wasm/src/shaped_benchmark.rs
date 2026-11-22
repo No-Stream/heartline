@@ -5,7 +5,8 @@ use theme_park_sim::physics::{PhysicsConfig, PreviewCache, PreviewStatus, TrackP
 use theme_park_sim::track::construction::Construction;
 use theme_park_sim::track::ride_file::{RideFile, RideStep};
 use theme_park_sim::track::shaped::{
-    ElementIntent, ElementSpec, HillSizeHint, SolveContext, SolvedElement, TurnSizeHint, solve,
+    ElementIntent, ElementSpec, HillSizeHint, SolveContext, SolvedElement, TurnSizeHint,
+    default_hill_strength, solve,
 };
 use theme_park_sim::track::{
     Hand, HillFeel, Piece, PieceId, PieceKind, TrackState, catalog, coaster_models,
@@ -450,25 +451,50 @@ pub fn shaped_benchmark_cases_json() -> String {
     serde_json::to_string(&cases).expect("benchmark cases serialize")
 }
 
+/// Lists one shaped hill and one shaped turn parity case for every profiled coaster model.
+#[wasm_bindgen]
+pub fn shaped_parity_cases_json() -> String {
+    let cases: Vec<_> = coaster_models()
+        .into_iter()
+        .filter_map(|model| {
+            let profile = model.shaped_profile?;
+            let cars = model.train.cars;
+            let midpoint_speed =
+                ((profile.minimum_speed_mps + profile.maximum_speed_mps) / 2.0).round();
+            Some([
+                json!({
+                    "id": format!("floater-hill:{}:{cars}:{midpoint_speed}", model.key),
+                    "model": model.key,
+                    "cars": cars,
+                    "element": "floater-hill",
+                    "requested_speed_mps": midpoint_speed,
+                }),
+                json!({
+                    "id": format!("fully-banked-turn:{}:{cars}:{midpoint_speed}", model.key),
+                    "model": model.key,
+                    "cars": cars,
+                    "element": "fully-banked-turn",
+                    "requested_speed_mps": midpoint_speed,
+                }),
+            ])
+        })
+        .flatten()
+        .collect();
+    serde_json::to_string(&cases).expect("parity cases serialize")
+}
+
 fn benchmark_case(kind: &str) -> (theme_park_sim::track::CoasterModel, ElementIntent, f64) {
-    let (model_key, cars, intent, speed_mps) = match kind {
+    let (model_key, cars, element_kind, speed_mps) = match kind {
         "hyper-strong-floater-hill" => (
             "hyper",
             None,
-            ElementIntent::Hill {
-                feel: HillFeel::StrongFloater,
-                strength_g: STRONG_FLOATER_TARGET_G,
-                size: HillSizeHint::Auto,
-            },
+            "strong-floater-hill",
             HYPER_HILL_ENTRY_SPEED_MPS,
         ),
         "hyper-fully-banked-turn" => (
             "hyper",
             None,
-            ElementIntent::Turn {
-                hand: Hand::Left,
-                size: TurnSizeHint::Auto,
-            },
+            "fully-banked-turn",
             HYPER_TURN_ENTRY_SPEED_MPS,
         ),
         _ => {
@@ -477,23 +503,6 @@ fn benchmark_case(kind: &str) -> (theme_park_sim::track::CoasterModel, ElementIn
                 fields.len() == 3 || fields.len() == 4,
                 "unknown shaped benchmark case: {kind}"
             );
-            let intent = match fields[0] {
-                "floater-hill" => ElementIntent::Hill {
-                    feel: HillFeel::Floater,
-                    strength_g: -0.5,
-                    size: HillSizeHint::Auto,
-                },
-                "fully-banked-turn" => ElementIntent::Turn {
-                    hand: Hand::Left,
-                    size: TurnSizeHint::Auto,
-                },
-                "strong-floater-hill" => ElementIntent::Hill {
-                    feel: HillFeel::StrongFloater,
-                    strength_g: STRONG_FLOATER_TARGET_G,
-                    size: HillSizeHint::Auto,
-                },
-                _ => panic!("unknown shaped benchmark element: {}", fields[0]),
-            };
             let cars = fields[2]
                 .parse::<u8>()
                 .expect("benchmark car count is an unsigned integer");
@@ -502,7 +511,7 @@ fn benchmark_case(kind: &str) -> (theme_park_sim::track::CoasterModel, ElementIn
                 .map_or(GRID_MIDPOINT_ENTRY_SPEED_MPS, |speed| {
                     speed.parse::<f64>().expect("benchmark speed is a number")
                 });
-            (fields[1], Some(cars), intent, requested_speed_mps)
+            (fields[1], Some(cars), fields[0], requested_speed_mps)
         }
     };
     let mut model = coaster_models()
@@ -517,6 +526,32 @@ fn benchmark_case(kind: &str) -> (theme_park_sim::track::CoasterModel, ElementIn
         model.train.length_metres *= f64::from(cars) / f64::from(model.train.cars);
         model.train.cars = cars;
     }
+    let intent = match element_kind {
+        "floater-hill" => ElementIntent::Hill {
+            feel: HillFeel::Floater,
+            strength_g: default_hill_strength(HillFeel::Floater, &model),
+            size: HillSizeHint::Auto,
+        },
+        "strong-floater-hill" => ElementIntent::Hill {
+            feel: HillFeel::StrongFloater,
+            strength_g: if model.key == "hyper" {
+                STRONG_FLOATER_TARGET_G
+            } else {
+                default_hill_strength(HillFeel::StrongFloater, &model)
+            },
+            size: HillSizeHint::Auto,
+        },
+        "ejector-hill" => ElementIntent::Hill {
+            feel: HillFeel::Ejector,
+            strength_g: default_hill_strength(HillFeel::Ejector, &model),
+            size: HillSizeHint::Auto,
+        },
+        "fully-banked-turn" => ElementIntent::Turn {
+            hand: Hand::Left,
+            size: TurnSizeHint::Auto,
+        },
+        _ => panic!("unknown shaped benchmark element: {element_kind}"),
+    };
     (model, intent, speed_mps)
 }
 

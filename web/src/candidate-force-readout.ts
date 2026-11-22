@@ -27,7 +27,7 @@ function shapeRefusalMessage(shape: ConstructionShapedElementWire, units: Units)
     case "belowMinimumSpeed":
       return [`Entry speed is below the shaped-element minimum of ${formatSpeed(shape.refusal.minimumSpeedMps, units, 1)}.`];
     case "unsupportedScope":
-      return ["Shaped elements require a hyper coaster with 4–8 cars and entry speed up to 36 m/s."];
+      return ["Entry speed or train length is outside this model's shaped-element range."];
     case "previewTimedOut":
       return ["The train preview timed out before this shape could be calibrated."];
     case "invalidContext":
@@ -48,6 +48,9 @@ export function shapedElementReadout(shape: ConstructionShapedElementWire, units
   if (refusal.length > 0) return refusal;
   if (!shape.spec) return ["Calibrating this shaped element…"];
 
+  const feelNote = shape.exceedsModelFeel && shape.modelName
+    ? [`Within the comfort envelope, stronger than a typical ${shape.modelName}.`]
+    : [];
   const { spec } = shape;
   const trainLine = `Design speed: ${formatSpeed(spec.designSpeedMps, units, 0)} · ${spec.cars}-car train`;
   if (spec.kind === "hill") {
@@ -58,6 +61,7 @@ export function shapedElementReadout(shape: ConstructionShapedElementWire, units
       trainLine,
       `Airtime target: ${formatCalibratedForce(spec.targetG)} g · calibrated: ${formatCalibratedForce(spec.deliveredG)} g`,
       `Resolved size: ${formatLength(spec.heightM, units)} high × ${formatLength(spec.spanM, units)} span`,
+      ...feelNote,
     ];
   }
   if (spec.radiusM === null || spec.bankDegrees === null || spec.lateralG === null) {
@@ -67,6 +71,7 @@ export function shapedElementReadout(shape: ConstructionShapedElementWire, units
     trainLine,
     `Resolved size: ${formatLength(spec.radiusM, units)} radius · ${formatCalibratedForce(spec.bankDegrees)}° bank`,
     `Lateral force at design speed: ${formatCalibratedForce(spec.lateralG)} g`,
+    ...feelNote,
   ];
 }
 

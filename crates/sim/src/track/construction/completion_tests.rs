@@ -176,3 +176,52 @@ fn constructed_reference_laps_report_ratings() {
         report.notes
     );
 }
+
+#[test]
+fn finish_search_places_shaped_turns_for_non_hyper_profiled_models() {
+    use PieceId::*;
+    let world = flat_world();
+    for (model, expected_min_speed) in [
+        (crate::track::multi_launch_model(), 20.0),
+        (crate::track::hybrid_model(), 20.0),
+        (crate::track::wooden_twister_model(), 18.0),
+        (crate::track::family_coaster_model(), 14.0),
+    ] {
+        let start = TrackState {
+            x: 80,
+            y: 80,
+            z: 8,
+            heading: crate::track::Heading::East,
+            ..TrackState::origin()
+        };
+        let mut construction = Construction::new(start, model.clone());
+        construction.append(Station, &world, &[]).unwrap();
+        construction.set_chain(true);
+        construction.append(LevelToGentleUp, &world, &[]).unwrap();
+        construction.append(GentleUpToLevel, &world, &[]).unwrap();
+        construction.set_chain(false);
+        construction.append(LevelToGentleDown, &world, &[]).unwrap();
+        construction.append(GentleDownToLevel, &world, &[]).unwrap();
+        let profile = model
+            .shaped_profile
+            .expect("tested model has a shaped profile");
+        assert!(
+            profile.minimum_speed_mps <= expected_min_speed,
+            "{} profile floor {}",
+            model.key,
+            profile.minimum_speed_mps
+        );
+        let mut search = construction
+            .completion_search_with_judge(FinishForceJudge::DesignTargets)
+            .expect("completion search starts");
+        let speed_squared = expected_min_speed * expected_min_speed + 25.0;
+        search.beam[0].speed_squared_estimate = speed_squared;
+        let options = search.shaped_turn_options(&search.beam[0]);
+        assert!(
+            !options.is_empty(),
+            "{} finish search offered no shaped turn options at {:.1} m/s",
+            model.key,
+            speed_squared.sqrt()
+        );
+    }
+}

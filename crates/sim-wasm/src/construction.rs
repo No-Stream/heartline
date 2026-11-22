@@ -123,6 +123,8 @@ pub struct ConstructionShapedElementWire {
     pub hand: Option<&'static str>,
     pub strength_g: Option<f64>,
     pub fixed_size: Option<f64>,
+    pub model_name: &'static str,
+    pub exceeds_model_feel: bool,
     pub spec: Option<ConstructionShapeSpecWire>,
     pub refusal: Option<ConstructionShapeRefusalWire>,
     pub piece_shape: Option<crate::reports::PieceShapeReport>,
@@ -367,8 +369,7 @@ fn solve_refusal_message(refusal: SolveRefusal) -> String {
             "Entry speed {entry_speed_mps:.1} m/s is below the shaped-element minimum of {minimum_speed_mps:.1} m/s."
         ),
         SolveRefusal::UnsupportedScope => {
-            "Shaped elements require a hyper coaster with 4–8 cars and entry speed up to 36 m/s."
-                .into()
+            "Entry speed or train length is outside this model's shaped-element range.".into()
         }
         SolveRefusal::PreviewTimedOut => "The train preview timed out.".into(),
         SolveRefusal::InvalidContext => "The train cannot reach this element entry.".into(),
@@ -1635,6 +1636,10 @@ impl WasmSimulation {
         _include_calibration: bool,
     ) -> Option<ConstructionShapedElementWire> {
         let intent = self.selected_shape.as_ref()?;
+        let model_name = self
+            .construction
+            .as_ref()
+            .map_or("", |construction| construction.model().name);
         let selection = shape_selection_id(intent);
         let (kind, feel, hand) = match intent {
             ElementIntent::Hill { .. } => ("hill", shape_feel(intent), None),
@@ -1648,6 +1653,8 @@ impl WasmSimulation {
                 hand,
                 strength_g: shape_strength(intent),
                 fixed_size: shape_size_hint(intent),
+                model_name,
+                exceeds_model_feel: solved.exceeds_model_feel,
                 spec: Some(shaped_spec_wire(&solved.spec)),
                 refusal: None,
                 piece_shape: Some(crate::reports::piece_shape_report(&solved.piece)),
@@ -1659,6 +1666,8 @@ impl WasmSimulation {
                 hand,
                 strength_g: shape_strength(intent),
                 fixed_size: shape_size_hint(intent),
+                model_name,
+                exceeds_model_feel: false,
                 spec: None,
                 refusal: Some(solve_refusal_wire(refusal)),
                 piece_shape: None,

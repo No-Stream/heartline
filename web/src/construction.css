@@ -504,6 +504,12 @@
 .builder__hill-readout dd { margin: 0; font: 0.9rem/1.3 var(--body-font); font-variant-numeric: tabular-nums; }
 .builder__shape-readout { grid-template-columns: minmax(0, 1fr); }
 .builder__shape-readout p { grid-column: 1 / -1; margin: 0; font: 0.9rem/1.3 var(--body-font); font-variant-numeric: tabular-nums; }
+.builder__shape-feel-note {
+  padding: 0.25rem 0.45rem;
+  border-left: 3px solid color-mix(in srgb, var(--mustard) 72%, var(--ink));
+  background: color-mix(in srgb, var(--mustard) 16%, var(--paper));
+  color: color-mix(in srgb, var(--mustard) 72%, var(--ink));
+}
 .builder__hill-rating {
   display: inline-block;
   margin-left: 0.2rem;

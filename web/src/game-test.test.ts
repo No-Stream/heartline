@@ -48,6 +48,8 @@ test("reads selected piece, shape and construction estimates from the latest sta
     hand: "left",
     strengthG: null,
     fixedSize: 68,
+    modelName: "Horizon Hawk",
+    exceedsModelFeel: false,
     spec: null,
     refusal: null,
     pieceShape: null,
