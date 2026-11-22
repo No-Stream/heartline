@@ -90,7 +90,7 @@
   "checkpoints": [
     {
       "tick": 300,
-      "hash": "523817379256240903"
+      "hash": "16224520291412345548"
     }
   ],
   "finalTick": 300,
@@ -442,5 +442,6 @@
   "expect": {
     "constructionPiecesAtLeast": 4,
     "chainEnabled": true
-  }
+  },
+  "strict": true
 }

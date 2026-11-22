@@ -537,5 +537,6 @@
   "expect": {
     "pathTilesAtLeast": 6,
     "foodStallsAtLeast": 1
-  }
+  },
+  "strict": true
 }
