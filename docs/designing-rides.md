@@ -347,7 +347,7 @@ The check passes under both physics configurations. In the construction test and
 
 ## Giga drops on the hyper
 
-A first drop of 90 m or more ends in `GigaSixtyDownToLevel`, which is solved for 3.5 g at a 43.5 m/s bottom speed and drops about 44 m by itself. Sky Harrier (`content/rides/sky-harrier.ride.json`) uses a 104 m crest, `WideLevelToSixtyDown`, two `SixtyDown` and the giga pullout: a 94 m drop that the eight-car train leaves at 42.5 m/s with 3.25 to 3.33 g in the pullout. The rear car reaches the pullout about 4.7 m/s faster than the front car, so its rated-window margin (about +0.3 m/s in the construction test) is the one to watch; a third `SixtyDown` above the pullout pushes it out of its window. `WideSixtyDownToLevel` stays the pullout for Horizon Hawk-sized drops of about 60 m.
+A first drop of 90 m or more ends in `GigaSixtyDownToLevel`, which is solved for 3.5 g at a 43.5 m/s bottom speed and drops about 44 m by itself. Sky Harrier (`content/rides/sky-harrier.ride.json`) uses a 104 m crest, `WideLevelToSixtyDown`, two `SixtyDown` and the giga pullout: a 94 m drop that the eight-car train leaves at 42.5 m/s with 3.25 to 3.33 g in the pullout. The rear car reaches the pullout about 4.7 m/s faster than the front car, so its rated-window margin (about +0.3 m/s in the construction test) is the one to watch. `WideSixtyDownToLevel` stays the pullout for Horizon Hawk-sized drops of about 60 m.
 
 ## Where to look next
 
