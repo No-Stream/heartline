@@ -1866,6 +1866,54 @@ fn v6_live_coaster_fixture_loads_and_keeps_running() {
 }
 
 #[test]
+fn v7_live_coaster_fixture_loads_and_keeps_running() {
+    let compressed_bytes = include_bytes!("../../tests/fixtures/coaster-grouping-v7.save.xz");
+    assert!(compressed_bytes.len() < 300 * 1024, "fixture stays compact");
+    let mut compressed = std::io::Cursor::new(compressed_bytes);
+    let mut bytes = Vec::new();
+    lzma_rs::xz_decompress(&mut compressed, &mut bytes).expect("decompress v7 fixture");
+    assert!(
+        bytes.starts_with(b"TPSAVE\x07"),
+        "fixture is a version 7 save"
+    );
+    let mut original = WasmSimulation::load_state_native(&bytes).expect("load v7 fixture");
+    let mut restored = WasmSimulation::load_state_native(&bytes).expect("load v7 fixture again");
+
+    let coaster = original.editing_coaster().expect("fixture has a coaster");
+    assert!(coaster.coaster_open, "fixture coaster is open");
+    assert!(
+        coaster.construction_report.is_some(),
+        "fixture coaster was tested"
+    );
+    assert!(
+        coaster
+            .coaster_riders
+            .values()
+            .any(|riders| !riders.is_empty()),
+        "fixture has riders on a train"
+    );
+    assert!(
+        coaster.coaster_operation.as_ref().is_some_and(|operation| {
+            operation.trains().any(|(train_id, train)| {
+                train.distance() > 0.0
+                    && coaster
+                        .coaster_riders
+                        .get(&train_id)
+                        .is_some_and(|riders| !riders.is_empty())
+            })
+        }),
+        "a train is moving with riders aboard"
+    );
+    assert_eq!(original.state_hash(), restored.state_hash());
+
+    for _ in 0..30 {
+        original.tick();
+        restored.tick();
+        assert_eq!(original.state_hash(), restored.state_hash());
+    }
+}
+
+#[test]
 fn save_round_trip_preserves_a_live_park_with_riders_and_a_queue() {
     use theme_park_sim::guests::ActivityKind;
 
