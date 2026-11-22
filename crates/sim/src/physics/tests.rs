@@ -2400,6 +2400,25 @@ fn candidate_preview_step_reuses_flat_reading_buffer_without_changing_car_readin
 }
 
 #[test]
+fn candidate_preview_treats_closing_candidate_as_open_track() {
+    let circuit = demo_circuit();
+    let model = hybrid_model();
+    let pieces = circuit.pieces();
+    assert_eq!(pieces.last().unwrap().exit, pieces[0].entry);
+    let candidate_piece_index = pieces.len() - 1;
+    let config = PhysicsConfig::for_construction_test(&model);
+
+    let mut cache = PreviewCache::default();
+    cache
+        .preview(&pieces[..candidate_piece_index], &model, config)
+        .unwrap();
+    let candidate = cache
+        .preview_candidate(pieces, &model, config, candidate_piece_index)
+        .unwrap();
+    assert_eq!(candidate.cars.len(), usize::from(model.train.cars));
+}
+
+#[test]
 fn incremental_preview_matches_fresh_when_a_step_crosses_multiple_metres() {
     let circuit = demo_circuit();
     let model = hybrid_model();

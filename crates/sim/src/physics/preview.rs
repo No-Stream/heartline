@@ -174,6 +174,9 @@ impl PreviewCache {
     }
 
     /// Previews a candidate piece using compact per-car samples without computing ride ratings.
+    ///
+    /// Always treats the track as open so a candidate piece whose exit meets the station entry
+    /// still runs through the virtual tangent runout for rear-car calibration.
     pub fn preview_candidate(
         &mut self,
         pieces: &[Piece],
@@ -187,7 +190,7 @@ impl PreviewCache {
             config,
             false,
             Some(candidate_piece_index),
-            false,
+            true,
         )? {
             PreviewOutput::Candidate(preview) => Some(preview),
             PreviewOutput::Track(_) => unreachable!("candidate preview returns force summaries"),

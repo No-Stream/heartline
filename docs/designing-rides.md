@@ -65,7 +65,7 @@ LevelToGentleDown               5.0 —                — 1.0 (weak) / 0.4 (wea
 
 ```console
 $ tools/design ride demo-hyper.ride.json options shapes
-Model hyper limits: vertical -1.50 to +4.00 g, lateral up to 1.20 g; default hill targets floater -0.50 g, strong floater -0.85 g, ejector steel -1.20 g or wood -0.80 g; turn radius 8.0 to 256.0 m, bank up to 75.0 degrees.
+Model hyper limits: vertical -1.50 to +4.00 g, lateral up to 1.20 g; speed 22 to 36 m/s (4–8 cars); default hill targets floater -0.50 g, strong floater -0.85 g, ejector -1.20 g; turn radius 8.0 to 256.0 m, bank up to 75.0 degrees.
 id                                   name                     design m/s delivered g size                 refusal
 shape:hill:floater:default:auto      floater hill                   34.6       -0.50 24.5x198.0 m
 shape:hill:strongFloater:default:auto strong floater hill            34.6       -0.85 24.3x186.0 m
@@ -104,9 +104,19 @@ Placed shape:hill:strongFloater:-0.85:fixed-24
 Estimate: 34.0 m/s entry, Shaped hill: strongFloater at 34.0 m/s for 8 cars; target -0.85 g, delivered -0.85 g; height 24.1 m, span 180.0 m
 ```
 
-Shaped elements are not supported everywhere yet. The solver accepts only the `hyper` model, trains of 4 to 8 cars, entry speeds from 22 to 36 m/s, and an entry that is level, unbanked and straight. Outside that scope the tool refuses with `unsupportedScope`, `belowMinimumSpeed` or `unsupportedConnector`. Other models still use classic hills and turns.
+Shaped elements are supported on all five coaster models, each driven by its own `ShapedProfile` in `crates/sim/src/track/models.rs`. The entry must be level, unbanked and straight; outside a model's train-length or speed range the tool refuses with `unsupportedScope`, `belowMinimumSpeed` or `unsupportedConnector`.
 
-Pick values the visible builder can reach. The browser's strength stepper moves in 0.1 g steps from the feel's default, so a strong floater can be -0.85, -0.95 or -1.05 g but not -1.0 g. Height and radius steppers move in 2 m steps, so use even whole metres or `auto`. The CLI accepts any value, and a ride that uses an unreachable one passes `check` but fails the browser agreement test (see the traps below).
+| Model | Cars | Entry speed | Typical hill feels | Default targets (`floater` / `strong-floater` / `ejector`) | Auto turn vertical / max bank | Finish turn ceiling |
+| --- | --- | --- | --- | --- | --- | --- |
+| `hyper` (Horizon Hawk) | 4–8 | 22–36 m/s | `floater`, `strong-floater` | -0.50 / -0.85 / -1.20 g | 2.9 g / 75° | 3.5 g vert, 0.6 g lat |
+| `velocity_viper` (Velocity Viper) | 3–6 | 20–36 m/s | `floater`, `strong-floater`, `ejector` | -0.50 / -0.85 / -1.05 g | 3.2 g / 75° | 3.5 g vert, 0.6 g lat |
+| `hybrid` (Timber Tumbler) | 4–8 | 20–36 m/s | `floater`, `strong-floater`, `ejector` | -0.50 / -0.85 / -1.05 g | 3.1 g / 75° | 3.5 g vert, 0.6 g lat |
+| `wooden_twister` (Briar Blitz) | 4–12 | 18–30 m/s | `floater`, `strong-floater` | -0.50 / -0.60 / -0.80 g | 1.9 g / 60° | 3.5 g vert, 0.6 g lat |
+| `family_coaster` (Daisy Dash) | 4–10 | 14–22 m/s | `floater` | -0.25 / -0.85 / -1.20 g | 1.9 g / 60° | 2.75 g vert, 0.6 g lat |
+
+**Typical feel defaults versus global ASTM flexibility.** Each model's typical hill feels and automatic banked turns stay inside that model's design force targets with 0.25 g headroom so showcase rides pass `designMargins: true`. Players can still push past a model's typical feel (for example, true ejector on a hyper coaster, strong floater or ejector on Daisy Dash, or tighter fixed-radius manual turns) all the way up to the global ASTM F2291 comfort envelope. When a shaped element exceeds the model's typical feel while staying inside the comfort envelope, the builder shows a mild amber note ("Within the comfort envelope, stronger than a typical `<model>`.") with no score penalty.
+
+Pick values the visible builder can reach. The browser's strength stepper moves in 0.1 g steps from the feel's default, so on `hyper` a strong floater can be -0.85, -0.95 or -1.05 g but not -1.0 g. Height and radius steppers move in 2 m steps, so use even whole metres or `auto`. The CLI accepts any value, and a ride that uses an unreachable one passes `check` but fails the browser agreement test (see the traps below).
 
 ### Undo and truncate
 
@@ -114,7 +124,7 @@ Pick values the visible builder can reach. The browser's strength stepper moves 
 
 ### Close the circuit
 
-`close` succeeds only when the open end sits exactly at the station entry, at the station's height and heading, and refuses a circuit that is already closed. `finish` searches for routes of up to six pieces that bring the end there; it only starts within 120 m of the station and never places shaped hills, lifts or launches. On models with shaped elements it also places fully banked shaped turns with fixed even radii, solved for their entry speed, kept under 3.5 g vertical and 0.6 g lateral, and ending at least 8 m before the station entry; `finish apply` saves them as shaped steps like `place turn`. It lists the routes it found, best first, each with its arrival speed, the energy its brakes remove, its force headroom, its rated-window margin and whether the closed ride passes the rated-window and force-headroom rules of `check`. `finish apply <n>` places route `n` and closes the circuit in one step, so do not run `close` after it.
+`close` succeeds only when the open end sits exactly at the station entry, at the station's height and heading, and refuses a circuit that is already closed. `finish` searches for routes of up to six pieces that bring the end there; it only starts within 120 m of the station and never places shaped hills, lifts or launches. On every coaster model it also places fully banked shaped turns with fixed even radii, solved for their entry speed, kept under that model's finish ceiling (2.75 g vertical on `family_coaster`, 3.5 g vertical on the other four models, and 0.6 g lateral on all models), and ending at least 8 m before the station entry; `finish apply` saves them as shaped steps like `place turn`. It lists the routes it found, best first, each with its arrival speed, the energy its brakes remove, its force headroom, its rated-window margin and whether the closed ride passes the rated-window and force-headroom rules of `check`. `finish apply <n>` places route `n` and closes the circuit in one step, so do not run `close` after it.
 
 ```console
 $ tools/design ride hawk-end.ride.json truncate 41     # Horizon Hawk minus its last two straights and close
