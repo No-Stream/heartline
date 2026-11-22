@@ -30,6 +30,25 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # The two heaviest test crates get their own runners; new crates land in the last shard.
+        selection:
+          - "-p theme-park-sim"
+          - "-p theme-park-sim-wasm"
+          - "--workspace --exclude theme-park-sim --exclude theme-park-sim-wasm"
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.selection }}
+      - run: make test-rust RUST_TEST_SELECTION="${{ matrix.selection }}"
+
+  test-web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - run: rustup show active-toolchain || rustup toolchain install
@@ -42,7 +61,6 @@ jobs:
       # make test-web rasterizes the sprite atlas through headless Chrome.
       - run: npx playwright install --with-deps chrome
       - run: make build
-      - run: make test-rust
       - run: make test-web
 
   test-threads:

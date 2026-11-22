@@ -64,8 +64,11 @@ check: build design-tools
 
 test: test-rust test-threads test-flexibility test-web
 
+# CI shards the workspace by overriding this, e.g. RUST_TEST_SELECTION="-p theme-park-sim".
+RUST_TEST_SELECTION ?= --workspace
+
 test-rust:
-	$(CARGO) test --workspace -- --skip track::construction::walk_tests::seeded_
+	$(CARGO) test $(RUST_TEST_SELECTION) --no-fail-fast -- --skip track::construction::walk_tests::seeded_
 
 test-rated-windows:
 	$(CARGO) test -p theme-park-sim --example measure_force_windows
