@@ -1346,6 +1346,32 @@ fn hybrid_overbanks_exceed_ninety_degrees_mirror_and_join_smoothly() {
 }
 
 #[test]
+fn catalog_pieces_that_turn_upside_down_declare_an_inversion_or_overbank() {
+    for piece in catalog() {
+        let sampled_upside_down = (0..=100).any(|index| {
+            let distance = piece.length() * (f64::from(index) / 100.0);
+            piece.sample(distance).up.z < 0.0
+        });
+        let is_overbank = matches!(
+            piece.id,
+            PieceId::HybridOverbankLeft | PieceId::HybridOverbankRight
+        ) || matches!(
+            piece.family,
+            Some(PieceFamily::Hill(HillFamily {
+                twist: Some(HillTwist::OuterBankLeft | HillTwist::OuterBankRight),
+                ..
+            }))
+        );
+
+        assert!(
+            !sampled_upside_down || piece.inversion.is_some() || is_overbank,
+            "{:?} samples upside down without declaring an inversion or being an overbank",
+            piece.id
+        );
+    }
+}
+
+#[test]
 fn handed_inversions_are_mirrored() {
     let pieces = catalog();
     for (left_id, right_id) in [
