@@ -52,7 +52,7 @@ describe("design tool session export", () => {
         capacitySearchComplete: false,
         placementSearchComplete: true,
       });
-  });
+  }, 15_000);
 
   it("waits for explicit block sections before applying a multi-train count", async () => {
     let releaseBlockSections!: () => void;

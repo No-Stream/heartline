@@ -7,12 +7,14 @@ use theme_park_sim::track::shaped::GeometryDigestMismatch;
 
 const SAVE_HEADER_V4: &[u8] = b"TPSAVE\x04";
 const SAVE_HEADER_V5: &[u8] = b"TPSAVE\x05";
+const SAVE_HEADER_V6: &[u8] = b"TPSAVE\x06";
 const MAX_SAVE_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SaveVersion {
     V4,
     V5,
+    V6,
 }
 
 #[derive(Debug)]
@@ -21,6 +23,7 @@ pub enum SaveLoadError {
     Incomplete,
     CorruptOrTooLarge,
     LegacyShapedV4Unsupported,
+    LegacyForceLimitsUnsupported,
     ShapedGeometryDigestMismatch(GeometryDigestMismatch),
     Decode(postcard::Error),
     TrailingData,
@@ -37,6 +40,9 @@ impl Display for SaveLoadError {
             Self::LegacyShapedV4Unsupported => formatter.write_str(
                 "Version 4 park saves containing shaped elements cannot be loaded because they store legacy resolved geometry",
             ),
+            Self::LegacyForceLimitsUnsupported => formatter.write_str(
+                "Version 4 and 5 park saves containing recorded test runs or operating coasters cannot be loaded because they store legacy per-model evaluator limits",
+            ),
             Self::ShapedGeometryDigestMismatch(mismatch) => Display::fmt(mismatch, formatter),
             Self::Decode(error) => write!(formatter, "Could not load park: {error}"),
             Self::TrailingData => formatter.write_str("Could not load park: save has trailing data"),
@@ -49,10 +55,13 @@ impl std::error::Error for SaveLoadError {}
 pub(super) fn decode_error(
     version: SaveVersion,
     legacy_shaped_element_seen: bool,
+    legacy_force_limits_seen: bool,
     error: postcard::Error,
 ) -> SaveLoadError {
     if version == SaveVersion::V4 && legacy_shaped_element_seen {
         SaveLoadError::LegacyShapedV4Unsupported
+    } else if matches!(version, SaveVersion::V4 | SaveVersion::V5) && legacy_force_limits_seen {
+        SaveLoadError::LegacyForceLimitsUnsupported
     } else {
         SaveLoadError::Decode(error)
     }
@@ -99,7 +108,9 @@ pub(super) fn checksum(bytes: &[u8]) -> u64 {
 }
 
 pub(super) fn checked_payload(bytes: &[u8]) -> Result<(SaveVersion, &[u8]), SaveLoadError> {
-    let (version, data) = if let Some(data) = bytes.strip_prefix(SAVE_HEADER_V5) {
+    let (version, data) = if let Some(data) = bytes.strip_prefix(SAVE_HEADER_V6) {
+        (SaveVersion::V6, data)
+    } else if let Some(data) = bytes.strip_prefix(SAVE_HEADER_V5) {
         (SaveVersion::V5, data)
     } else if let Some(data) = bytes.strip_prefix(SAVE_HEADER_V4) {
         (SaveVersion::V4, data)
@@ -132,7 +143,7 @@ impl WasmSimulation {
     }
 
     fn save_state_native_with_limit(&self, limit: usize) -> Result<Vec<u8>, String> {
-        let mut bytes = SAVE_HEADER_V5.to_vec();
+        let mut bytes = SAVE_HEADER_V6.to_vec();
         let payload = theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
             postcard::serialize_with_flavor(self, LimitedBytes::new(limit))
         })
@@ -153,22 +164,41 @@ impl WasmSimulation {
                 postcard::take_from_bytes::<Self>(payload)
             })
         };
-        let (decoded, legacy_shaped_element_seen, geometry_digest_mismatch) = match version {
+        let (
+            decoded,
+            legacy_shaped_element_seen,
+            legacy_force_limits_seen,
+            geometry_digest_mismatch,
+        ) = match version {
             SaveVersion::V4 => {
-                let (decoded, shaped_seen) =
-                    theme_park_sim::track::shaped::with_legacy_v4_save_decode_context(decode);
-                (decoded, shaped_seen, None)
+                let ((decoded, shaped_seen), force_limits_seen) =
+                    theme_park_sim::park::with_legacy_pre_v6_save_decode_context(|| {
+                        theme_park_sim::track::shaped::with_legacy_v4_save_decode_context(decode)
+                    });
+                (decoded, shaped_seen, force_limits_seen, None)
             }
             SaveVersion::V5 => {
+                let ((decoded, mismatch), force_limits_seen) =
+                    theme_park_sim::park::with_legacy_pre_v6_save_decode_context(|| {
+                        theme_park_sim::track::shaped::with_current_save_decode_context(decode)
+                    });
+                (decoded, false, force_limits_seen, mismatch)
+            }
+            SaveVersion::V6 => {
                 let (decoded, mismatch) =
                     theme_park_sim::track::shaped::with_current_save_decode_context(decode);
-                (decoded, false, mismatch)
+                (decoded, false, false, mismatch)
             }
         };
         let (mut simulation, remaining) = match decoded {
             Ok(decoded) => decoded,
             Err(error) => {
-                return Err(decode_error(version, legacy_shaped_element_seen, error));
+                return Err(decode_error(
+                    version,
+                    legacy_shaped_element_seen,
+                    legacy_force_limits_seen,
+                    error,
+                ));
             }
         };
         if let Some(mismatch) = geometry_digest_mismatch {
@@ -189,7 +219,7 @@ impl WasmSimulation {
 
 #[cfg(test)]
 mod tests {
-    use super::{SAVE_HEADER_V5, SaveLoadError, SaveVersion, checked_payload, checksum};
+    use super::{SAVE_HEADER_V6, SaveLoadError, SaveVersion, checked_payload, checksum};
     use crate::WasmSimulation;
 
     #[test]
@@ -201,12 +231,12 @@ mod tests {
     #[test]
     fn save_rejects_corruption_and_unsupported_versions() {
         let payload = b"park state";
-        let mut bytes = SAVE_HEADER_V5.to_vec();
+        let mut bytes = SAVE_HEADER_V6.to_vec();
         bytes.extend(checksum(payload).to_le_bytes());
         bytes.extend(payload);
         assert!(matches!(
             checked_payload(&bytes),
-            Ok((SaveVersion::V5, actual_payload)) if actual_payload == payload
+            Ok((SaveVersion::V6, actual_payload)) if actual_payload == payload
         ));
         *bytes.last_mut().unwrap() ^= 1;
         assert!(matches!(
@@ -223,16 +253,26 @@ mod tests {
     #[test]
     fn only_a_v4_shaped_element_error_is_classified_as_legacy_shaped() {
         assert!(matches!(
-            super::decode_error(SaveVersion::V4, true, postcard::Error::SerdeDeCustom),
+            super::decode_error(SaveVersion::V4, true, false, postcard::Error::SerdeDeCustom),
             SaveLoadError::LegacyShapedV4Unsupported,
         ));
         assert!(matches!(
-            super::decode_error(SaveVersion::V4, false, postcard::Error::SerdeDeCustom),
+            super::decode_error(SaveVersion::V5, false, true, postcard::Error::SerdeDeCustom),
+            SaveLoadError::LegacyForceLimitsUnsupported,
+        ));
+        assert!(matches!(
+            super::decode_error(
+                SaveVersion::V4,
+                false,
+                false,
+                postcard::Error::SerdeDeCustom
+            ),
             SaveLoadError::Decode(postcard::Error::SerdeDeCustom)
         ));
         assert!(matches!(
             super::decode_error(
                 SaveVersion::V4,
+                false,
                 false,
                 postcard::Error::DeserializeBadEncoding
             ),

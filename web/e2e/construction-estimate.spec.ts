@@ -117,7 +117,7 @@ test("previews forces for a selected drop before placing it @fast", async ({ pag
   await expect(track).toHaveCount(1);
 });
 
-test("marks forces past the model's comfortable limits on a harsh drop @fast", async ({ page }) => {
+test("marks forces past the comfort envelope on a harsh drop @fast", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto("/?park=new&seed=2026&test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
@@ -141,7 +141,7 @@ test("marks forces past the model's comfortable limits on a harsh drop @fast", a
     await placePiece.click();
     await expect.poll(() => track.count()).toBeGreaterThan(count);
   }
-  await expect(page.locator("[data-construction-estimate]")).toContainText("exceed this model's comfortable limits");
+  await expect(page.locator("[data-construction-estimate]")).toContainText("exceed the comfort envelope");
   await expect(page.getByLabel("Track overlay")).toHaveValue("limitCloseness");
   await page.evaluate(() => {
     const { samples, limits } = window.gameTest.constructionForcePreview()!;

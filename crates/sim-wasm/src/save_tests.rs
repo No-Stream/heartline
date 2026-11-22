@@ -97,6 +97,7 @@ fn assert_legacy_v4_element_spec_is_typed_as_unsupported(spec: &ElementSpec) {
         super::save::decode_error(
             super::save::SaveVersion::V4,
             legacy_shaped_element_seen,
+            false,
             error
         ),
         super::save::SaveLoadError::LegacyShapedV4Unsupported
@@ -406,13 +407,15 @@ fn save_keeps_demo_and_player_test_reports() {
 }
 
 #[test]
-fn save_uses_v5_and_loads_classic_v4_saves() {
+fn save_uses_v6_loads_classic_v4_and_v5_saves_and_rejects_legacy_v5_test_reports() {
     let simulation = WasmSimulation::new(42, 20, String::from("demo"));
     let mut bytes = simulation.save_state().unwrap();
-    assert_eq!(&bytes[..7], b"TPSAVE\x05");
-    bytes[6] = 4;
-    let restored = WasmSimulation::load_state_native(&bytes).unwrap();
-    assert_eq!(simulation.state_hash(), restored.state_hash());
+    assert_eq!(&bytes[..7], b"TPSAVE\x06");
+    for compatible_version in [4, 5] {
+        bytes[6] = compatible_version;
+        let restored = WasmSimulation::load_state_native(&bytes).unwrap();
+        assert_eq!(simulation.state_hash(), restored.state_hash());
+    }
 
     for old_version in [1, 2, 3] {
         bytes[6] = old_version;
@@ -421,6 +424,19 @@ fn save_uses_v5_and_loads_classic_v4_saves() {
             Err(super::save::SaveLoadError::UnsupportedVersion)
         ));
     }
+
+    let mut tested = WasmSimulation::new(42, 0, String::from("demo"));
+    assert_eq!(tested.ride_test("demo"), "");
+    let mut legacy_tested_bytes = tested.save_state().unwrap();
+    legacy_tested_bytes[6] = 5;
+    let error = match WasmSimulation::load_state_native_typed(&legacy_tested_bytes) {
+        Ok(_) => panic!("v5 save with recorded demo test report unexpectedly loaded"),
+        Err(error) => error,
+    };
+    assert!(matches!(
+        error,
+        super::save::SaveLoadError::LegacyForceLimitsUnsupported
+    ));
 }
 
 #[test]

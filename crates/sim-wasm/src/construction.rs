@@ -5,14 +5,15 @@ use theme_park_sim::physics::{
     Circuit, ForcePeakValues, PhysicsConfig, PieceForcePeaks, PreviewForceSample, PreviewStatus,
     TestRun,
 };
+use theme_park_sim::track::rated_windows::{RatedWindowSource, measured_rated_window};
 use theme_park_sim::track::shaped::{
     ElementIntent, ElementSpec, HillSizeHint, ShapedConstructionError, SolveRefusal, TurnSizeHint,
     default_hill_strength,
 };
 use theme_park_sim::track::{
-    Bank, CoasterModel, Hand, Heartlining, HillFeel, HillTwist, PieceFamily,
+    Bank, CoasterModel, DesignForceTargets, ENVELOPE_DISPLAY_LIMITS, ForceRating, ForceRatingAxis,
+    Hand, Heartlining, HillFeel, HillTwist, PieceFamily, envelope_rating_bands,
 };
-use theme_park_sim::track::{DesignForceTargets, ForceRating, ForceRatingAxis};
 use ts_rs::TS;
 
 #[derive(Serialize, TS)]
@@ -572,12 +573,23 @@ pub struct ConstructionColorsWire {
 
 #[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+pub struct ConstructionDesignTargetsWire {
+    pub model_name: String,
+    pub minimum_vertical_g: f64,
+    pub maximum_vertical_g: f64,
+    pub maximum_lateral_g: f64,
+    pub maximum_longitudinal_g: f64,
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct ConstructionForceLimitsWire {
     pub minimum_vertical_g: f64,
     pub maximum_vertical_g: f64,
     pub rating_bands: ConstructionForceRatingBandsWire,
     pub maximum_lateral_g: f64,
     pub maximum_longitudinal_g: f64,
+    pub design_targets: ConstructionDesignTargetsWire,
 }
 
 #[derive(Serialize, TS)]
@@ -659,6 +671,10 @@ pub struct ConstructionForcePreviewWire {
 pub struct ConstructionRatedSpeedWire {
     pub minimum_entry: f64,
     pub maximum_entry: f64,
+    pub feel_minimum_entry: Option<f64>,
+    pub feel_maximum_entry: Option<f64>,
+    #[ts(type = "\"designTarget\" | \"airtimeFeel\" | \"designCap\" | null")]
+    pub feel_maximum_source: Option<&'static str>,
 }
 
 #[derive(Serialize, TS)]
@@ -706,19 +722,29 @@ fn hill_twist_wire(twist: Option<HillTwist>) -> &'static str {
 }
 
 fn rated_speed_wire(model: &CoasterModel, piece: &Piece) -> Option<ConstructionRatedSpeedWire> {
-    theme_park_sim::track::rated_speeds(model, piece).map(|speeds| ConstructionRatedSpeedWire {
-        minimum_entry: speeds.minimum_entry,
-        maximum_entry: speeds.maximum_entry,
+    let _design_speeds = piece.design_speeds?;
+    let window = measured_rated_window(model, piece)?;
+    let feel_maximum_source = window.feel_maximum_source.and_then(|source| match source {
+        RatedWindowSource::DesignTarget => Some("designTarget"),
+        RatedWindowSource::AirtimeFeel => Some("airtimeFeel"),
+        RatedWindowSource::DesignCap => Some("designCap"),
+        _ => None,
+    });
+    Some(ConstructionRatedSpeedWire {
+        minimum_entry: window.minimum_entry,
+        maximum_entry: window.maximum_entry,
+        feel_minimum_entry: window.feel_minimum_entry,
+        feel_maximum_entry: window.feel_maximum_entry,
+        feel_maximum_source,
     })
 }
 
 pub(crate) fn force_limits_wire(
-    limits: DesignForceTargets,
-    model_key: &str,
+    design_targets: DesignForceTargets,
+    model_name: &str,
 ) -> ConstructionForceLimitsWire {
     let bands = |axis| {
-        limits
-            .rating_bands(axis, model_key)
+        envelope_rating_bands(axis, model_name)
             .into_iter()
             .map(|band| ConstructionForceRatingBandWire {
                 rating: match band.rating {
@@ -736,17 +762,25 @@ pub(crate) fn force_limits_wire(
             })
             .collect()
     };
+    let display = ENVELOPE_DISPLAY_LIMITS;
     ConstructionForceLimitsWire {
-        minimum_vertical_g: limits.minimum_vertical_g,
-        maximum_vertical_g: limits.maximum_vertical_g,
+        minimum_vertical_g: display.minimum_vertical_g,
+        maximum_vertical_g: display.maximum_vertical_g,
         rating_bands: ConstructionForceRatingBandsWire {
             airtime: bands(ForceRatingAxis::Airtime),
             vertical: bands(ForceRatingAxis::Vertical),
             lateral: bands(ForceRatingAxis::Lateral),
             longitudinal: bands(ForceRatingAxis::Longitudinal),
         },
-        maximum_lateral_g: limits.maximum_lateral_g,
-        maximum_longitudinal_g: limits.maximum_longitudinal_g,
+        maximum_lateral_g: display.maximum_lateral_g,
+        maximum_longitudinal_g: display.maximum_longitudinal_g,
+        design_targets: ConstructionDesignTargetsWire {
+            model_name: model_name.to_owned(),
+            minimum_vertical_g: design_targets.minimum_vertical_g,
+            maximum_vertical_g: design_targets.maximum_vertical_g,
+            maximum_lateral_g: design_targets.maximum_lateral_g,
+            maximum_longitudinal_g: design_targets.maximum_longitudinal_g,
+        },
     }
 }
 
@@ -1093,10 +1127,34 @@ impl WasmSimulation {
         &self.construction_completion_available
     }
 
+    pub fn construction_finish_search_start_with_judge(
+        &mut self,
+        judge: theme_park_sim::track::construction::FinishForceJudge,
+    ) {
+        self.construction_completion_available.clear();
+        self.construction_completion_index = 0;
+        let search = self.construction.as_ref().map_or_else(
+            || Err("Place a station before finishing the coaster.".to_owned()),
+            |construction| construction.completion_search_with_judge(judge),
+        );
+        match search {
+            Ok(search) => {
+                self.construction_completion_search = Some(search);
+                self.construction_completion_unavailable_reason = None;
+                self.construction_completion_checked = false;
+            }
+            Err(reason) => {
+                self.construction_completion_search = None;
+                self.construction_completion_unavailable_reason = Some(reason);
+                self.construction_completion_checked = true;
+            }
+        }
+    }
+
     pub fn construction_force_preview(&self) -> Option<ConstructionForcePreviewWire> {
         let construction = self.construction.as_ref()?;
         let pieces = construction.pieces();
-        let limits = construction.model().design_force_targets;
+        let limits = ENVELOPE_DISPLAY_LIMITS;
         let preview = construction.force_preview(
             pieces,
             PhysicsConfig {
@@ -1230,13 +1288,7 @@ impl WasmSimulation {
                 })
             )
         });
-        let rated_speed =
-            theme_park_sim::track::rated_speeds(construction.model(), first).map(|speeds| {
-                ConstructionRatedSpeedWire {
-                    minimum_entry: speeds.minimum_entry,
-                    maximum_entry: speeds.maximum_entry,
-                }
-            });
+        let rated_speed = rated_speed_wire(construction.model(), first);
         let start_distance: f64 = construction.pieces().iter().map(Piece::length).sum();
         let mut pieces = construction.pieces().to_vec();
         pieces.extend(candidate);
@@ -1250,7 +1302,7 @@ impl WasmSimulation {
                 },
             )
             .expect("construction contains a station");
-        let limits = construction.model().design_force_targets;
+        let limits = ENVELOPE_DISPLAY_LIMITS;
         let samples: Vec<_> = preview
             .report
             .samples
@@ -2341,24 +2393,9 @@ impl WasmSimulation {
     }
 
     pub fn construction_finish_search_start(&mut self) {
-        self.construction_completion_available.clear();
-        self.construction_completion_index = 0;
-        let search = self.construction.as_ref().map_or_else(
-            || Err("Place a station before finishing the coaster.".to_owned()),
-            Construction::completion_search,
+        self.construction_finish_search_start_with_judge(
+            theme_park_sim::track::construction::FinishForceJudge::Envelope,
         );
-        match search {
-            Ok(search) => {
-                self.construction_completion_search = Some(search);
-                self.construction_completion_unavailable_reason = None;
-                self.construction_completion_checked = false;
-            }
-            Err(reason) => {
-                self.construction_completion_search = None;
-                self.construction_completion_unavailable_reason = Some(reason);
-                self.construction_completion_checked = true;
-            }
-        }
     }
 
     pub fn construction_finish_search_advance(&mut self) -> bool {

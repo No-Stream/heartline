@@ -16,6 +16,7 @@ test("reads selected piece, shape and construction estimates from the latest sta
     ratingBands: { airtime: [], vertical: [], lateral: [], longitudinal: [] },
     maximumLateralG: 1,
     maximumLongitudinalG: 1,
+    designTargets: { modelName: "Timber Tumbler", minimumVerticalG: -1.5, maximumVerticalG: 4.5, maximumLateralG: 1.5, maximumLongitudinalG: 1.5 },
   };
   const forcePreview: NonNullable<ConstructionState["constructionForcePreview"]> = {
     samples: [], forceEnvelopeSamples: [], pieceForcePeaks: [], completed: true, status: "reachedEnd", lastPlaced: null, launches: [], limits,

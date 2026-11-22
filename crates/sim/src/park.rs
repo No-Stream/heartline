@@ -23,7 +23,54 @@ use crate::track::clearance::TerrainCell;
 use crate::track::construction::Construction;
 use crate::track::{CoasterColors, TrainConfiguration, hybrid_model};
 use crate::world::World;
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
+
+thread_local! {
+    static LEGACY_PRE_V6_SAVE_DECODE: Cell<bool> = const { Cell::new(false) };
+    static LEGACY_FORCE_LIMITS_SEEN: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Runs `decode` while marking V4/V5 saves so any stored pre-V6 test report, recorder, or
+/// operating coaster triggers an explicit legacy-format error instead of silent mis-decoding.
+pub fn with_legacy_pre_v6_save_decode_context<T>(decode: impl FnOnce() -> T) -> (T, bool) {
+    let previous_mode = LEGACY_PRE_V6_SAVE_DECODE.replace(true);
+    let previous_seen = LEGACY_FORCE_LIMITS_SEEN.replace(false);
+    let result = decode();
+    let seen = LEGACY_FORCE_LIMITS_SEEN.replace(previous_seen);
+    LEGACY_PRE_V6_SAVE_DECODE.set(previous_mode);
+    (result, seen)
+}
+
+fn deserialize_v6_physics_option<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    if !LEGACY_PRE_V6_SAVE_DECODE.get() {
+        return serde::Deserialize::deserialize(deserializer);
+    }
+    struct LegacyOptionGuard<T>(std::marker::PhantomData<T>);
+    impl<'de, T: serde::Deserialize<'de>> serde::de::Visitor<'de> for LegacyOptionGuard<T> {
+        type Value = Option<T>;
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("an optional pre-v6 physics record")
+        }
+        fn visit_none<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_some<D: serde::Deserializer<'de>>(
+            self,
+            _deserializer: D,
+        ) -> Result<Self::Value, D::Error> {
+            LEGACY_FORCE_LIMITS_SEEN.set(true);
+            Err(serde::de::Error::custom(
+                "legacy pre-v6 save contains stored per-model evaluator limits",
+            ))
+        }
+    }
+    deserializer.deserialize_option(LegacyOptionGuard(std::marker::PhantomData))
+}
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct DemoCoaster {
@@ -48,12 +95,16 @@ pub struct Park {
     pub construction_message: String,
     pub construction_slow_steps: u32,
     pub construction_outcome: Option<String>,
+    #[serde(deserialize_with = "deserialize_v6_physics_option")]
     pub construction_recorder: Option<ConstructionTestRunRecorder>,
+    #[serde(deserialize_with = "deserialize_v6_physics_option")]
     pub construction_report: Option<TestRun>,
     /// Latest test of the demo coaster; its track never changes, so it is never invalidated.
+    #[serde(deserialize_with = "deserialize_v6_physics_option")]
     pub demo_report: Option<TestRun>,
     pub coaster_open: bool,
     pub coaster_price: u16,
+    #[serde(deserialize_with = "deserialize_v6_physics_option")]
     pub coaster_operation: Option<BlockOperation>,
     pub coaster_riders: BTreeMap<u64, Vec<GuestId>>,
     pub coaster_facility: Option<Facility>,

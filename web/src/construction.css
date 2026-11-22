@@ -517,6 +517,7 @@
 .builder__hill-rating[data-tone="weak"] { color: var(--ink-soft); }
 .builder__hill-rating[data-tone="fine"] { color: var(--teal); }
 .builder__hill-rating[data-tone="great"] { color: var(--paper); background: var(--teal); border-color: var(--teal); }
+.builder__hill-rating[data-tone="feel"] { color: color-mix(in srgb, var(--mustard) 72%, var(--ink)); background: color-mix(in srgb, var(--mustard) 22%, var(--paper)); border-color: color-mix(in srgb, var(--mustard) 55%, var(--ink)); }
 .builder__hill-rating[data-tone="past"] { color: color-mix(in srgb, var(--coral) 75%, var(--ink)); }
 .builder__hill-rating[data-tone="dangerous"] { color: var(--paper); background: var(--coral); border-color: var(--coral); }
 .builder__hill-message {

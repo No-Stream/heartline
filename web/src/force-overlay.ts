@@ -6,7 +6,7 @@ import { formatSpeed, type Units } from "./units";
 export type ForceLimits = ConstructionForcePreview["limits"];
 export type LimitBand = "comfortable" | "near" | "past";
 
-/** Limit closeness at or above this share of the model's comfortable limit is drawn as near the limit. */
+/** Limit closeness at or above this share of the comfort envelope is drawn as near the limit. */
 export const NEAR_LIMIT_CLOSENESS = 0.75;
 /** Hex colours for each band. They differ in lightness as well as hue, so they stay apart for colour-blind players. */
 export const LIMIT_BAND_COLORS: Readonly<Record<LimitBand, string>> = { comfortable: "#4f8fd6", near: "#f2b53a", past: "#a3123a" };
@@ -14,11 +14,11 @@ export const LIMIT_BAND_LABELS: Readonly<Record<LimitBand, string>> = { comforta
 
 function validateLimits(limits: ForceLimits): void {
   if (!(limits.minimumVerticalG < 0 && limits.maximumVerticalG > 0 && limits.maximumLateralG > 0 && limits.maximumLongitudinalG > 0)) {
-    throw new Error("Invalid comfortable force limits");
+    throw new Error("Invalid comfort envelope display limits");
   }
 }
 
-/** The worst of the three force axes as a share of the model's comfortable limit, so 1 sits exactly on a limit. */
+/** The worst of the three force axes as a share of the comfort envelope display limit, so 1 sits on the reference limit. */
 export function limitCloseness(sample: TestingSample, limits: ForceLimits): number {
   validateLimits(limits);
   const vertical = sample.verticalG < 0 ? sample.verticalG / limits.minimumVerticalG : sample.verticalG / limits.maximumVerticalG;
@@ -93,7 +93,7 @@ const labelAxes: readonly LabelAxis[] = [
 ];
 
 /**
- * Picks the few spots worth labelling: the worst point of every stretch past a comfortable limit anywhere on the
+ * Picks the few spots worth labelling: the worst point of every stretch past the comfort envelope anywhere on the
  * track, and the notable peaks of speed, vertical, airtime and lateral force on the recent part of the track.
  * Past-limit labels come first, most severe first, so they win when the labels do not all fit.
  */

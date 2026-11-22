@@ -65,7 +65,7 @@ export function buildTestingRibbon(
   selectedDistance?: number,
   limits?: ConstructionForcePreview["limits"],
 ): GeometryQuad[] {
-  if (metric === "limitCloseness" && samples.length && !limits) throw new Error("The limit closeness overlay needs the model's comfortable force limits");
+  if (metric === "limitCloseness" && samples.length && !limits) throw new Error("The limit closeness overlay needs the comfort envelope limits");
   const quads: GeometryQuad[] = [];
   const selectedIndex = selectedDistance === undefined ? undefined : nearestTestingSegment(samples, selectedDistance);
   const vertex = (sample: TestingSample): Vertex => projectVertex(camera, viewport, sample, 0.06);
@@ -250,7 +250,7 @@ export function formatConstructionEstimate(estimate: ConstructionForcePreview, u
   });
   const exceeded = violations.map((violation) => violation.name);
   const axes = exceeded.length === 3 ? `${exceeded[0]}, ${exceeded[1]} and ${exceeded[2]}` : exceeded.join(" and ");
-  const warning = axes ? ` Estimated ${axes} forces exceed this model's comfortable limits: ${violations.map((violation) => violation.detail).join("; ")}.` : "";
+  const warning = axes ? ` Estimated ${axes} forces exceed the comfort envelope: ${violations.map((violation) => violation.detail).join("; ")}.` : "";
   const last = samples.at(-1);
   const location = last ? ` Last recorded distance: ${formatLength(last.distance, units)}.` : " No distance was recorded.";
   const stopped = estimate.status === "stalled" ? ` The estimated train stopped.${location}` : estimate.status === "timedOut" ? ` The estimate timed out.${location}` : "";

@@ -39,7 +39,6 @@ export const findingTitles: Readonly<Record<string, string>> = {
   positiveForces: "Pushed into the seat",
   laterals: "Strong sideways force",
   longitudinalForces: "Strong forward or backward force",
-  excessiveForces: "Over the train's force limit",
   airtimeMoments: "Airtime moments",
   inversions: "Inversions",
   topSpeed: "Top speed",
@@ -190,12 +189,6 @@ export function findingHeadline(finding: ScoreFinding, statistics: RideStatistic
       const detail = contribution.forceDetail;
       return detail ? { title, location: detail.location, measurement: limitMeasurement(detail) } : { title };
     }
-    case "excessiveForces": {
-      if (!details.length) return { title, measurement: `${seconds(measure)} in total` };
-      const lead = details.reduce((longest, detail) => requireDuration(detail) > requireDuration(longest) ? detail : longest);
-      const others = details.length - 1;
-      return { title, location: lead.location, measurement: `${limitMeasurement(lead)}${others ? `, plus ${others} other ${others === 1 ? "force" : "forces"}` : ""}` };
-    }
     case "airtime": case "positiveForces": case "laterals": case "longitudinalForces": {
       const detail = strongestBand(details);
       if (detail) return { title, location: detail.location, measurement: bandMeasurement(detail) };
@@ -264,10 +257,6 @@ export function findingDetails(finding: ScoreFinding, units: Units): string[] {
   const inputs = ((): string[] => {
     switch (finding.key) {
       case "envelope": return scoreInputs(finding, (measure) => `${number(measure)} g × seconds past the envelope (how far times how long)`);
-      case "excessiveForces": return [
-        "The limits are the comfortable forces for this coaster model.",
-        ...scoreInputs(finding, (measure) => `${seconds(measure)} over the limits`),
-      ];
       case "airtime": case "positiveForces": case "sustainedForce": return scoreInputs(finding, weightedSeconds);
       case "laterals": case "longitudinalForces": case "fastRolls": case "timeInverted": case "rideTime": case "shortRide": return scoreInputs(finding, seconds);
       case "peakForce": return scoreInputs(finding, (measure) => `${number(measure)}× the scoring reference`);

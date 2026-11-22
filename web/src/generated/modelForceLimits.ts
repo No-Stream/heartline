@@ -3,8 +3,8 @@ import type { ConstructionForceLimitsWire } from "./ConstructionForceLimitsWire"
 
 export const MODEL_FORCE_LIMITS: Readonly<Record<"Briar Blitz" | "Daisy Dash" | "Horizon Hawk" | "Timber Tumbler" | "Velocity Viper", ConstructionForceLimitsWire>> = {
   "Briar Blitz": {
-    "minimumVerticalG": -1.0,
-    "maximumVerticalG": 4.0,
+    "minimumVerticalG": -1.5,
+    "maximumVerticalG": 5.0,
     "ratingBands": {
       "airtime": [
         {
@@ -19,12 +19,12 @@ export const MODEL_FORCE_LIMITS: Readonly<Record<"Briar Blitz" | "Daisy Dash" | 
         },
         {
           "rating": "great",
-          "upTo": 1.0,
+          "upTo": 1.5,
           "inclusive": true
         },
         {
           "rating": "too much",
-          "upTo": 1.3,
+          "upTo": 1.9500000000000002,
           "inclusive": true
         },
         {
@@ -46,12 +46,12 @@ export const MODEL_FORCE_LIMITS: Readonly<Record<"Briar Blitz" | "Daisy Dash" | 
         },
         {
           "rating": "great",
-          "upTo": 4.0,
+          "upTo": 5.0,
           "inclusive": true
         },
         {
           "rating": "too much",
-          "upTo": 5.2,
+          "upTo": 6.5,
           "inclusive": true
         },
         {
@@ -68,12 +68,12 @@ export const MODEL_FORCE_LIMITS: Readonly<Record<"Briar Blitz" | "Daisy Dash" | 
         },
         {
           "rating": "strong",
-          "upTo": 1.5,
+          "upTo": 2.0,
           "inclusive": true
         },
         {
           "rating": "too much",
-          "upTo": 1.9500000000000002,
+          "upTo": 2.6,
           "inclusive": true
         },
         {
@@ -105,12 +105,19 @@ export const MODEL_FORCE_LIMITS: Readonly<Record<"Briar Blitz" | "Daisy Dash" | 
         }
       ]
     },
-    "maximumLateralG": 1.5,
-    "maximumLongitudinalG": 1.5
+    "maximumLateralG": 2.0,
+    "maximumLongitudinalG": 1.5,
+    "designTargets": {
+      "modelName": "Briar Blitz",
+      "minimumVerticalG": -1.0,
+      "maximumVerticalG": 4.0,
+      "maximumLateralG": 1.5,
+      "maximumLongitudinalG": 1.5
+    }
   },
   "Daisy Dash": {
-    "minimumVerticalG": -0.6,
-    "maximumVerticalG": 3.0,
+    "minimumVerticalG": -1.5,
+    "maximumVerticalG": 5.0,
     "ratingBands": {
       "airtime": [
         {
@@ -120,17 +127,17 @@ export const MODEL_FORCE_LIMITS: Readonly<Record<"Briar Blitz" | "Daisy Dash" | 
         },
         {
           "rating": "good",
-          "upTo": 0.6,
-          "inclusive": false
+          "upTo": 0.9,
+          "inclusive": true
         },
         {
           "rating": "great",
-          "upTo": 0.6,
+          "upTo": 1.5,
           "inclusive": true
         },
         {
           "rating": "too much",
-          "upTo": 0.78,
+          "upTo": 1.9500000000000002,
           "inclusive": true
         },
         {
@@ -152,12 +159,12 @@ export const MODEL_FORCE_LIMITS: Readonly<Record<"Briar Blitz" | "Daisy Dash" | 
         },
         {
           "rating": "great",
-          "upTo": 3.0,
+          "upTo": 5.0,
           "inclusive": true
         },
         {
           "rating": "too much",
-          "upTo": 3.9000000000000004,
+          "upTo": 6.5,
           "inclusive": true
         },
         {
@@ -169,17 +176,17 @@ export const MODEL_FORCE_LIMITS: Readonly<Record<"Briar Blitz" | "Daisy Dash" | 
       "lateral": [
         {
           "rating": "fine",
-          "upTo": 0.5,
+          "upTo": 0.75,
           "inclusive": true
         },
         {
           "rating": "strong",
-          "upTo": 1.0,
+          "upTo": 2.0,
           "inclusive": true
         },
         {
           "rating": "too much",
-          "upTo": 1.3,
+          "upTo": 2.6,
           "inclusive": true
         },
         {
@@ -211,12 +218,19 @@ export const MODEL_FORCE_LIMITS: Readonly<Record<"Briar Blitz" | "Daisy Dash" | 
         }
       ]
     },
-    "maximumLateralG": 1.0,
-    "maximumLongitudinalG": 1.5
+    "maximumLateralG": 2.0,
+    "maximumLongitudinalG": 1.5,
+    "designTargets": {
+      "modelName": "Daisy Dash",
+      "minimumVerticalG": -0.6,
+      "maximumVerticalG": 3.0,
+      "maximumLateralG": 1.0,
+      "maximumLongitudinalG": 1.5
+    }
   },
   "Horizon Hawk": {
     "minimumVerticalG": -1.5,
-    "maximumVerticalG": 4.0,
+    "maximumVerticalG": 5.0,
     "ratingBands": {
       "airtime": [
         {
@@ -258,12 +272,12 @@ export const MODEL_FORCE_LIMITS: Readonly<Record<"Briar Blitz" | "Daisy Dash" | 
         },
         {
           "rating": "great",
-          "upTo": 4.0,
+          "upTo": 5.0,
           "inclusive": true
         },
         {
           "rating": "too much",
-          "upTo": 5.2,
+          "upTo": 6.5,
           "inclusive": true
         },
         {
@@ -275,17 +289,17 @@ export const MODEL_FORCE_LIMITS: Readonly<Record<"Briar Blitz" | "Daisy Dash" | 
       "lateral": [
         {
           "rating": "fine",
-          "upTo": 0.6,
+          "upTo": 0.75,
           "inclusive": true
         },
         {
           "rating": "strong",
-          "upTo": 1.2,
+          "upTo": 2.0,
           "inclusive": true
         },
         {
           "rating": "too much",
-          "upTo": 1.56,
+          "upTo": 2.6,
           "inclusive": true
         },
         {
@@ -317,12 +331,19 @@ export const MODEL_FORCE_LIMITS: Readonly<Record<"Briar Blitz" | "Daisy Dash" | 
         }
       ]
     },
-    "maximumLateralG": 1.2,
-    "maximumLongitudinalG": 1.5
+    "maximumLateralG": 2.0,
+    "maximumLongitudinalG": 1.5,
+    "designTargets": {
+      "modelName": "Horizon Hawk",
+      "minimumVerticalG": -1.5,
+      "maximumVerticalG": 4.0,
+      "maximumLateralG": 1.2,
+      "maximumLongitudinalG": 1.5
+    }
   },
   "Timber Tumbler": {
     "minimumVerticalG": -1.5,
-    "maximumVerticalG": 4.5,
+    "maximumVerticalG": 5.0,
     "ratingBands": {
       "airtime": [
         {
@@ -364,12 +385,12 @@ export const MODEL_FORCE_LIMITS: Readonly<Record<"Briar Blitz" | "Daisy Dash" | 
         },
         {
           "rating": "great",
-          "upTo": 4.5,
+          "upTo": 5.0,
           "inclusive": true
         },
         {
           "rating": "too much",
-          "upTo": 5.8500000000000005,
+          "upTo": 6.5,
           "inclusive": true
         },
         {
@@ -386,12 +407,12 @@ export const MODEL_FORCE_LIMITS: Readonly<Record<"Briar Blitz" | "Daisy Dash" | 
         },
         {
           "rating": "strong",
-          "upTo": 1.5,
+          "upTo": 2.0,
           "inclusive": true
         },
         {
           "rating": "too much",
-          "upTo": 1.9500000000000002,
+          "upTo": 2.6,
           "inclusive": true
         },
         {
@@ -423,8 +444,15 @@ export const MODEL_FORCE_LIMITS: Readonly<Record<"Briar Blitz" | "Daisy Dash" | 
         }
       ]
     },
-    "maximumLateralG": 1.5,
-    "maximumLongitudinalG": 1.5
+    "maximumLateralG": 2.0,
+    "maximumLongitudinalG": 1.5,
+    "designTargets": {
+      "modelName": "Timber Tumbler",
+      "minimumVerticalG": -1.5,
+      "maximumVerticalG": 4.5,
+      "maximumLateralG": 1.5,
+      "maximumLongitudinalG": 1.5
+    }
   },
   "Velocity Viper": {
     "minimumVerticalG": -1.5,
@@ -492,12 +520,12 @@ export const MODEL_FORCE_LIMITS: Readonly<Record<"Briar Blitz" | "Daisy Dash" | 
         },
         {
           "rating": "strong",
-          "upTo": 1.5,
+          "upTo": 2.0,
           "inclusive": true
         },
         {
           "rating": "too much",
-          "upTo": 1.9500000000000002,
+          "upTo": 2.6,
           "inclusive": true
         },
         {
@@ -529,7 +557,14 @@ export const MODEL_FORCE_LIMITS: Readonly<Record<"Briar Blitz" | "Daisy Dash" | 
         }
       ]
     },
-    "maximumLateralG": 1.5,
-    "maximumLongitudinalG": 1.5
+    "maximumLateralG": 2.0,
+    "maximumLongitudinalG": 1.5,
+    "designTargets": {
+      "modelName": "Velocity Viper",
+      "minimumVerticalG": -1.5,
+      "maximumVerticalG": 5.0,
+      "maximumLateralG": 1.5,
+      "maximumLongitudinalG": 1.5
+    }
   }
 };

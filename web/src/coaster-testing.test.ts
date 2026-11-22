@@ -79,19 +79,19 @@ describe("coaster testing overlay", () => {
   });
   it("describes the latest estimated forces, limit violations, and a stalled train", () => {
     const limits = woodLimits;
-    const estimate = { samples: [samples[0], samples[1]], forceEnvelopeSamples: [samples[0], { ...samples[1], verticalG: -2.5, lateralG: -2, forceLimitExceeded: [true, true, false] as [boolean, boolean, boolean] }], pieceForcePeaks: [], completed: false, status: "stalled" as const, limits, launches: [], lastPlaced: { maximumSpeed: 12, minimumVerticalG: -2.5, maximumVerticalG: 1, maximumAbsoluteLateralG: 2, maximumAbsoluteLongitudinalG: 0.1, minimumVerticalLimitExceeded: false, maximumVerticalLimitExceeded: false, lateralLimitExceeded: false, longitudinalLimitExceeded: false } };
+    const estimate = { samples: [samples[0], samples[1]], forceEnvelopeSamples: [samples[0], { ...samples[1], verticalG: -2.5, lateralG: -2.5, forceLimitExceeded: [true, true, false] as [boolean, boolean, boolean] }], pieceForcePeaks: [], completed: false, status: "stalled" as const, limits, launches: [], lastPlaced: { maximumSpeed: 12, minimumVerticalG: -2.5, maximumVerticalG: 1, maximumAbsoluteLateralG: 2.5, maximumAbsoluteLongitudinalG: 0.1, minimumVerticalLimitExceeded: false, maximumVerticalLimitExceeded: false, lateralLimitExceeded: false, longitudinalLimitExceeded: false } };
     expect(formatConstructionEstimate(estimate, "metric")).toContain("43.2 km/h");
     expect(formatConstructionEstimate(estimate, "metric")).toContain("−2.5–1.0 g");
     expect(formatConstructionEstimate(estimate, "metric")).toContain("vertical and lateral");
-    expect(formatConstructionEstimate(estimate, "metric")).toContain("vertical −2.5 g at 1 m (limit −1.0 g)");
-    expect(formatConstructionEstimate(estimate, "metric")).toContain("lateral −2.0 g at 1 m (absolute limit 1.5 g)");
+    expect(formatConstructionEstimate(estimate, "metric")).toContain("vertical −2.5 g at 1 m (limit −1.5 g)");
+    expect(formatConstructionEstimate(estimate, "metric")).toContain("lateral −2.5 g at 1 m (absolute limit 2.0 g)");
     expect(formatConstructionEstimate(estimate, "metric")).toContain("stopped. Last recorded distance: 1 m");
     expect(formatConstructionEstimate({ ...estimate, status: "timedOut" }, "imperial")).toContain("timed out. Last recorded distance: 3 ft");
     expect(formatConstructionEstimate(estimate, "metric")).toContain("Last placed piece");
-    expect(formatConstructionEstimate({ ...estimate, forceEnvelopeSamples: [samples[0]], completed: true, status: "reachedEnd" }, "metric")).not.toContain("comfortable limits");
-    const laterPeak = { ...samples[2], verticalG: 6, lateralG: 0, longitudinalG: 2, forceLimitExceeded: [true, false, true] as [boolean, boolean, boolean] };
+    expect(formatConstructionEstimate({ ...estimate, forceEnvelopeSamples: [samples[0]], completed: true, status: "reachedEnd" }, "metric")).not.toContain("comfort envelope");
+    const laterPeak = { ...samples[2], verticalG: 6.5, lateralG: 0, longitudinalG: 2, forceLimitExceeded: [true, false, true] as [boolean, boolean, boolean] };
     const warning = formatConstructionEstimate({ ...estimate, forceEnvelopeSamples: [...estimate.forceEnvelopeSamples, laterPeak] }, "metric");
-    expect(warning).toContain("vertical 6.0 g at 2 m (limit 4.0 g)");
+    expect(warning).toContain("vertical 6.5 g at 2 m (limit 5.0 g)");
     expect(warning).toContain("longitudinal 2.0 g at 2 m (absolute limit 1.5 g)");
   });
   it("shows launch speed capability and the configured launch's estimated force", () => {
@@ -176,7 +176,7 @@ describe("coaster testing overlay", () => {
       colorOf(style.ink), colorOf(LIMIT_BAND_COLORS.past),
     ]);
     expect(quads[3].id).toBe(quads[4].id);
-    expect(() => buildTestingRibbon(samples, "limitCloseness", camera, viewport, style)).toThrow("comfortable force limits");
+    expect(() => buildTestingRibbon(samples, "limitCloseness", camera, viewport, style)).toThrow("comfort envelope limits");
   });
 
   it("does not connect unrecorded parts of the circuit", () => {

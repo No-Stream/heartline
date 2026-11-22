@@ -76,16 +76,43 @@ function verticalRating(force: number, limits: CandidateForcePreview["limits"], 
   return axis === "airtime" ? `${rating} airtime` : rating;
 }
 
-function speedReadout(entrySpeed: number, ratedSpeed: CandidateForcePreview["ratedSpeed"], units: Units): string {
-  const range = ratedSpeed
-    ? ` (${entrySpeed >= ratedSpeed.minimumEntry && entrySpeed <= ratedSpeed.maximumEntry ? "within" : "outside"} rated range ${formatSpeed(ratedSpeed.minimumEntry, units).replace(/ (mph|km\/h)$/, "")}–${formatSpeed(ratedSpeed.maximumEntry, units)})`
+function outsideFeelWindow(entrySpeed: number, ratedSpeed: NonNullable<CandidateForcePreview["ratedSpeed"]>): boolean {
+  if (ratedSpeed.feelMinimumEntry === null || ratedSpeed.feelMaximumEntry === null) return true;
+  return entrySpeed < ratedSpeed.feelMinimumEntry || entrySpeed > ratedSpeed.feelMaximumEntry;
+}
+
+function exceedsDesignTargets(
+  peaks: NonNullable<CandidateForcePreview["peaks"]>,
+  limits: ForceLimits,
+): boolean {
+  const targets = limits.designTargets;
+  return peaks.minimumVerticalG < targets.minimumVerticalG
+    || peaks.maximumVerticalG > targets.maximumVerticalG
+    || peaks.maximumAbsoluteLateralG > targets.maximumLateralG
+    || peaks.maximumAbsoluteLongitudinalG > targets.maximumLongitudinalG;
+}
+
+function speedReadout(
+  entrySpeed: number,
+  ratedSpeed: CandidateForcePreview["ratedSpeed"],
+  limits: ForceLimits,
+  units: Units,
+): string {
+  if (!ratedSpeed) return `Estimated entry speed: ${formatSpeed(entrySpeed, units)}`;
+  const formattedRange = `${formatSpeed(ratedSpeed.minimumEntry, units).replace(/ (mph|km\/h)$/, "")}–${formatSpeed(ratedSpeed.maximumEntry, units)}`;
+  const inHardRange = entrySpeed >= ratedSpeed.minimumEntry && entrySpeed <= ratedSpeed.maximumEntry;
+  if (!inHardRange) {
+    return `Estimated entry speed: ${formatSpeed(entrySpeed, units)} (outside rated range ${formattedRange})`;
+  }
+  const feelNote = outsideFeelWindow(entrySpeed, ratedSpeed)
+    ? `, stronger than a typical ${limits.designTargets.modelName}`
     : "";
-  return `Estimated entry speed: ${formatSpeed(entrySpeed, units)}${range}`;
+  return `Estimated entry speed: ${formatSpeed(entrySpeed, units)} (within rated range ${formattedRange}${feelNote})`;
 }
 
 export type HillForcePreview = ConstructionHillEstimateWire;
-/** How a readout value reads against the rating bands: weak, fine, great, past the limit, or dangerous. */
-export type HillReadoutTone = "weak" | "fine" | "great" | "past" | "dangerous";
+/** How a readout value reads against the rating bands: weak, fine, great, stronger than model feel, past the limit, or dangerous. */
+export type HillReadoutTone = "weak" | "fine" | "great" | "feel" | "past" | "dangerous";
 export interface HillReadoutRow {
   readonly label: string;
   readonly value: string;
@@ -113,8 +140,24 @@ export function hillReadout(preview: HillForcePreview, units: Units): HillReadou
   const { ratedSpeed, entrySpeed } = preview;
   const ratedRow = (entry: number | null): HillReadoutRow[] => {
     if (!ratedSpeed) return [];
-    const note = entry === null ? "" : entry < ratedSpeed.minimumEntry ? "too slow" : entry > ratedSpeed.maximumEntry ? "too fast" : "in range";
-    return [{ label: "Rated for", value: `${speed(ratedSpeed.minimumEntry).replace(/ (mph|km\/h)$/, "")}–${speed(ratedSpeed.maximumEntry)}`, note, tone: note === "" ? null : note === "in range" ? "fine" : "past" }];
+    let note = "";
+    let tone: HillReadoutTone | null = null;
+    if (entry !== null) {
+      if (entry < ratedSpeed.minimumEntry) {
+        note = "too slow";
+        tone = "past";
+      } else if (entry > ratedSpeed.maximumEntry) {
+        note = "too fast";
+        tone = "past";
+      } else if (outsideFeelWindow(entry, ratedSpeed)) {
+        note = `stronger than a typical ${preview.limits.designTargets.modelName}`;
+        tone = "feel";
+      } else {
+        note = "in range";
+        tone = "fine";
+      }
+    }
+    return [{ label: "Rated for", value: `${speed(ratedSpeed.minimumEntry).replace(/ (mph|km\/h)$/, "")}–${speed(ratedSpeed.maximumEntry)}`, note, tone }];
   };
   if (preview.source === "timedOut") return { rows: ratedRow(null), message: "The speed estimate timed out before this hill." };
   if (entrySpeed === null) return { rows: ratedRow(null), message: "The train would roll back before reaching this hill." };
@@ -145,14 +188,21 @@ export function candidateForceReadout(preview: CandidateForcePreview, units: Uni
     return ["The train does not reach this piece; no force estimate is available."];
   }
   if (preview.peaks === null) return ["The train reaches this piece, but no force samples are available."];
+  const envelopeExceeded = preview.peaks.minimumVerticalLimitExceeded
+    || preview.peaks.maximumVerticalLimitExceeded
+    || preview.peaks.lateralLimitExceeded
+    || preview.peaks.longitudinalLimitExceeded;
   const lines = [
     "Worst-car force estimates (sampled along the track)",
     "Placement estimate is provisional until the following piece exists.",
-    speedReadout(preview.entrySpeed, preview.ratedSpeed, units),
+    speedReadout(preview.entrySpeed, preview.ratedSpeed, preview.limits, units),
     `Estimated minimum vertical force: ${formatForce(preview.peaks.minimumVerticalG)} g (${verticalRating(preview.peaks.minimumVerticalG, preview.limits, preview.peaks.minimumVerticalLimitExceeded)})`,
     `Estimated maximum vertical force: ${formatForce(preview.peaks.maximumVerticalG)} g (${verticalRating(preview.peaks.maximumVerticalG, preview.limits, preview.peaks.maximumVerticalLimitExceeded)})`,
     `Estimated ${preview.outerBank ? "outer-bank lateral" : "lateral"} force: ${formatForce(preview.peaks.maximumAbsoluteLateralG)} g (${evaluatedForceRating("lateral", preview.peaks.maximumAbsoluteLateralG, preview.limits, preview.peaks.lateralLimitExceeded)}); longitudinal force: ${formatForce(preview.peaks.maximumAbsoluteLongitudinalG)} g (${evaluatedForceRating("longitudinal", preview.peaks.maximumAbsoluteLongitudinalG, preview.limits, preview.peaks.longitudinalLimitExceeded)})`,
   ];
+  if (!envelopeExceeded && exceedsDesignTargets(preview.peaks, preview.limits)) {
+    lines.push(`Forces are within the comfort envelope, but stronger than a typical ${preview.limits.designTargets.modelName}.`);
+  }
   if (preview.status === "stalled") lines.unshift("The train stalls in this piece; force estimates are partial.");
   if (preview.status === "timedOut") lines.unshift("The estimate timed out in this piece; force estimates are partial.");
   return lines;

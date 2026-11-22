@@ -286,7 +286,7 @@ it("cycles past speed-matched variants while keeping explicit palette choices ex
 
 describe("airtime hill steppers", () => {
   const hill = (feel: string, height: number, span: number, twist = "none"): ConstructionHillOption => ({
-    id: `${feel}${height}x${span}${twist}`, feel, height, span, twist, ratedSpeed: { minimumEntry: 10, maximumEntry: 20 },
+    id: `${feel}${height}x${span}${twist}`, feel, height, span, twist, ratedSpeed: { minimumEntry: 10, maximumEntry: 20, feelMinimumEntry: 10, feelMaximumEntry: 20, feelMaximumSource: null },
   });
   const hybrid = [
     hill("ejector", 8, 48), hill("ejector", 12, 64), hill("ejector", 8, 64), hill("ejector", 12, 80), hill("ejector", 16, 96),

@@ -9,7 +9,7 @@ const preview = {
   forceEnvelopeSamples: [],
   pieceForcePeaks: [],
   entrySpeed: 20,
-  ratedSpeed: { minimumEntry: 19, maximumEntry: 21 },
+  ratedSpeed: { minimumEntry: 19, maximumEntry: 24, feelMinimumEntry: 19, feelMaximumEntry: 21, feelMaximumSource: "designTarget" as const },
   peaks: { maximumSpeed: 22, minimumVerticalG: -0.5, maximumVerticalG: 3.4, maximumAbsoluteLateralG: 0.3, maximumAbsoluteLongitudinalG: 0.2, minimumVerticalLimitExceeded: false, maximumVerticalLimitExceeded: false, lateralLimitExceeded: false, longitudinalLimitExceeded: false },
   limits: MODEL_FORCE_LIMITS["Briar Blitz"],
 };
@@ -19,19 +19,19 @@ describe("candidate force readout", () => {
     expect(candidateForceReadout(preview, "metric")).toEqual([
       "Worst-car force estimates (sampled along the track)",
       "Placement estimate is provisional until the following piece exists.",
-      "Estimated entry speed: 72 km/h (within rated range 68.4–75.6 km/h)",
+      "Estimated entry speed: 72 km/h (within rated range 68.4–86.4 km/h)",
       "Estimated minimum vertical force: −0.5 g (good airtime)",
       "Estimated maximum vertical force: 3.4 g (great)",
       "Estimated lateral force: 0.3 g (fine); longitudinal force: 0.2 g (fine)",
     ]);
-    expect(candidateForceReadout(preview, "imperial")[2]).toBe("Estimated entry speed: 44.7 mph (within rated range 42.5–47 mph)");
+    expect(candidateForceReadout(preview, "imperial")[2]).toBe("Estimated entry speed: 44.7 mph (within rated range 42.5–53.7 mph)");
   });
 
   it("labels outer-bank lateral force alongside the vertical force bands", () => {
     expect(candidateForceReadout({ ...preview, outerBank: true }, "metric")).toEqual([
       "Worst-car force estimates (sampled along the track)",
       "Placement estimate is provisional until the following piece exists.",
-      "Estimated entry speed: 72 km/h (within rated range 68.4–75.6 km/h)",
+      "Estimated entry speed: 72 km/h (within rated range 68.4–86.4 km/h)",
       "Estimated minimum vertical force: −0.5 g (good airtime)",
       "Estimated maximum vertical force: 3.4 g (great)",
       "Estimated outer-bank lateral force: 0.3 g (fine); longitudinal force: 0.2 g (fine)",
@@ -39,10 +39,22 @@ describe("candidate force readout", () => {
   });
 
   it("uses the corresponding peak flags to distinguish brief forces and violations", () => {
-    const lines = candidateForceReadout({ ...preview, peaks: { ...preview.peaks, minimumVerticalG: -1.2, maximumVerticalG: 4.2, maximumVerticalLimitExceeded: true, maximumAbsoluteLateralG: 2.0, lateralLimitExceeded: false } }, "metric");
+    const lines = candidateForceReadout({ ...preview, peaks: { ...preview.peaks, minimumVerticalG: -1.6, maximumVerticalG: 5.2, maximumVerticalLimitExceeded: true, maximumAbsoluteLateralG: 2.2, lateralLimitExceeded: false } }, "metric");
     expect(lines[3]).toContain("brief airtime");
     expect(lines[4]).toContain("too much");
     expect(lines[5]).toContain("brief");
+  });
+
+  it("adds an amber-style feel note when forces exceed the model design targets inside the envelope", () => {
+    const lines = candidateForceReadout({
+      ...preview,
+      entrySpeed: 22.5,
+      peaks: { ...preview.peaks, minimumVerticalG: -1.2, maximumVerticalG: 4.3 },
+    }, "metric");
+    expect(lines[2]).toContain("within rated range");
+    expect(lines[2]).toContain("stronger than a typical Briar Blitz");
+    expect(lines[3]).toContain("great airtime");
+    expect(lines.at(-1)).toBe("Forces are within the comfort envelope, but stronger than a typical Briar Blitz.");
   });
 
   it("reports when no size fits or the train cannot reach the piece", () => {
@@ -63,7 +75,7 @@ describe("airtime hill readout", () => {
   const hill = {
     entrySpeed: 20,
     source: "energy",
-    ratedSpeed: { minimumEntry: 16, maximumEntry: 26 },
+    ratedSpeed: { minimumEntry: 16, maximumEntry: 26, feelMinimumEntry: 16, feelMaximumEntry: 23, feelMaximumSource: "designTarget" as const },
     minimumVerticalG: -1.1, maximumVerticalG: 3.4, airtimeSeconds: 1.25, maximumAbsoluteLateralG: null,
     limits: MODEL_FORCE_LIMITS["Timber Tumbler"],
   };
@@ -90,8 +102,12 @@ describe("airtime hill readout", () => {
     );
   });
 
-  it("flags speeds outside the rated window and forces past the limit", () => {
-    const fast = hillReadout({ ...hill, entrySpeed: 27, minimumVerticalG: -1.8, maximumVerticalG: 6 }, "metric").rows;
+  it("flags speeds outside the rated window as red and past the feel window as amber", () => {
+    const pastFeel = hillReadout({ ...hill, entrySpeed: 24.5, minimumVerticalG: -1.3, maximumVerticalG: 4.5 }, "metric").rows;
+    expect(pastFeel[1]).toMatchObject({ note: "stronger than a typical Timber Tumbler", tone: "feel" });
+    expect(pastFeel[2]).toMatchObject({ note: "great airtime", tone: "great" });
+
+    const fast = hillReadout({ ...hill, entrySpeed: 27, minimumVerticalG: -1.8, maximumVerticalG: 6.6 }, "metric").rows;
     expect(fast[1]).toMatchObject({ note: "too fast", tone: "past" });
     expect(fast[2]).toMatchObject({ note: "too much airtime", tone: "past" });
     expect(fast[3]).toMatchObject({ note: "dangerous", tone: "dangerous" });

@@ -3,7 +3,7 @@ use std::fmt::{self, Debug, Display, Formatter};
 use serde::{Deserialize, Serialize};
 use theme_park_sim::track::blocks::BlockSectionPlacement;
 use theme_park_sim::track::coaster_models;
-use theme_park_sim::track::construction::Completion;
+use theme_park_sim::track::construction::{Completion, FinishForceJudge};
 use theme_park_sim::track::ride_file::{RideFile, RideFileFormat, RideHeading, RideStep};
 use theme_park_sim::track::shaped::{ElementIntent, ElementSpec};
 
@@ -524,16 +524,28 @@ impl BuilderSession {
         self.finish_apply(1)
     }
 
-    /// Runs the finish search to the end and returns its ranked completions.
-    /// Runs the finish search to completion, so `construction_can_finish` and
-    /// `construction_finish_reason` describe the current track instead of a pending search.
+    /// Runs the finish search to completion using the global ASTM envelope, so
+    /// `construction_can_finish` and `construction_finish_reason` describe the current track
+    /// instead of a pending search.
     pub fn search_finish(&mut self) {
-        self.simulation.construction_finish_search_start();
+        self.search_finish_with_judge(FinishForceJudge::Envelope);
+    }
+
+    pub fn search_finish_with_judge(&mut self, judge: FinishForceJudge) {
+        self.simulation
+            .construction_finish_search_start_with_judge(judge);
         while !self.simulation.construction_finish_search_advance() {}
     }
 
     pub fn finish_options(&mut self) -> Result<Vec<Completion>, BuilderSessionError> {
-        self.search_finish();
+        self.finish_options_with_judge(FinishForceJudge::Envelope)
+    }
+
+    pub fn finish_options_with_judge(
+        &mut self,
+        judge: FinishForceJudge,
+    ) -> Result<Vec<Completion>, BuilderSessionError> {
+        self.search_finish_with_judge(judge);
         if !self.simulation.construction_can_finish() {
             return Err(self.bridge_error(
                 "finish coaster",
@@ -545,8 +557,16 @@ impl BuilderSession {
 
     /// Places finish option `rank` (1 is the best) and closes the circuit.
     pub fn finish_apply(&mut self, rank: usize) -> Result<BuilderEstimates, BuilderSessionError> {
+        self.finish_apply_with_judge(rank, FinishForceJudge::Envelope)
+    }
+
+    pub fn finish_apply_with_judge(
+        &mut self,
+        rank: usize,
+        judge: FinishForceJudge,
+    ) -> Result<BuilderEstimates, BuilderSessionError> {
         self.end_speed_cache = None;
-        let option_count = self.finish_options()?.len();
+        let option_count = self.finish_options_with_judge(judge)?.len();
         if rank == 0 || rank > option_count {
             return Err(self.bridge_error(
                 "finish coaster",
@@ -1392,20 +1412,23 @@ mod tests {
 
     #[test]
     fn classic_builder_outputs_keep_the_recorded_digests() {
+        let mut mismatches = Vec::new();
         for (ride_name, model_key, expected_digest) in [
-            ("Timber Tumbler", "hybrid", 0x73087cdb3b38c8d8),
-            ("Velocity Viper", "velocity_viper", 0x4e6fd5b665b3fd97),
-            ("Briar Blitz", "wooden_twister", 0x5b0e22b9c64457d2),
+            ("Timber Tumbler", "hybrid", 0x0a3223136332e9ad),
+            ("Velocity Viper", "velocity_viper", 0x39cd4da213386e99),
+            ("Briar Blitz", "wooden_twister", 0xd5fbf89e78697d12),
         ] {
             let commands = circuit_lines(ride_name);
             let actual = session_trace(model_key, &commands);
-            assert_eq!(
-                trace_digest(&actual),
-                expected_digest,
-                "{ride_name}: {}",
-                first_trace_difference(&benchmark_trace(ride_name, model_key, &commands), &actual)
-            );
+            let actual_digest = trace_digest(&actual);
+            if actual_digest != expected_digest {
+                mismatches.push(format!(
+                    "{ride_name}: expected 0x{expected_digest:016x}, got 0x{actual_digest:016x} ({} calls)",
+                    actual.len()
+                ));
+            }
         }
+        assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
     }
 
     fn circuit_lines(ride_name: &str) -> Vec<String> {
@@ -1474,32 +1497,32 @@ mod tests {
             (
                 "Briar Blitz",
                 include_str!("../../../content/rides/briar-blitz.ride.json"),
-                0x0161df3c4dd85407,
+                0x12be753252b7fad8,
             ),
             (
                 "Browser agreement fast circuit",
                 include_str!("../../../content/rides/browser-agreement-fast.ride.json"),
-                0x54a61be2669f8ca9,
+                0xcf80a65b2ff78523,
             ),
             (
                 "Daisy Dash",
                 include_str!("../../../content/rides/daisy-dash.ride.json"),
-                0xb0560e95b1b49d66,
+                0xeebcc125a7c7c311,
             ),
             (
                 "Horizon Hawk",
                 include_str!("../../../content/rides/horizon-hawk.ride.json"),
-                0x12060b4d3394f30a,
+                0xbe6659cf4333e63a,
             ),
             (
                 "Timber Tumbler",
                 include_str!("../../../content/rides/timber-tumbler.ride.json"),
-                0x5a85ded8b26ac5e7,
+                0xd9b593161b66125f,
             ),
             (
                 "Velocity Viper",
                 include_str!("../../../content/rides/velocity-viper.ride.json"),
-                0x2ab59be614c4dc36,
+                0x600c8b2876157042,
             ),
         ] {
             let ride: RideFile = serde_json::from_str(ride_json).unwrap();

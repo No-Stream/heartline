@@ -1,4 +1,6 @@
-use theme_park_sim::track::{DesignForceTargets, ForceRatingAxis};
+use theme_park_sim::track::{
+    DesignForceTargets, ForceRatingAxis, classify_envelope_force, envelope_rating_bands,
+};
 use theme_park_sim_wasm::reports::TestingSample;
 
 const ENTRY_SPEED_TOLERANCE_METRES_PER_SECOND: f64 = 0.5;
@@ -370,14 +372,8 @@ fn compare_force_values(
             && rating_severity(axis, estimate_value, input)
                 < rating_severity(axis, measured_value, input)
         {
-            let estimated_band =
-                input
-                    .limits
-                    .classify_force(axis, estimate_value, &input.model_name);
-            let measured_band =
-                input
-                    .limits
-                    .classify_force(axis, measured_value, &input.model_name);
+            let estimated_band = classify_envelope_force(axis, estimate_value, &input.model_name);
+            let measured_band = classify_envelope_force(axis, measured_value, &input.model_name);
             failures.push(placement_failure(
                 input,
                 check,
@@ -392,10 +388,8 @@ fn compare_force_values(
 }
 
 fn rating_severity(axis: ForceRatingAxis, value: f64, input: &AgreementInput) -> usize {
-    let rating = input.limits.classify_force(axis, value, &input.model_name);
-    input
-        .limits
-        .rating_bands(axis, &input.model_name)
+    let rating = classify_envelope_force(axis, value, &input.model_name);
+    envelope_rating_bands(axis, &input.model_name)
         .iter()
         .position(|band| band.rating == rating)
         .expect("classified force has a rating band")

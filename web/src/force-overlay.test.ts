@@ -13,7 +13,7 @@ describe("limit closeness", () => {
   it("scales each axis by its own comfortable limit and keeps the worst", () => {
     expect(limitCloseness(sample(0, { verticalG: -1.2 }), steel)).toBeCloseTo(0.8);
     expect(limitCloseness(sample(0, { verticalG: 4 }), steel)).toBeCloseTo(0.8);
-    expect(limitCloseness(sample(0, { verticalG: 1, lateralG: -1.2 }), steel)).toBeCloseTo(0.8);
+    expect(limitCloseness(sample(0, { verticalG: 1, lateralG: -1.6 }), steel)).toBeCloseTo(0.8);
     expect(limitCloseness(sample(0, { verticalG: 1, longitudinalG: 3 }), steel)).toBeCloseTo(2);
     expect(limitCloseness(sample(0), steel)).toBeCloseTo(0.2);
   });
@@ -28,7 +28,7 @@ describe("limit closeness", () => {
     expect(limitBand(1.01)).toBe("past");
   });
   it("rejects limits that cannot normalise forces", () => {
-    expect(() => limitCloseness(sample(0), { ...steel, minimumVerticalG: 0.5 })).toThrow("Invalid comfortable force limits");
+    expect(() => limitCloseness(sample(0), { ...steel, minimumVerticalG: 0.5 })).toThrow("Invalid comfort envelope display limits");
   });
 });
 
@@ -41,8 +41,9 @@ describe("force ratings", () => {
     expect(rateForce("airtime", -1.6, steel)).toBe("too much");
     expect(rateForce("airtime", -2.1, steel)).toBe("dangerous");
   });
-  it("judges airtime against each model's own floor", () => {
-    expect(rateForce("airtime", -1.1, wood)).toBe("too much");
+  it("uses the global comfort envelope ceiling for airtime on every model", () => {
+    expect(rateForce("airtime", -1.1, wood)).toBe("great");
+    expect(rateForce("airtime", -1.6, wood)).toBe("too much");
   });
   it("rates positive vertical and lateral force relative to the limits", () => {
     expect(rateForce("vertical", 1.5, steel)).toBe("weak");
@@ -53,7 +54,7 @@ describe("force ratings", () => {
     expect(rateForce("vertical", 5.5, steel)).toBe("too much");
     expect(rateForce("lateral", -0.4, steel)).toBe("fine");
     expect(rateForce("lateral", -1.2, steel)).toBe("strong");
-    expect(rateForce("lateral", 1.8, steel)).toBe("too much");
+    expect(rateForce("lateral", 2.1, steel)).toBe("too much");
     expect(rateForce("longitudinal", 2.5, steel)).toBe("dangerous");
   });
   it("treats low vertical force as airtime", () => {
@@ -98,7 +99,7 @@ describe("force labels", () => {
   });
   it("uses violation flags for labels and rates unflagged excursions as brief", () => {
     const samples = [
-      sample(0, { verticalG: 5.4, lateralG: 1.7 }),
+      sample(0, { verticalG: 5.4, lateralG: 2.2 }),
       sample(1, { verticalG: 4.9, lateralG: 1.4, forceLimitExceeded: [true, true, false] }),
     ];
     const labels = selectForceLabels(samples, steel);
@@ -106,7 +107,7 @@ describe("force labels", () => {
       ["peakVertical", 1], ["peakLateral", 1],
     ]);
     expect(forceReadoutLines(samples[0], steel, "metric")[1].value).toBe("5.4 g · brief");
-    expect(forceReadoutLines(samples[0], steel, "metric")[2].value).toBe("1.7 g · brief");
+    expect(forceReadoutLines(samples[0], steel, "metric")[2].value).toBe("2.2 g · brief");
     expect(forceReadoutLines(samples[1], steel, "metric")[1].value).toBe("4.9 g · too much");
     expect(forceLabelText(labels.find((label) => label.kind === "peakLateral" && label.pastLimit)!, samples[1], steel, "metric")).toBe("1.4 g · too much lateral");
   });

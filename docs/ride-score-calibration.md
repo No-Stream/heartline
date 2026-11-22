@@ -937,3 +937,28 @@ All changes make the envelope more generous; none tightens it.
 4. Check the 15 g/s onset only after at least 200 ms at or below 0 g.
 5. Keep the 1.1 combined multiplier, and ignore combined excesses shorter than 200 ms.
 6. Keep all six single-axis curves, the 5 Hz filter, the headrest assumption for +Gx and the base-case -Gx line.
+
+## Global ASTM comfort envelope migration (TASK-166), 2026-11-21
+
+Applied all six ASTM F2291 recommendations above to the production `EnvelopeTracker`, removed the duplicate `ExcessiveForces` per-model penalty term from `scoring.rs`, moved `forceLimitExceeded`, track overlays, ride graphs, and builder hard rated windows to the global envelope (`ENVELOPE_DISPLAY_LIMITS`: −1.5 / +5.0 / 2.0 / 1.5 g), and split per-model limits into `DesignForceTargets` for design checks, sample-ride margins, inner feel windows, and amber feel notes.
+
+### Score before and after
+
+All enthusiast ordering assertions and synthetic archetype target bands in `crates/sim/src/physics/calibration_tests.rs` remained unchanged and green.
+
+| Layout / archetype | Before (E / I / N) | After (E / I / N) | Reason for change |
+|---|---|---|---|
+| Classic Arrow looper (synthetic) | 4.05 / 7.24 / 5.53 | 4.61 / 6.72 / 4.74 | `ExcessiveForces` removed; remains inside target bands (4.0–5.0 / 6.0–7.5 / 4.5–7.0) |
+| Family, B&M hyper, RMC hybrid, Intamin accelerator, Intamin Blitz (synthetic) | unchanged | unchanged | No time above the comfort envelope |
+| Demo, Timber Tumbler, Velocity Viper, Daisy Dash, Horizon Hawk (sample circuits) | unchanged | unchanged | All stay inside their `DesignForceTargets` and the ASTM envelope |
+| Briar Blitz (master 7.26 g lateral layout) | 0.36 / 9.42 / 6.88 | 2.13 / 8.30 / 5.06 | `ExcessiveForces` removed; per-level isoacceleration slicing reduced `Envelope` from 3.2 g-s to 1.7 g-s (`-2.45` excitement) |
+| Reference loop (`completion_tests.rs`) | ~2.5 E | 3.90 / 7.57 / 3.83 | `ExcessiveForces` removed and per-level slicing applied (`Envelope` `-0.47` excitement for 4.43 g lateral over 0.71 s) |
+
+### Changed goldens and baselines
+
+- `crates/design-tools/tests/goldens/cli_test_report.txt`: removed the three `excessive forces (+0.0, 0.0 s)` lines from the score breakdown.
+- `crates/sim/src/track/rated_windows.generated.rs`: regenerated with two edges (`minimum_entry..=maximum_entry` from the global ASTM envelope; `feel_minimum_entry..=feel_maximum_entry` from model `DesignForceTargets`, hill feel, and speed-turn design caps). `UNAVAILABLE_RATED_WINDOWS` is now empty (Daisy Dash uphill banked straights have a hard window of 20–30 m/s and `feel_minimum_entry: None`). Note that under ASTM F2291 7.1.4.2's 200 ms minimum event duration, a short transition like `SixtyToSteepDown` traversed above ~59.75 m/s completes in under 200 ms, so its hard window stops at the first failure (59.43 m/s) while its feel window stays 2.00–30.89 m/s.
+- `crates/sim-wasm/src/builder_session.rs`: updated recorded UI trace JSON digests (`classic_builder_outputs_keep_the_recorded_digests` and `content_ride_builder_output_traces_match_recorded_baselines`) because the wire payloads now carry `ENVELOPE_DISPLAY_LIMITS`, `designTargets`, and two-edge `ratedSpeed`. All six content ride simulation state hashes (`content_ride_builder_hashes_match_recorded_baselines`), including Horizon Hawk shaped geometry digests, remained byte-identical.
+- `web/src/generated/`: regenerated wire types (`ConstructionDesignTargetsWire.ts`, `ConstructionForceLimitsWire.ts`, `ConstructionRatedSpeedWire.ts`, `modelForceLimits.ts`).
+- Browser e2e snapshots updated for the new envelope readouts and hard windows: `coaster-testing-panel-lift-circuit-linux.png` (removed `ExcessiveForces` finding, scores 3.2/8.7/5.7 → 4.7/7.6/3.8), `airtime-hill-inspector-linux.png` (hard upper bound 91 → 95 km/h on `EjectorHill8x64`), `speed-matched-turn-selection-linux.png` (hard upper bound 97.2 → 118.6 km/h on 86 km/h speed turn), `coaster-boarding-linux.png` (limit-closeness ribbon scaled by global envelope limits), and `underground-cutaway-coaster-linux.png` / `underground-cutaway-coaster-dark-night-linux.png` (brief pullout peak reads `6.1 g · brief vertical` instead of `dangerous vertical`).
+

@@ -28,7 +28,8 @@ fn candidate_force_preview_reports_selected_track_without_placing_it() {
     ] {
         assert!(preview["peaks"][flag].is_boolean());
     }
-    assert_eq!(preview["limits"]["maximumVerticalG"], 4.5);
+    assert_eq!(preview["limits"]["maximumVerticalG"], 5.0);
+    assert_eq!(preview["limits"]["designTargets"]["maximumVerticalG"], 4.5);
     assert_eq!(simulation.construction_track(), before);
 }
 
@@ -178,14 +179,15 @@ fn construction_force_preview_reports_placed_track_and_last_piece_peaks() {
     assert!(samples.windows(2).all(|pair| {
         pair[1]["distance"].as_f64().unwrap() - pair[0]["distance"].as_f64().unwrap() <= 1.001
     }));
-    assert_eq!(preview["limits"]["maximumVerticalG"], 4.5);
+    assert_eq!(preview["limits"]["maximumVerticalG"], 5.0);
+    assert_eq!(preview["limits"]["designTargets"]["maximumVerticalG"], 4.5);
     assert_eq!(
         preview["limits"]["ratingBands"]["vertical"],
         serde_json::json!([
             { "rating": "weak", "upTo": 2.0, "inclusive": true },
             { "rating": "good", "upTo": 3.0, "inclusive": false },
-            { "rating": "great", "upTo": 4.5, "inclusive": true },
-            { "rating": "too much", "upTo": 1.3 * 4.5, "inclusive": true },
+            { "rating": "great", "upTo": 5.0, "inclusive": true },
+            { "rating": "too much", "upTo": 1.3 * 5.0, "inclusive": true },
             { "rating": "dangerous", "upTo": null, "inclusive": true },
         ])
     );
