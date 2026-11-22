@@ -1,7 +1,7 @@
 ---
 id: TASK-118
 title: Make GitHub CI pass
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-05 00:27'
 updated_date: '2026-11-18 16:45'
@@ -19,8 +19,8 @@ The repo went public as No-Stream/heartline on 2026-11-04. The first CI run (Act
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 CI is green on master on GitHub
-- [ ] #2 Each failure explained and fixed at its cause
+- [x] #1 CI is green on master on GitHub
+- [x] #2 Each failure explained and fixed at its cause
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -49,4 +49,6 @@ Validation on the portable-math branch: full Rust workspace suite passed with `-
 A separate before/after builder trace audit covered the three changed classic circuits and five changed content rides: 35,643,331 float tokens, zero non-float structural differences, and maximum absolute numeric delta 3.17613085832e-8 (a lateral force). The seven ride reports had 8,328,513 numeric fields, the same maximum difference, and no outcome or structural changes. The 195 changed state hashes are opaque; detailed builder outputs were compared separately.
 
 2026-11-22: CI run 44985081662 (portable math) passed every Rust test it reached, but the test job hit its 20-minute limit. Cause: the libm crate compiled at opt-level 0 in test builds, so every Rust test binary ran 2-2.6x slower than with glibc (theme-park-sim lib 146.8 s -> 383 s in the test job, 276 s -> 733 s in test-threads). Fix: [profile.test.package.libm] opt-level = 3 (one heavy test locally: 152 s before the libm change, 424 s after, 186 s with the override). The test job was already near its limit before the regression (13m16 of Rust tests plus about 2.5 min of setup and test-web), so the web tests now run in their own test-web job and the Rust tests run in three parallel shards (theme-park-sim, theme-park-sim-wasm, everything else) through make test-rust RUST_TEST_SELECTION=..., which now always passes --no-fail-fast. Slowest single tests (over 60 s on CI): incremental_force_preview_matches_fresh_player_circuit_prefixes, seeded_different_circuits_keep_trains_separate_and_replay, every_model_rated_window_endpoint_passes_with_its_default_train_in_each_applicable_context, native_agreement_check_reports_every_ride_and_attributes_each_failure, horizon_hawk_park_report_is_deterministic_and_matches_the_golden.
+
+2026-11-22: run 44990316855 on 9f85cd9 is green on every job; about 11 minutes end to end (Rust shards 8-10 min on cold caches, test-threads 10m15 instead of 18m25).
 <!-- SECTION:NOTES:END -->
