@@ -115,7 +115,13 @@ fn capture_current_save_digest_mismatch(mismatch: GeometryDigestMismatch) -> boo
 }
 use crate::world::World;
 
+mod crest_turn;
 mod precision;
+
+pub use crest_turn::{
+    CrestApexFeel, CrestTurnGeometry, CrestTurnKnot, CrestTurnRefusal, CrestTurnSizeHint,
+    CrestTurnSweep, solve_crest_turn, solve_crest_turn_with_size,
+};
 
 pub use crate::track::curves::{SpeedTurnGeometry as ResolvedTurnGeometry, SpeedTurnKnot};
 pub use crate::track::profile::SolvedProfile as ResolvedHillProfile;
