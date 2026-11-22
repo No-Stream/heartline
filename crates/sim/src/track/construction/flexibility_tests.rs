@@ -94,7 +94,7 @@ fn capability_expectations() -> Vec<CapabilityExpectations> {
 
 fn slope_degrees(state: TrackState) -> f64 {
     let tangent = state.tangent();
-    tangent.z.atan2(tangent.x.hypot(tangent.y)).to_degrees()
+    crate::math::atan2(tangent.z, crate::math::hypot(tangent.x, tangent.y)).to_degrees()
 }
 
 #[test]

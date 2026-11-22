@@ -300,8 +300,9 @@ fn lift_prefix(model: &CoasterModel, speed_mps: f64, physics: PhysicsConfig) -> 
             .at(TrackState::origin())
             .expect("station starts at origin"),
     ];
-    let acceleration_distance = (speed_mps.powi(2) - physics.station_speed.powi(2)).max(0.0)
-        / (2.0 * physics.drive_acceleration);
+    let acceleration_distance =
+        (crate::math::powi(speed_mps, 2) - crate::math::powi(physics.station_speed, 2)).max(0.0)
+            / (2.0 * physics.drive_acceleration);
     let required_length = acceleration_distance + model.train.length_metres + 40.0;
     let straight_count = (required_length / straight.length()).ceil() as usize;
     for _ in 0..straight_count {

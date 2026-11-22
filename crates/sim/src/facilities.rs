@@ -2047,7 +2047,7 @@ pub fn station_positions(station: &crate::track::Piece) -> Option<(Position, Pos
     let end = station.exit.position();
     let dx = end.x - start.x;
     let dy = end.y - start.y;
-    let length = dx.hypot(dy);
+    let length = crate::math::hypot(dx, dy);
     if length == 0.0 {
         return None;
     }

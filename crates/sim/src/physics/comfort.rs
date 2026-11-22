@@ -97,7 +97,7 @@ impl ComfortTracker {
             longitudinal / if longitudinal >= 0.0 { 6.6 } else { 2.2 },
         ];
         for (pair, (left, right)) in [(0, 1), (0, 2), (1, 2)].into_iter().enumerate() {
-            let magnitude = normalised[left].hypot(normalised[right]);
+            let magnitude = crate::math::hypot(normalised[left], normalised[right]);
             let mut worst = 0.0_f64;
             let mut active = 0;
             for (index, duration) in self.pair_durations[pair].iter_mut().enumerate() {
@@ -205,7 +205,7 @@ impl ComfortTracker {
             longitudinal / if longitudinal >= 0.0 { 6.6 } else { 2.2 },
         ];
         for (pair, (left, right)) in [(0, 1), (0, 2), (1, 2)].into_iter().enumerate() {
-            let magnitude = normalised[left].hypot(normalised[right]);
+            let magnitude = crate::math::hypot(normalised[left], normalised[right]);
             let mut worst = 0.0_f64;
             for (index, duration) in self.pair_durations[pair].iter_mut().enumerate() {
                 let level = if index < 100 {
@@ -847,7 +847,7 @@ impl EnvelopeTracker {
             longitudinal / if longitudinal >= 0.0 { 6.6 } else { 2.2 },
         ];
         for (left, right, axis) in pairs {
-            let value = normalized[left].hypot(normalized[right]);
+            let value = crate::math::hypot(normalized[left], normalized[right]);
             let ratio = (value - 1.0).max(0.0);
             candidate(axis, value, 1.0, ratio);
             max_ratio = max_ratio.max(ratio);

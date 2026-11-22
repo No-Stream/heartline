@@ -85,7 +85,9 @@ impl Schedule {
                 if _angle <= hold {
                     bottom
                 } else {
-                    top + (bottom - top) * (1.0 + (PI * (_angle - hold) / (PI - hold)).cos()) / 2.0
+                    top + (bottom - top)
+                        * (1.0 + crate::math::cos(PI * (_angle - hold) / (PI - hold)))
+                        / 2.0
                 }
             }
         }
@@ -299,7 +301,7 @@ impl SolvedProfile {
             return;
         }
         let last = *self.points.last().expect("profile contains an endpoint");
-        assert!(last.angle.sin().abs() < 1e-9 && last.angle.cos() > 0.0);
+        assert!(crate::math::sin(last.angle).abs() < 1e-9 && crate::math::cos(last.angle) > 0.0);
         self.points.push(Point {
             distance: last.distance + length,
             x: last.x + length,
@@ -532,7 +534,7 @@ impl SolvedProfile {
             .iter()
             .map(|p| {
                 p.heart_curvature * worst_speed_squared(self, p.distance, entry, false) / GRAVITY
-                    + p.angle.cos()
+                    + crate::math::cos(p.angle)
             })
             .fold(f64::NEG_INFINITY, f64::max)
     }
@@ -542,7 +544,7 @@ impl SolvedProfile {
             .iter()
             .map(|p| {
                 p.heart_curvature * worst_speed_squared(self, p.distance, entry, false) / GRAVITY
-                    + p.angle.cos()
+                    + crate::math::cos(p.angle)
             })
             .fold(f64::INFINITY, f64::min)
     }
@@ -572,33 +574,34 @@ impl SolvedProfile {
                 (
                     start.x,
                     end.x,
-                    start.angle.cos(),
-                    end.angle.cos(),
-                    -start.angle.sin() * start.curvature,
-                    -end.angle.sin() * end.curvature,
+                    crate::math::cos(start.angle),
+                    crate::math::cos(end.angle),
+                    -crate::math::sin(start.angle) * start.curvature,
+                    -crate::math::sin(end.angle) * end.curvature,
                 )
             } else {
                 (
                     start.z,
                     end.z,
-                    start.angle.sin(),
-                    end.angle.sin(),
-                    start.angle.cos() * start.curvature,
-                    end.angle.cos() * end.curvature,
+                    crate::math::sin(start.angle),
+                    crate::math::sin(end.angle),
+                    crate::math::cos(start.angle) * start.curvature,
+                    crate::math::cos(end.angle) * end.curvature,
                 )
             };
             let delta = p1 - p0;
             let m0 = length * v0;
             let m1 = length * v1;
-            let n0 = length.powi(2) * k0;
-            let n1 = length.powi(2) * k1;
+            let n0 = crate::math::powi(length, 2) * k0;
+            let n1 = crate::math::powi(length, 2) * k1;
             let a = 6.0 * delta - 3.0 * (m0 + m1) - (n0 - n1) / 2.0;
             let b = -15.0 * delta + 8.0 * m0 + 7.0 * m1 + 1.5 * n0 - n1;
             let c = 10.0 * delta - 6.0 * m0 - 4.0 * m1 - 1.5 * n0 + n1 / 2.0;
             position[axis] = ((((a * u + b) * u + c) * u + n0 / 2.0) * u + m0) * u + p0;
             first[axis] = ((((5.0 * a * u + 4.0 * b) * u + 3.0 * c) * u + n0) * u + m0) / length;
-            second[axis] = (((20.0 * a * u + 12.0 * b) * u + 6.0 * c) * u + n0) / length.powi(2);
-            third[axis] = ((60.0 * a * u + 24.0 * b) * u + 6.0 * c) / length.powi(3);
+            second[axis] =
+                (((20.0 * a * u + 12.0 * b) * u + 6.0 * c) * u + n0) / crate::math::powi(length, 2);
+            third[axis] = ((60.0 * a * u + 24.0 * b) * u + 6.0 * c) / crate::math::powi(length, 3);
         }
         (position, first, second, third)
     }
@@ -606,7 +609,8 @@ impl SolvedProfile {
 
 #[cfg(test)]
 fn profile_curvature_from_derivatives(tangent: [f64; 2], second: [f64; 2]) -> f64 {
-    (tangent[0] * second[1] - tangent[1] * second[0]) / tangent[0].hypot(tangent[1]).powi(3)
+    (tangent[0] * second[1] - tangent[1] * second[0])
+        / crate::math::powi(crate::math::hypot(tangent[0], tangent[1]), 3)
 }
 
 #[cfg(test)]
@@ -639,8 +643,8 @@ fn integrate_checked_with_train(
         heart_curvature: 0.0,
         curvature: 0.0,
     }];
-    let mut heart_x = -HEART_HEIGHT * spec.start_angle.sin();
-    let mut heart_z = HEART_HEIGHT * spec.start_angle.cos();
+    let mut heart_x = -HEART_HEIGHT * crate::math::sin(spec.start_angle);
+    let mut heart_z = HEART_HEIGHT * crate::math::cos(spec.start_angle);
     let mut angle: f64 = spec.start_angle;
     let mut distance = 0.0;
     for (segment_index, segment) in spec.segments.iter().enumerate() {
@@ -648,13 +652,13 @@ fn integrate_checked_with_train(
             #[cfg(test)]
             Segment::Insert(length) if length > 0.0 => {
                 assert_eq!(points.last().unwrap().curvature, 0.0);
-                heart_x += length * angle.cos();
-                heart_z += length * angle.sin();
+                heart_x += length * crate::math::cos(angle);
+                heart_z += length * crate::math::sin(angle);
                 distance += length;
                 points.push(Point {
                     distance,
-                    x: heart_x + HEART_HEIGHT * angle.sin(),
-                    z: heart_z - HEART_HEIGHT * angle.cos(),
+                    x: heart_x + HEART_HEIGHT * crate::math::sin(angle),
+                    z: heart_z - HEART_HEIGHT * crate::math::cos(angle),
                     angle,
                     heart_curvature: 0.0,
                     curvature: 0.0,
@@ -672,29 +676,33 @@ fn integrate_checked_with_train(
                 });
                 for index in 0..steps {
                     let midpoint_parameter = (index as f64 + 0.5) / steps as f64;
-                    let smooth = |t: f64| t.powi(3) * (10.0 + t * (-15.0 + 6.0 * t));
+                    let smooth = |t: f64| crate::math::powi(t, 3) * (10.0 + t * (-15.0 + 6.0 * t));
                     let midpoint_angle = start_angle + delta * smooth(midpoint_parameter);
                     let angle_step = delta
                         * 30.0
-                        * midpoint_parameter.powi(2)
-                        * (1.0 - midpoint_parameter).powi(2)
+                        * crate::math::powi(midpoint_parameter, 2)
+                        * crate::math::powi(1.0 - midpoint_parameter, 2)
                         / steps as f64;
-                    let taper = ((midpoint_angle - start_angle).abs() / taper_angle)
-                        .powf(2.0 / 3.0)
-                        .min(
-                            if spec.mirror_apex && segment_index + 1 == spec.segments.len() {
-                                1.0
-                            } else {
-                                ((start_angle + delta - midpoint_angle).abs() / taper_angle)
-                                    .powf(2.0 / 3.0)
-                            },
-                        )
-                        .min(1.0);
-                    let point_speed_squared = spec.maximum_entry.powi(2)
+                    let taper = crate::math::powf(
+                        (midpoint_angle - start_angle).abs() / taper_angle,
+                        2.0 / 3.0,
+                    )
+                    .min(
+                        if spec.mirror_apex && segment_index + 1 == spec.segments.len() {
+                            1.0
+                        } else {
+                            crate::math::powf(
+                                (start_angle + delta - midpoint_angle).abs() / taper_angle,
+                                2.0 / 3.0,
+                            )
+                        },
+                    )
+                    .min(1.0);
+                    let point_speed_squared = crate::math::powi(spec.maximum_entry, 2)
                         - if spec.fixed_speed {
                             0.0
                         } else {
-                            2.0 * GRAVITY * (heart_z - HEART_HEIGHT * angle.cos())
+                            2.0 * GRAVITY * (heart_z - HEART_HEIGHT * crate::math::cos(angle))
                         };
                     let speed_squared = previous.map_or(point_speed_squared, |profile| {
                         worst_speed_squared_for_train(
@@ -707,7 +715,7 @@ fn integrate_checked_with_train(
                     });
                     if !speed_squared.is_finite() || speed_squared <= 0.0 {
                         let height_m = previous.map_or(
-                            heart_z - HEART_HEIGHT * midpoint_angle.cos(),
+                            heart_z - HEART_HEIGHT * crate::math::cos(midpoint_angle),
                             |profile| {
                                 minimum_mean_height_for_train(
                                     profile,
@@ -721,9 +729,10 @@ fn integrate_checked_with_train(
                             height_metres: height_m,
                         });
                     }
-                    let scheduled_curvature =
-                        GRAVITY * (schedule.force(midpoint_angle) - midpoint_angle.cos()) * taper
-                            / speed_squared;
+                    let scheduled_curvature = GRAVITY
+                        * (schedule.force(midpoint_angle) - crate::math::cos(midpoint_angle))
+                        * taper
+                        / speed_squared;
                     let curvature = if spec.heart_speed_correction {
                         heart_speed_corrected_curvature(scheduled_curvature)
                     } else {
@@ -737,28 +746,32 @@ fn integrate_checked_with_train(
                         return Err(OfflineSolveError::InvalidCurvature {
                             angle_radians: midpoint_angle,
                             curvature_per_metre: curvature,
-                            height_metres: heart_z - HEART_HEIGHT * midpoint_angle.cos(),
+                            height_metres: heart_z
+                                - HEART_HEIGHT * crate::math::cos(midpoint_angle),
                         });
                     }
-                    heart_x += heart_distance * midpoint_angle.cos();
-                    heart_z += heart_distance * midpoint_angle.sin();
+                    heart_x += heart_distance * crate::math::cos(midpoint_angle);
+                    heart_z += heart_distance * crate::math::sin(midpoint_angle);
                     distance += heart_distance * (1.0 + HEART_HEIGHT * curvature);
                     angle = start_angle + delta * smooth((index + 1) as f64 / steps as f64);
-                    let end_taper = ((angle - start_angle).abs() / taper_angle)
-                        .powf(2.0 / 3.0)
-                        .min(
-                            if spec.mirror_apex && segment_index + 1 == spec.segments.len() {
-                                1.0
-                            } else {
-                                ((start_angle + delta - angle).abs() / taper_angle).powf(2.0 / 3.0)
-                            },
-                        )
-                        .min(1.0);
-                    let end_point_speed_squared = spec.maximum_entry.powi(2)
+                    let end_taper =
+                        crate::math::powf((angle - start_angle).abs() / taper_angle, 2.0 / 3.0)
+                            .min(
+                                if spec.mirror_apex && segment_index + 1 == spec.segments.len() {
+                                    1.0
+                                } else {
+                                    crate::math::powf(
+                                        (start_angle + delta - angle).abs() / taper_angle,
+                                        2.0 / 3.0,
+                                    )
+                                },
+                            )
+                            .min(1.0);
+                    let end_point_speed_squared = crate::math::powi(spec.maximum_entry, 2)
                         - if spec.fixed_speed {
                             0.0
                         } else {
-                            2.0 * GRAVITY * (heart_z - HEART_HEIGHT * angle.cos())
+                            2.0 * GRAVITY * (heart_z - HEART_HEIGHT * crate::math::cos(angle))
                         };
                     let end_speed_squared = previous.map_or(end_point_speed_squared, |profile| {
                         worst_speed_squared_for_train(
@@ -770,21 +783,23 @@ fn integrate_checked_with_train(
                         )
                     });
                     if !end_speed_squared.is_finite() || end_speed_squared <= 0.0 {
-                        let height_m =
-                            previous.map_or(heart_z - HEART_HEIGHT * angle.cos(), |profile| {
+                        let height_m = previous.map_or(
+                            heart_z - HEART_HEIGHT * crate::math::cos(angle),
+                            |profile| {
                                 minimum_mean_height_for_train(
                                     profile,
                                     distance,
                                     spec.mirror_apex,
                                     train,
                                 )
-                            });
+                            },
+                        );
                         return Err(OfflineSolveError::NonPositiveSpeedSquared {
                             height_metres: height_m,
                         });
                     }
                     let scheduled_heart_curvature =
-                        GRAVITY * (schedule.force(angle) - angle.cos()) * end_taper
+                        GRAVITY * (schedule.force(angle) - crate::math::cos(angle)) * end_taper
                             / end_speed_squared;
                     let heart_curvature = if spec.heart_speed_correction {
                         heart_speed_corrected_curvature(scheduled_heart_curvature)
@@ -793,8 +808,8 @@ fn integrate_checked_with_train(
                     };
                     let point = Point {
                         distance,
-                        x: heart_x + HEART_HEIGHT * angle.sin(),
-                        z: heart_z - HEART_HEIGHT * angle.cos(),
+                        x: heart_x + HEART_HEIGHT * crate::math::sin(angle),
+                        z: heart_z - HEART_HEIGHT * crate::math::cos(angle),
                         angle,
                         heart_curvature,
                         curvature: heart_curvature / (1.0 + HEART_HEIGHT * heart_curvature),
@@ -933,7 +948,8 @@ fn worst_speed_squared(
     entry_speed: f64,
     mirror: bool,
 ) -> f64 {
-    entry_speed.powi(2) - 2.0 * GRAVITY * minimum_mean_height(profile, distance, mirror)
+    crate::math::powi(entry_speed, 2)
+        - 2.0 * GRAVITY * minimum_mean_height(profile, distance, mirror)
 }
 
 fn worst_speed_squared_for_train(
@@ -943,7 +959,7 @@ fn worst_speed_squared_for_train(
     mirror: bool,
     train: ProfileTrain,
 ) -> f64 {
-    entry_speed.powi(2)
+    crate::math::powi(entry_speed, 2)
         - 2.0 * GRAVITY * minimum_mean_height_for_train(profile, distance, mirror, train)
 }
 
@@ -951,12 +967,12 @@ fn rail_height(profile: &SolvedProfile, distance: f64, mirror: bool) -> f64 {
     let first = profile.points.first().unwrap();
     let last = profile.points.last().unwrap();
     if distance < 0.0 {
-        first.z + distance * first.angle.sin()
+        first.z + distance * crate::math::sin(first.angle)
     } else if distance > last.distance {
         if mirror {
             rail_height(profile, 2.0 * last.distance - distance, false)
         } else {
-            last.z + (distance - last.distance) * last.angle.sin()
+            last.z + (distance - last.distance) * crate::math::sin(last.angle)
         }
     } else {
         profile.sample(distance).0[1]
@@ -977,7 +993,7 @@ fn solve_with_steps(spec: &ProfileSpec, steps: usize) -> SolvedProfile {
         let next = integrate(spec, Some(&profile), steps);
         let before = profile.points.last().unwrap();
         let after = next.points.last().unwrap();
-        let movement = (before.x - after.x).hypot(before.z - after.z);
+        let movement = crate::math::hypot(before.x - after.x, before.z - after.z);
         profile = next;
         if movement < 0.000001 {
             return profile;
@@ -999,7 +1015,7 @@ fn solve_with_profile_train(
         let next = integrate_checked_with_train(spec, Some(&profile), steps, train)?;
         let before = profile.points.last().unwrap();
         let after = next.points.last().unwrap();
-        let movement = (before.x - after.x).hypot(before.z - after.z);
+        let movement = crate::math::hypot(before.x - after.x, before.z - after.z);
         profile = next;
         if movement < 0.000001 {
             return Ok((profile, iteration + 1));
@@ -1210,8 +1226,8 @@ fn assert_design_force_schedule(spec: &ProfileSpec, profile: &SolvedProfile) {
                 spec.mirror_apex,
             )
             / GRAVITY
-            + point.angle.cos();
-        if design_force >= point.angle.cos() {
+            + crate::math::cos(point.angle);
+        if design_force >= crate::math::cos(point.angle) {
             assert!(
                 actual_force <= design_force + 1e-6,
                 "{}: design force exceeded at angle {}: {actual_force} g > {design_force} g",
@@ -1748,7 +1764,8 @@ fn hill_crest_time(spec: &ProfileSpec, flank_angle: f64, half: &SolvedProfile) -
         for pair in profile.points[first_crest_index..=last_crest_index].windows(2) {
             let midpoint_distance = (pair[0].distance + pair[1].distance) / 2.0;
             let train_mean_height = train_mean_height(&profile, midpoint_distance, cars);
-            let speed_squared = spec.maximum_entry.powi(2) - 2.0 * GRAVITY * train_mean_height;
+            let speed_squared =
+                crate::math::powi(spec.maximum_entry, 2) - 2.0 * GRAVITY * train_mean_height;
             if !speed_squared.is_finite() || speed_squared <= 0.0 {
                 return None;
             }
@@ -1839,7 +1856,7 @@ pub(crate) fn snap_pull(spec: &ProfileSpec) -> SolvedProfile {
     };
     assert_eq!(spec.segments.len(), 1);
     let end_angle = spec.start_angle + angle;
-    let determinant = (end_angle - spec.start_angle).sin();
+    let determinant = crate::math::sin(end_angle - spec.start_angle);
     assert!(determinant.abs() > f64::EPSILON);
     let raw = solve_with_steps(spec, 512);
     let [raw_x, raw_z] = raw.endpoint();
@@ -1854,10 +1871,13 @@ pub(crate) fn snap_pull(spec: &ProfileSpec) -> SolvedProfile {
                 }
                 let dx = 2.0 * x as f64 - raw_x;
                 let dz = 2.0 * z as f64 - raw_z;
-                let start = (dx * end_angle.sin() - dz * end_angle.cos()) / determinant;
-                let end = (dz * spec.start_angle.cos() - dx * spec.start_angle.sin()) / determinant;
+                let start = (dx * crate::math::sin(end_angle) - dz * crate::math::cos(end_angle))
+                    / determinant;
+                let end = (dz * crate::math::cos(spec.start_angle)
+                    - dx * crate::math::sin(spec.start_angle))
+                    / determinant;
                 if start >= 0.0 && end >= 0.0 {
-                    candidates.push((dx.hypot(dz), x, z, start, end));
+                    candidates.push((crate::math::hypot(dx, dz), x, z, start, end));
                 }
             }
         }
@@ -1875,7 +1895,7 @@ pub(crate) fn snap_pull(spec: &ProfileSpec) -> SolvedProfile {
                 let [actual_x, actual_z] = profile.endpoint();
                 let dx = 2.0 * x as f64 - actual_x;
                 let dz = 2.0 * z as f64 - actual_z;
-                if dx.hypot(dz) < 1e-7 {
+                if crate::math::hypot(dx, dz) < 1e-7 {
                     coarse_converged = true;
                     break;
                 }
@@ -1885,8 +1905,8 @@ pub(crate) fn snap_pull(spec: &ProfileSpec) -> SolvedProfile {
                 let [perturbed_x, perturbed_z] = perturbed.endpoint();
                 let start_derivative_x = (perturbed_x - actual_x) / START_PERTURBATION;
                 let start_derivative_z = (perturbed_z - actual_z) / START_PERTURBATION;
-                let end_tangent_x = end_angle.cos();
-                let end_tangent_z = end_angle.sin();
+                let end_tangent_x = crate::math::cos(end_angle);
+                let end_tangent_z = crate::math::sin(end_angle);
                 let jacobian_determinant =
                     start_derivative_x * end_tangent_z - end_tangent_x * start_derivative_z;
                 if jacobian_determinant.abs() < f64::EPSILON {
@@ -1911,7 +1931,7 @@ pub(crate) fn snap_pull(spec: &ProfileSpec) -> SolvedProfile {
                 let [actual_x, actual_z] = profile.endpoint();
                 let dx = 2.0 * x as f64 - actual_x;
                 let dz = 2.0 * z as f64 - actual_z;
-                if dx.hypot(dz) < 1e-10 {
+                if crate::math::hypot(dx, dz) < 1e-10 {
                     assert_design_force_schedule(&adjusted, &profile);
                     let last = profile.points.last_mut().unwrap();
                     last.x = 2.0 * x as f64;
@@ -1924,8 +1944,8 @@ pub(crate) fn snap_pull(spec: &ProfileSpec) -> SolvedProfile {
                 let [perturbed_x, perturbed_z] = perturbed.endpoint();
                 let start_derivative_x = (perturbed_x - actual_x) / START_PERTURBATION;
                 let start_derivative_z = (perturbed_z - actual_z) / START_PERTURBATION;
-                let end_tangent_x = end_angle.cos();
-                let end_tangent_z = end_angle.sin();
+                let end_tangent_x = crate::math::cos(end_angle);
+                let end_tangent_z = crate::math::sin(end_angle);
                 let jacobian_determinant =
                     start_derivative_x * end_tangent_z - end_tangent_x * start_derivative_z;
                 if jacobian_determinant.abs() < f64::EPSILON {
@@ -2405,7 +2425,7 @@ mod tests {
                 let values = [
                     format!("{:.9e}", position_delta[0]).parse::<f32>().unwrap(),
                     format!("{:.9e}", position_delta[1]).parse::<f32>().unwrap(),
-                    format!("{:.9e}", tangent[1].atan2(tangent[0]))
+                    format!("{:.9e}", crate::math::atan2(tangent[1], tangent[0]))
                         .parse::<f32>()
                         .unwrap(),
                     format!("{:.9e}", curvature).parse::<f32>().unwrap(),
@@ -2481,7 +2501,7 @@ mod tests {
                     "        [{:.17}, {:.17}, {:.17}, {:.17}],",
                     position[0],
                     position[1],
-                    tangent[1].atan2(tangent[0]),
+                    crate::math::atan2(tangent[1], tangent[0]),
                     curvature
                 )
                 .unwrap();
@@ -2528,8 +2548,10 @@ mod tests {
             let mut check = |distance: f64| {
                 let (expected_position, _, _) = expected.sample(distance);
                 let (actual_position, tangent, second) = actual.sample(distance);
-                let position_error = (expected_position[0] - actual_position[0])
-                    .hypot(expected_position[1] - actual_position[1]);
+                let position_error = crate::math::hypot(
+                    expected_position[0] - actual_position[0],
+                    expected_position[1] - actual_position[1],
+                );
                 let curvature_error = (reference_curvature(&expected, distance)
                     - profile_curvature_from_derivatives(tangent, second))
                 .abs();
@@ -2746,7 +2768,7 @@ mod tests {
                     [
                         position_delta[0],
                         position_delta[1],
-                        tangent[1].atan2(tangent[0]),
+                        crate::math::atan2(tangent[1], tangent[0]),
                         reference_curvature(&entry.profile, distance),
                     ]
                 })
@@ -2766,8 +2788,10 @@ mod tests {
                 let (expected_position, _, _) = entry.profile.sample(distance);
                 let (actual_position, tangent, second) = actual.sample(distance);
                 let (_, precise_tangent, precise_second) = precise.sample(distance);
-                let position_error = (expected_position[0] - actual_position[0])
-                    .hypot(expected_position[1] - actual_position[1]);
+                let position_error = crate::math::hypot(
+                    expected_position[0] - actual_position[0],
+                    expected_position[1] - actual_position[1],
+                );
                 let curvature_error = (reference_curvature(&entry.profile, distance)
                     - profile_curvature_from_derivatives(tangent, second))
                 .abs();
@@ -2850,8 +2874,14 @@ mod tests {
     #[test]
     fn legacy_hill_solver_reproduces_generated_source_exactly() {
         let entries = hill_entries_from_generated_designs();
+        let regenerated_source = generated_hill_source(&entries);
+        if std::env::var_os("UPDATE_GENERATED_HILL_PROFILES").is_some() {
+            let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/track/hills.generated.rs");
+            std::fs::write(path, regenerated_source).unwrap();
+            return;
+        }
         assert_eq!(
-            generated_hill_source(&entries),
+            regenerated_source,
             include_str!("hills.generated.rs"),
             "regenerated hill profiles differ from the frozen source"
         );
@@ -2940,7 +2970,8 @@ mod tests {
         let spec = ProfileSpec::arc(FRAC_PI_2, 4.2, 30.0);
         let profile = integrate(&spec, None, 2048);
         let point = &profile.points[1024];
-        let expected = GRAVITY * (4.2 - point.angle.cos()) / 30.0_f64.powi(2);
+        let expected =
+            GRAVITY * (4.2 - crate::math::cos(point.angle)) / crate::math::powi(30.0_f64, 2);
         assert!((point.heart_curvature / expected - 1.0).abs() < 0.01);
     }
 
@@ -2949,7 +2980,7 @@ mod tests {
         let flank_angle_radians = 30.0_f64.to_radians();
         let spec = OfflineHillSpec {
             entry_speed_mps: 20.0,
-            pull_g: (flank_angle_radians * 0.5).cos(),
+            pull_g: crate::math::cos(flank_angle_radians * 0.5),
             crest_g: -0.5,
             flank_angle_radians,
             taper_angle_radians: Some(SHAPED_HILL_TAPER_ANGLE),
@@ -3026,15 +3057,15 @@ mod tests {
                 end.x,
                 end.z,
                 end.distance,
-                (end.x - previous_end.x).hypot(end.z - previous_end.z)
+                crate::math::hypot(end.x - previous_end.x, end.z - previous_end.z)
             );
             profile = next;
         }
         let end = profile.points.last().unwrap();
         let next = integrate(&spec, Some(&profile), 2048);
         let next_end = next.points.last().unwrap();
-        assert!((end.x - next_end.x).hypot(end.z - next_end.z) < 0.001);
-        let minimum_entry = (2.0 * GRAVITY * end.z + 4.0_f64.powi(2)).sqrt();
+        assert!(crate::math::hypot(end.x - next_end.x, end.z - next_end.z) < 0.001);
+        let minimum_entry = (2.0 * GRAVITY * end.z + crate::math::powi(4.0_f64, 2)).sqrt();
         let maximum_force = profile
             .points
             .iter()
@@ -3042,7 +3073,7 @@ mod tests {
                 point.heart_curvature
                     * worst_speed_squared(&profile, point.distance, spec.maximum_entry, false)
                     / GRAVITY
-                    + point.angle.cos()
+                    + crate::math::cos(point.angle)
             })
             .fold(f64::NEG_INFINITY, f64::max);
         eprintln!(
@@ -3068,8 +3099,10 @@ mod solver_acceptance_tests {
                 unreachable!();
             };
             let distance = end.distance - before.distance;
-            let error = (end.x - before.x - distance * before.angle.cos())
-                .hypot(end.z - before.z - distance * before.angle.sin());
+            let error = crate::math::hypot(
+                end.x - before.x - distance * crate::math::cos(before.angle),
+                end.z - before.z - distance * crate::math::sin(before.angle),
+            );
             assert!(error < 1e-9, "exit insert tangent error: {error}");
         }
     }
@@ -3085,7 +3118,7 @@ mod solver_acceptance_tests {
                     .sum::<f64>()
                     / cars as f64
             };
-            let speed_squared = profile.minimum_entry().powi(2)
+            let speed_squared = crate::math::powi(profile.minimum_entry(), 2)
                 - 2.0 * GRAVITY * (mean_height(profile.length() + 18.0) - mean_height(0.0));
             assert!(speed_squared >= 36.0 - 1e-6, "{cars} cars: {speed_squared}");
         }

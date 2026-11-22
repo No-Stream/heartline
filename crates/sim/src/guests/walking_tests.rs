@@ -124,7 +124,9 @@ fn walking_is_continuous_and_groups_pause() {
         let before = simulation.guests().to_vec();
         simulation.tick(&world);
         for (guest, previous) in simulation.guests().iter().zip(before) {
-            let delta = ((guest.x - previous.x).powi(2) + (guest.y - previous.y).powi(2)).sqrt();
+            let delta = (crate::math::powi_f32(guest.x - previous.x, 2)
+                + crate::math::powi_f32(guest.y - previous.y, 2))
+            .sqrt();
             assert!(delta < 0.08, "guest jumped {delta}");
             assert!((guest.distance - previous.distance - delta).abs() < 0.00001);
             observed_pause |= guest.distance > 0.0 && !guest.moving;
@@ -253,7 +255,9 @@ fn unrelated_world_edits_preserve_movement_progress() {
     );
     simulation.tick(&world);
     for (guest, previous) in simulation.guests().iter().zip(before) {
-        let delta = ((guest.x - previous.x).powi(2) + (guest.y - previous.y).powi(2)).sqrt();
+        let delta = (crate::math::powi_f32(guest.x - previous.x, 2)
+            + crate::math::powi_f32(guest.y - previous.y, 2))
+        .sqrt();
         assert!(delta < 0.08, "unrelated edit moved guest {delta}");
     }
 }

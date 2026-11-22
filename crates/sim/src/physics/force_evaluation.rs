@@ -20,7 +20,7 @@ struct Biquad {
 
 impl Biquad {
     fn new(time_step: f64, quality: f64) -> Self {
-        let k = (std::f64::consts::PI * CUTOFF_HZ * time_step).tan();
+        let k = crate::math::tan(std::f64::consts::PI * CUTOFF_HZ * time_step);
         let norm = 1.0 / (1.0 + k / quality + k * k);
         let b0 = k * k * norm;
         Self {
@@ -245,7 +245,7 @@ mod tests {
         let mut squared_input = 0.0;
         let mut squared_output = 0.0;
         for i in 0..4000 {
-            let value = (2.0 * std::f64::consts::PI * 5.0 * i as f64 * TIME_STEP).sin();
+            let value = crate::math::sin(2.0 * std::f64::consts::PI * 5.0 * i as f64 * TIME_STEP);
             let filtered = filter.update(force(value)).vertical;
             if i >= 1000 {
                 squared_input += value * value;
@@ -320,7 +320,7 @@ mod tests {
         let saved = postcard::to_allocvec(&original).unwrap();
         let mut restored: ForceFilter = postcard::from_bytes(&saved).unwrap();
         for i in 0..100 {
-            let sample = force((i as f64 * 0.1).sin());
+            let sample = force(crate::math::sin(i as f64 * 0.1));
             assert_eq!(original.update(sample), restored.update(sample));
         }
     }

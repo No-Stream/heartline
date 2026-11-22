@@ -413,7 +413,9 @@ mod tests {
             lift_speed: speed_mps,
             ..PhysicsConfig::default()
         };
-        let acceleration_distance_m = (speed_mps.powi(2) - physics.station_speed.powi(2)).max(0.0)
+        let acceleration_distance_m = (crate::math::powi(speed_mps, 2)
+            - crate::math::powi(physics.station_speed, 2))
+        .max(0.0)
             / (2.0 * physics.drive_acceleration);
         let straight_count = ((acceleration_distance_m + model.train.length_metres + 40.0)
             / straight.length())

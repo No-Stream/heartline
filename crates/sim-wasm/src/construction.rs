@@ -3254,7 +3254,8 @@ mod shaped_candidate_mode_tests {
             .find(|piece| piece.id == PieceId::Straight)
             .expect("catalog includes straight track")
             .length();
-        let lift_length_m = (physics.lift_speed.powi(2) - physics.station_speed.powi(2))
+        let lift_length_m = (theme_park_sim::math::powi(physics.lift_speed, 2)
+            - theme_park_sim::math::powi(physics.station_speed, 2))
             / (2.0 * physics.drive_acceleration)
             + construction.model().train.length_metres
             + 40.0;

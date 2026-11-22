@@ -465,7 +465,8 @@ fn all_constructible_half_inversion_combinations_pass_at_rated_element_bands() {
                 .iter()
                 .zip(&entry_heights)
                 .map(|(rated, height)| {
-                    (rated.maximum_entry.powi(2) + 2.0 * GRAVITY * (height - entry_heights[0]))
+                    (theme_park_sim::math::powi(rated.maximum_entry, 2)
+                        + 2.0 * GRAVITY * (height - entry_heights[0]))
                         .sqrt()
                 })
                 .fold(f64::INFINITY, f64::min);
@@ -530,8 +531,9 @@ fn top_hat_slows_on_the_climb_and_recovers_speed_on_the_descent() {
         train.distance() >= end,
         "fast train did not clear the top hat"
     );
-    let expected_peak_speed =
-        (initial_speed.powi(2) - 2.0 * GRAVITY * (peak_height - start_height)).sqrt();
+    let expected_peak_speed = (theme_park_sim::math::powi(initial_speed, 2)
+        - 2.0 * GRAVITY * (peak_height - start_height))
+        .sqrt();
     assert!(peak_height - start_height > 25.0);
     assert!((minimum_speed - expected_peak_speed).abs() < 0.1);
     assert!((train.speed() - initial_speed).abs() < 0.1);

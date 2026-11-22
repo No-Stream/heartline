@@ -958,7 +958,7 @@ impl CoasterModel {
             wooden_ejector_g: -0.8,
             hill_pull_g: (self.comfortable_force_limits.maximum_vertical_g - 0.5).min(2.0),
             turn_vertical_g: (self.comfortable_force_limits.maximum_vertical_g - 1.1)
-                .min(1.0 / 75.0_f64.to_radians().cos()),
+                .min(1.0 / crate::math::cos(75.0_f64.to_radians())),
             maximum_bank_degrees: 75.0,
             minimum_turn_radius_m: self.minimum_radius_metres,
             maximum_turn_radius_m: 256.0,
@@ -1156,7 +1156,7 @@ fn solve_hill(
                     available_headroom_g: 0.0,
                 });
             }
-            let energy_height_m = context.entry_speed_mps.powi(2) / (2.0 * GRAVITY);
+            let energy_height_m = crate::math::powi(context.entry_speed_mps, 2) / (2.0 * GRAVITY);
             if height_m >= energy_height_m * 0.9 {
                 return Err(SolveRefusal::Stall {
                     entry_speed_mps: context.entry_speed_mps,
@@ -1258,7 +1258,7 @@ fn solve_hill_analytically(
         // to the element-spec grid, as the design speed is, keeps both builds solving the same hill.
         crest_g = round_element_value(crest_g);
         let target_height_m = fixed_height_m.unwrap_or_else(|| {
-            design_speed_mps.powi(2) / (2.0 * GRAVITY) * HILL_HEIGHT_ENERGY_FRACTION
+            crate::math::powi(design_speed_mps, 2) / (2.0 * GRAVITY) * HILL_HEIGHT_ENERGY_FRACTION
         });
         let (profile, height_m, span_m, flank_angle_degrees) =
             hill_profile_for_height(context, design_speed_mps, crest_g, target_height_m)?;
@@ -1603,10 +1603,8 @@ fn solve_turn(
         });
     }
 
-    let mut peak_bank = target_vertical_g
-        .recip()
-        .acos()
-        .min(rules.maximum_bank_degrees.to_radians());
+    let mut peak_bank =
+        crate::math::acos(target_vertical_g.recip()).min(rules.maximum_bank_degrees.to_radians());
     let mut preview_count = 0_u8;
     if let Some(seed) = preview_seed
         && let ElementSpec::Turn { bank_degrees, .. } = seed.spec
@@ -1629,8 +1627,7 @@ fn solve_turn(
             } else {
                 0.9
             };
-        peak_bank = (bank_degrees.to_radians().tan() * adjustment)
-            .atan()
+        peak_bank = crate::math::atan(crate::math::tan(bank_degrees.to_radians()) * adjustment)
             .min(rules.maximum_bank_degrees.to_radians());
     }
     let mut last_headroom_g = f64::NEG_INFINITY;
@@ -1679,7 +1676,7 @@ fn solve_turn(
             cars: context.train.cars,
             train_length_metres: context.train.length_metres,
             hand,
-            vertical_g: peak_bank.cos().recip(),
+            vertical_g: crate::math::cos(peak_bank).recip(),
             lateral_g: 0.0,
             radius_m,
             bank_degrees,
@@ -1808,8 +1805,7 @@ fn solve_turn(
         } else {
             0.9
         };
-        peak_bank = (peak_bank.tan() * adjustment)
-            .atan()
+        peak_bank = crate::math::atan(crate::math::tan(peak_bank) * adjustment)
             .min(rules.maximum_bank_degrees.to_radians());
     }
     Err(SolveRefusal::InfeasibleTarget {
@@ -1824,12 +1820,13 @@ fn estimated_turn_speed_loss_fraction(
     design_speed_mps: f64,
     peak_bank: f64,
 ) -> f64 {
-    let nominal_radius_m = design_speed_mps.powi(2) / (GRAVITY * peak_bank.tan());
+    let nominal_radius_m =
+        crate::math::powi(design_speed_mps, 2) / (GRAVITY * crate::math::tan(peak_bank));
     let turn_length_estimate_m = std::f64::consts::FRAC_PI_2 * nominal_radius_m;
     let deceleration_mps2 = physics.rolling_resistance * GRAVITY
-        + physics.drag_coefficient * design_speed_mps.powi(2)
+        + physics.drag_coefficient * crate::math::powi(design_speed_mps, 2)
             / (physics.car_mass_kg * f64::from(train.cars));
-    deceleration_mps2 * turn_length_estimate_m / design_speed_mps.powi(2)
+    deceleration_mps2 * turn_length_estimate_m / crate::math::powi(design_speed_mps, 2)
 }
 
 fn turn_radius_grid_step(heading: Heading) -> f64 {
@@ -1851,10 +1848,7 @@ pub(crate) fn automatic_turn_radius_m(
 ) -> f64 {
     let rules = model.shaped_element_rules();
     let design_speed_mps = round_element_value(entry_speed_mps);
-    let peak_bank = rules
-        .turn_vertical_g
-        .recip()
-        .acos()
+    let peak_bank = crate::math::acos(rules.turn_vertical_g.recip())
         .min(rules.maximum_bank_degrees.to_radians());
     let speed_loss_fraction =
         estimated_turn_speed_loss_fraction(physics, train, design_speed_mps, peak_bank);
@@ -2403,7 +2397,7 @@ mod refusal_tests {
         let flank_angle_radians = 30.0_f64.to_radians();
         let result = synthesize_hill_profile(
             20.0,
-            (flank_angle_radians * 0.5).cos(),
+            crate::math::cos(flank_angle_radians * 0.5),
             -0.5,
             flank_angle_radians,
             OfflineTrain::Legacy18MetreEnvelope,
@@ -2447,7 +2441,8 @@ mod provisional_hill_reporting_tests {
                 .at(TrackState::origin())
                 .expect("station starts at the origin"),
         ];
-        let acceleration_distance_m = (speed_mps.powi(2) - physics.station_speed.powi(2))
+        let acceleration_distance_m = (crate::math::powi(speed_mps, 2)
+            - crate::math::powi(physics.station_speed, 2))
             / (2.0 * physics.drive_acceleration);
         let lift_length_m = acceleration_distance_m + model.train.length_metres + 40.0;
         let lift_piece_count = (lift_length_m / straight_template.length()).ceil() as usize;

@@ -158,8 +158,8 @@ pub fn scan_proximity_with_supports(
     let track_index = ClearanceIndex::new(&all_tracks);
     let half_length = train.length_metres / f64::from(train.cars) / 2.0 + SPACING / 2.0;
     let margin = (half_length * half_length
-        + (train.width_metres / 2.0).powi(2)
-        + train.height_metres.powi(2))
+        + crate::math::powi(train.width_metres / 2.0, 2)
+        + crate::math::powi(train.height_metres, 2))
     .sqrt()
         + NEAR_DISTANCE
         + SPACING;

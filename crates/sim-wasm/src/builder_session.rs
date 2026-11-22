@@ -1392,20 +1392,28 @@ mod tests {
 
     #[test]
     fn classic_builder_outputs_keep_the_recorded_digests() {
+        let mut mismatches = Vec::new();
         for (ride_name, model_key, expected_digest) in [
-            ("Timber Tumbler", "hybrid", 0x73087cdb3b38c8d8),
-            ("Velocity Viper", "velocity_viper", 0x4e6fd5b665b3fd97),
-            ("Briar Blitz", "wooden_twister", 0x5b0e22b9c64457d2),
+            ("Timber Tumbler", "hybrid", 0x617cf97a0351d349),
+            ("Velocity Viper", "velocity_viper", 0x60849453c6065369),
+            ("Briar Blitz", "wooden_twister", 0x031f65cd6f01b548),
         ] {
             let commands = circuit_lines(ride_name);
             let actual = session_trace(model_key, &commands);
-            assert_eq!(
-                trace_digest(&actual),
-                expected_digest,
-                "{ride_name}: {}",
-                first_trace_difference(&benchmark_trace(ride_name, model_key, &commands), &actual)
-            );
+            let actual_digest = trace_digest(&actual);
+            if actual_digest != expected_digest {
+                let benchmark = benchmark_trace(ride_name, model_key, &commands);
+                mismatches.push(format!(
+                    "{ride_name}: expected {expected_digest:016x}, got {actual_digest:016x} ({})",
+                    first_trace_difference(&benchmark, &actual)
+                ));
+            }
         }
+        assert!(
+            mismatches.is_empty(),
+            "classic builder digest mismatches:\n{}",
+            mismatches.join("\n")
+        );
     }
 
     fn circuit_lines(ride_name: &str) -> Vec<String> {
@@ -1427,11 +1435,12 @@ mod tests {
 
     #[test]
     fn content_ride_builder_hashes_match_recorded_baselines() {
+        let mut mismatches = Vec::new();
         for (ride_name, ride_json, expected_hash) in [
             (
                 "Briar Blitz",
                 include_str!("../../../content/rides/briar-blitz.ride.json"),
-                0xdea292045568287b,
+                0x3e329638e2e11605,
             ),
             (
                 "Browser agreement fast circuit",
@@ -1441,30 +1450,40 @@ mod tests {
             (
                 "Daisy Dash",
                 include_str!("../../../content/rides/daisy-dash.ride.json"),
-                0xd7c7960cb1c46f50,
+                0xfb8a81db47d7006f,
             ),
             (
                 "Horizon Hawk",
                 include_str!("../../../content/rides/horizon-hawk.ride.json"),
-                0x4a320e535b59d6c1,
+                0x0e2b676b7c0035c6,
             ),
             (
                 "Timber Tumbler",
                 include_str!("../../../content/rides/timber-tumbler.ride.json"),
-                0xc6d856a79f89e7f1,
+                0x3c87cd475133b78a,
             ),
             (
                 "Velocity Viper",
                 include_str!("../../../content/rides/velocity-viper.ride.json"),
-                0x5bedae3ca8d6ae35,
+                0x89125ac1c28a0e87,
             ),
         ] {
             let ride: RideFile = serde_json::from_str(ride_json).unwrap();
             assert_eq!(ride.name, ride_name);
             let mut session = BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
             session.replay_ride(&ride).unwrap();
-            assert_eq!(session.state_hash(), expected_hash, "{ride_name}");
+            let actual_hash = session.state_hash();
+            if actual_hash != expected_hash {
+                mismatches.push(format!(
+                    "{ride_name}: expected {expected_hash:016x}, got {actual_hash:016x}"
+                ));
+            }
         }
+        assert!(
+            mismatches.is_empty(),
+            "content ride hash mismatches:\n{}",
+            mismatches.join("\n")
+        );
     }
 
     #[test]
@@ -1474,7 +1493,7 @@ mod tests {
             (
                 "Briar Blitz",
                 include_str!("../../../content/rides/briar-blitz.ride.json"),
-                0xa881b24133654438,
+                0xa99bda1b85545fc5,
             ),
             (
                 "Browser agreement fast circuit",
@@ -1484,22 +1503,22 @@ mod tests {
             (
                 "Daisy Dash",
                 include_str!("../../../content/rides/daisy-dash.ride.json"),
-                0xb0560e95b1b49d66,
+                0xbfe5cfa6d9cccb08,
             ),
             (
                 "Horizon Hawk",
                 include_str!("../../../content/rides/horizon-hawk.ride.json"),
-                0x12060b4d3394f30a,
+                0xebac317ca5ea9094,
             ),
             (
                 "Timber Tumbler",
                 include_str!("../../../content/rides/timber-tumbler.ride.json"),
-                0x5a85ded8b26ac5e7,
+                0x560dacb6c8784e98,
             ),
             (
                 "Velocity Viper",
                 include_str!("../../../content/rides/velocity-viper.ride.json"),
-                0x2ab59be614c4dc36,
+                0x994a289f0ef21433,
             ),
         ] {
             let ride: RideFile = serde_json::from_str(ride_json).unwrap();
@@ -1863,6 +1882,9 @@ mod tests {
                     actual_output,
                 );
             }
+        }
+        if expected.len() == actual.len() {
+            return "traces match".into();
         }
         format!(
             "trace lengths differ: expected {}, got {}",

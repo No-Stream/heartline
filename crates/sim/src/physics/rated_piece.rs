@@ -1167,7 +1167,7 @@ fn required_start_speed_squared(
     target_distance: f64,
     target_speed: f64,
 ) -> f64 {
-    target_speed.powi(2)
+    crate::math::powi(target_speed, 2)
         + 2.0
             * super::GRAVITY
             * (average_train_height(circuit, configuration, target_distance)

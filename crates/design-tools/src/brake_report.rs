@@ -281,8 +281,9 @@ fn lift_energy_removed_share(
         if interval_distance > MAX_SAMPLED_GAP_METRES {
             return None;
         }
-        let current_energy = current.speed.powi(2) / 2.0 + GRAVITY * current.height_m;
-        let next_energy = next.speed.powi(2) / 2.0 + GRAVITY * next.height_m;
+        let current_energy =
+            theme_park_sim::math::powi(current.speed, 2) / 2.0 + GRAVITY * current.height_m;
+        let next_energy = theme_park_sim::math::powi(next.speed, 2) / 2.0 + GRAVITY * next.height_m;
 
         let interval_start = current.distance.rem_euclid(circuit.length());
         let mut interval_offset = 0.0;
@@ -303,8 +304,10 @@ fn lift_energy_removed_share(
             let segment_end_energy = current_energy + (next_energy - current_energy) * end_fraction;
             let start_speed = current.speed + (next.speed - current.speed) * start_fraction;
             let end_speed = current.speed + (next.speed - current.speed) * end_fraction;
-            let mean_squared_speed =
-                (start_speed.powi(2) + start_speed * end_speed + end_speed.powi(2)) / 3.0;
+            let mean_squared_speed = (theme_park_sim::math::powi(start_speed, 2)
+                + start_speed * end_speed
+                + theme_park_sim::math::powi(end_speed, 2))
+                / 3.0;
             let passive_resistance_acceleration = physics.rolling_resistance * GRAVITY
                 + physics.drag_coefficient * mean_squared_speed / total_train_mass_kg;
             let passive_resistance_energy = passive_resistance_acceleration * segment_distance;
