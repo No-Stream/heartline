@@ -96,6 +96,8 @@ fn build_catalog() -> Vec<Piece> {
         LazyLock::new(|| Arc::new(embedded_profile("WideSixtyCrest")));
     static WIDE_SIXTY_PULL: LazyLock<Arc<SolvedProfile>> =
         LazyLock::new(|| Arc::new(embedded_profile("WideSixtyPull")));
+    static GIGA_SIXTY_PULL: LazyLock<Arc<SolvedProfile>> =
+        LazyLock::new(|| Arc::new(embedded_profile("GigaSixtyPull")));
     let standard_loop_exit_x = (LOOP_PROFILE.endpoint()[0] / 2.0).round() as i32;
     let definitions = [
         (
@@ -240,6 +242,19 @@ fn build_catalog() -> Vec<Piece> {
             FlatBank,
             FlatBank,
             Shape::Profile(Arc::clone(&WIDE_SIXTY_PULL)),
+        ),
+        (
+            GigaSixtyDownToLevel,
+            "Giga level-out from 60-degree descent",
+            (GIGA_SIXTY_PULL.endpoint()[0] / 2.0).round() as i32,
+            0,
+            -(GIGA_SIXTY_PULL.endpoint()[1] / 2.0).round() as i32,
+            East,
+            DownSixty,
+            Level,
+            FlatBank,
+            FlatBank,
+            Shape::Profile(Arc::clone(&GIGA_SIXTY_PULL)),
         ),
         (
             SteepToSixtyUp,
@@ -819,6 +834,12 @@ fn build_catalog() -> Vec<Piece> {
                             minimum_entry: 2.0,
                             maximum_entry: (crate::math::powi(38.5_f64, 2)
                                 - 2.0 * 9.81 * WIDE_SIXTY_PULL.endpoint()[1])
+                                .sqrt(),
+                        }),
+                        GigaSixtyDownToLevel => Some(RatedSpeeds {
+                            minimum_entry: 2.0,
+                            maximum_entry: (crate::math::powi(42.0_f64, 2)
+                                - 2.0 * 9.81 * GIGA_SIXTY_PULL.endpoint()[1])
                                 .sqrt(),
                         }),
                         SixtyDownToLevel => Some(RatedSpeeds {

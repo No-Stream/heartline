@@ -1346,7 +1346,7 @@ pub fn family_coaster_model() -> CoasterModel {
 const HYPER_SHAPED_PROFILE: crate::track::shaped::ShapedProfile =
     crate::track::shaped::ShapedProfile {
         minimum_speed_mps: 22.0,
-        maximum_speed_mps: 36.0,
+        maximum_speed_mps: 44.0,
         minimum_cars: 4,
         maximum_cars: 8,
         default_floater_g: -0.5,
@@ -1407,6 +1407,7 @@ pub fn hyper_model() -> CoasterModel {
                 SixtyDownToLevel,
                 WideLevelToSixtyDown,
                 WideSixtyDownToLevel,
+                GigaSixtyDownToLevel,
                 SteepToSixtyDown,
                 SixtyDown,
                 SixtyToSteepDown,

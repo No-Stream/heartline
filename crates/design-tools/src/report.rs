@@ -8,8 +8,8 @@ use theme_park_sim::physics::{
 };
 use theme_park_sim::track::ride_file::{RideFile, RideStep};
 use theme_park_sim::track::{
-    CoasterModel, DesignForceTargets, PieceKind, feel_rated_speeds, rated_speed_margin,
-    rated_speeds,
+    CoasterModel, DesignForceTargets, Piece, PieceKind, RatedSpeeds, feel_rated_speeds,
+    rated_speed_margin, rated_speeds,
 };
 
 pub(crate) type ShapedElementEntrySpeeds = BTreeMap<usize, (Option<f64>, Option<f64>)>;
@@ -605,9 +605,7 @@ pub(crate) fn rated_speed_margins(
         .iter()
         .enumerate()
         .filter_map(|(piece_index, piece)| {
-            feel_rated_speeds(model, piece)
-                .or_else(|| rated_speeds(model, piece))
-                .map(|window| (piece_index, piece, window))
+            design_rated_speeds(model, piece).map(|window| (piece_index, piece, window))
         })
         .collect();
     if rated_pieces.is_empty() {
@@ -718,6 +716,10 @@ pub(crate) fn rated_speed_margins(
         }
     }
     Ok(margins)
+}
+
+pub(crate) fn design_rated_speeds(model: &CoasterModel, piece: &Piece) -> Option<RatedSpeeds> {
+    feel_rated_speeds(model, piece).or_else(|| rated_speeds(model, piece))
 }
 
 pub(crate) fn rated_speed_margin_report(

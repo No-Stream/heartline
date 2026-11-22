@@ -2727,6 +2727,139 @@ mod provisional_hill_reporting_tests {
 }
 
 #[cfg(test)]
+mod hyper_high_speed_tests {
+    use super::{
+        ElementIntent, ElementSpec, HillSizeHint, SolveContext, TurnSizeHint, calibrate_piece,
+        candidate_passes_force_budget, solve,
+    };
+    use crate::physics::{PhysicsConfig, PreviewCache, PreviewStatus};
+    use crate::track::{
+        CoasterModel, Hand, HillFeel, Piece, PieceId, PieceKind, TrackState, catalog, hyper_model,
+    };
+
+    fn high_speed_approach(speed_mps: f64) -> (CoasterModel, PhysicsConfig, Vec<Piece>) {
+        let model = hyper_model();
+        assert_eq!(
+            model
+                .shaped_profile
+                .expect("hyper model supports shaped pieces")
+                .maximum_speed_mps,
+            44.0
+        );
+        let physics = PhysicsConfig {
+            lift_speed: speed_mps,
+            ..PhysicsConfig::default()
+        };
+        let templates = catalog();
+        let station_template = templates
+            .iter()
+            .find(|piece| piece.id == PieceId::Station)
+            .expect("catalog includes a station");
+        let straight_template = templates
+            .iter()
+            .find(|piece| piece.id == PieceId::Straight)
+            .expect("catalog includes straight track");
+        let mut prefix = vec![
+            station_template
+                .at(TrackState::origin())
+                .expect("station starts at the origin"),
+        ];
+        let acceleration_distance_m = (crate::math::powi(speed_mps, 2)
+            - crate::math::powi(physics.station_speed, 2))
+            / (2.0 * physics.drive_acceleration);
+        let lift_length_m = acceleration_distance_m + model.train.length_metres + 40.0;
+        let lift_piece_count = (lift_length_m / straight_template.length()).ceil() as usize;
+        for _ in 0..lift_piece_count {
+            let mut lift = straight_template
+                .at(prefix.last().expect("prefix has a station").exit)
+                .expect("straight pieces connect");
+            lift.kind = PieceKind::Lift;
+            prefix.push(lift);
+        }
+        (model, physics, prefix)
+    }
+
+    #[test]
+    fn hyper_shaped_hill_solves_at_41_mps_with_force_headroom() {
+        let speed_mps = 41.0;
+        let (model, physics, prefix) = high_speed_approach(speed_mps);
+        let entry = prefix.last().expect("prefix has a lift").exit;
+        let intent = ElementIntent::Hill {
+            feel: HillFeel::Floater,
+            strength_g: -0.5,
+            size: HillSizeHint::Auto,
+        };
+        let mut preview_cache = PreviewCache::default();
+        let entry_preview = preview_cache
+            .preview(&prefix, &model, physics)
+            .expect("approach preview is available");
+        assert_eq!(entry_preview.status, PreviewStatus::ReachedEnd);
+        assert!((entry_preview.end_speed_mps.expect("speed is measured") - speed_mps).abs() < 0.01);
+        let mut context = SolveContext {
+            entry,
+            entry_speed_mps: speed_mps,
+            model: &model,
+            train: &model.train,
+            prefix: &prefix,
+            preview_cache: &mut preview_cache,
+            physics,
+        };
+
+        let solved = solve(&intent, &mut context).expect("hyper hill solves at 41 m/s");
+        assert!(matches!(solved.spec, ElementSpec::Hill { .. }));
+        assert!(!solved.exceeds_model_feel);
+        let calibrated = calibrate_piece(&mut context, &solved.piece)
+            .expect("solved hill remains within train force limits");
+        let (passes_budget, headroom_g) =
+            candidate_passes_force_budget(&model, &calibrated.cars, true);
+        assert!(
+            passes_budget,
+            "all train cars pass with {headroom_g:.3} g headroom"
+        );
+        assert!(headroom_g >= 0.25);
+    }
+
+    #[test]
+    fn hyper_shaped_turn_solves_at_41_mps_with_force_headroom() {
+        let speed_mps = 41.0;
+        let (model, physics, prefix) = high_speed_approach(speed_mps);
+        let entry = prefix.last().expect("prefix has a lift").exit;
+        let intent = ElementIntent::Turn {
+            hand: Hand::Left,
+            size: TurnSizeHint::Auto,
+        };
+        let mut preview_cache = PreviewCache::default();
+        let entry_preview = preview_cache
+            .preview(&prefix, &model, physics)
+            .expect("approach preview is available");
+        assert_eq!(entry_preview.status, PreviewStatus::ReachedEnd);
+        assert!((entry_preview.end_speed_mps.expect("speed is measured") - speed_mps).abs() < 0.01);
+        let mut context = SolveContext {
+            entry,
+            entry_speed_mps: speed_mps,
+            model: &model,
+            train: &model.train,
+            prefix: &prefix,
+            preview_cache: &mut preview_cache,
+            physics,
+        };
+
+        let solved = solve(&intent, &mut context).expect("hyper turn solves at 41 m/s");
+        assert!(matches!(solved.spec, ElementSpec::Turn { .. }));
+        assert!(!solved.exceeds_model_feel);
+        let calibrated = calibrate_piece(&mut context, &solved.piece)
+            .expect("solved turn remains within train force limits");
+        let (passes_budget, headroom_g) =
+            candidate_passes_force_budget(&model, &calibrated.cars, true);
+        assert!(
+            passes_budget,
+            "all train cars pass with {headroom_g:.3} g headroom"
+        );
+        assert!(headroom_g >= 0.25);
+    }
+}
+
+#[cfg(test)]
 mod turn_radius_guard_tests {
     use super::*;
 

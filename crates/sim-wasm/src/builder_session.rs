@@ -1475,7 +1475,7 @@ mod tests {
             (
                 "Horizon Hawk",
                 include_str!("../../../content/rides/horizon-hawk.ride.json"),
-                0x0e2b676b7c0035c6,
+                0x1add1cb41ea463dc,
             ),
             (
                 "Timber Tumbler",
@@ -1528,7 +1528,7 @@ mod tests {
             (
                 "Horizon Hawk",
                 include_str!("../../../content/rides/horizon-hawk.ride.json"),
-                0x948e8076fab83fdd,
+                0x716afad6b2e24312,
             ),
             (
                 "Timber Tumbler",

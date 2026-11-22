@@ -399,6 +399,7 @@ pub enum PieceId {
     ShapedHill,
     ShapedTurnLeft,
     ShapedTurnRight,
+    GigaSixtyDownToLevel,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PieceKind {
