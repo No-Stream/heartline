@@ -481,7 +481,86 @@ test("shows and places a shaped floater hill and fully banked turn on a hyper co
   await expect(track).toHaveCount(8);
   await expect(track.nth(7).locator(".track-chip__name")).toHaveText("Shaped banked turn left");
   await expect(track.nth(7).locator("svg.piece-icon")).toBeVisible();
+
+  await choices.locator('[data-piece="shape:hill:ejector:default:auto"]').click();
+  await expect(selected).toHaveAttribute("data-selected", "shape:hill:ejector:-1.2:auto");
+  await expect(readout.locator(".builder__shape-feel-note")).toHaveText("Within the comfort envelope, stronger than a typical Horizon Hawk.");
+  await expect(placePiece).toBeEnabled();
 });
+
+for (const modelCase of [
+  {
+    key: "velocity_viper",
+    label: "Velocity Viper",
+    stationHeight: "56",
+    dropPieces: ["LevelToGentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDownToLevel"],
+    hillChoice: "shape:hill:floater:default:auto",
+    expectedHillId: "shape:hill:floater:-0.5:auto",
+  },
+  {
+    key: "hybrid",
+    label: "Timber Tumbler",
+    stationHeight: "56",
+    dropPieces: ["LevelToGentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDownToLevel"],
+    hillChoice: "shape:hill:ejector:default:auto",
+    expectedHillId: "shape:hill:ejector:-1.05:auto",
+  },
+  {
+    key: "wooden_twister",
+    label: "Briar Blitz",
+    stationHeight: "48",
+    dropPieces: ["LevelToGentleDown", "GentleDown", "GentleDown", "GentleDownToLevel"],
+    hillChoice: "shape:hill:floater:default:auto",
+    expectedHillId: "shape:hill:floater:-0.5:auto",
+  },
+] as const) {
+  test(`places shaped hill and turn on ${modelCase.label} @fast`, async ({ page }) => {
+    await page.goto("/?test=1");
+    await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+    await openTool(page, "Coaster");
+    await selectUnits(page, "metric");
+    await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
+    await page.locator(".builder select[data-model]").selectOption(`model:${modelCase.key}`);
+    await page.getByLabel("Station height above ground (metres)").fill(modelCase.stationHeight);
+    await page.getByLabel("Station height above ground (metres)").press("Tab");
+    await page.getByRole("button", { name: "Place station" }).click();
+    for (const point of [{ x: 50.5, y: 50.5, z: 2 }, { x: 52.5, y: 50.5, z: 2 }]) {
+      const position = await page.evaluate((worldPoint) => window.gameTest.project(worldPoint), point);
+      await moveOverCanvas(page, position);
+      await clickCanvas(page, position);
+    }
+
+    const track = page.locator("[data-track] li");
+    const choices = page.getByRole("radiogroup", { name: "Next piece" });
+    const placePiece = page.getByRole("button", { name: "Place piece" });
+    const selected = page.locator("[data-construction]");
+    for (const [index, pieceId] of modelCase.dropPieces.entries()) {
+      await choices.locator(`[data-piece="${pieceId}"]`).click();
+      await expect(selected).toHaveAttribute("data-selected", pieceId);
+      await placePiece.click();
+      await expect(track).toHaveCount(index + 2);
+    }
+
+    const baseTrackCount = modelCase.dropPieces.length + 1;
+    const readout = page.locator("[data-shape-readout]");
+    await choices.locator(`[data-piece="${modelCase.hillChoice}"]`).click();
+    await expect(selected).toHaveAttribute("data-selected", modelCase.expectedHillId);
+    await expect(readout).toContainText("Design speed:");
+    await expect(readout.locator(".builder__shape-feel-note")).toHaveCount(0);
+    await expect(placePiece).toBeEnabled();
+    await placePiece.click();
+    await expect(track).toHaveCount(baseTrackCount + 1);
+    await expect(track.nth(baseTrackCount).locator(".track-chip__name")).toHaveText("Shaped airtime hill");
+
+    await choices.locator('[data-piece="shape:turn:left:fullyBanked:auto"]').click();
+    await expect(selected).toHaveAttribute("data-selected", "shape:turn:left:fullyBanked:auto");
+    await expect(readout).toContainText("Lateral force at design speed:");
+    await expect(placePiece).toBeEnabled();
+    await placePiece.click();
+    await expect(track).toHaveCount(baseTrackCount + 2);
+    await expect(track.nth(baseTrackCount + 1).locator(".track-chip__name")).toHaveText("Shaped banked turn left");
+  });
+}
 
 test("turns after a drop default to the bank for the predicted speed, and the bank stepper overrides it @fast", async ({ page }) => {
   await page.goto("/?test=1");

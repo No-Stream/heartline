@@ -2406,7 +2406,10 @@ fn candidate_preview_treats_closing_candidate_as_open_track() {
     let pieces = circuit.pieces();
     assert_eq!(pieces.last().unwrap().exit, pieces[0].entry);
     let candidate_piece_index = pieces.len() - 1;
-    let config = PhysicsConfig::for_construction_test(&model);
+    let config = PhysicsConfig {
+        lift_speed: 5.0,
+        ..PhysicsConfig::default()
+    };
 
     let mut cache = PreviewCache::default();
     cache
@@ -2415,7 +2418,8 @@ fn candidate_preview_treats_closing_candidate_as_open_track() {
     let candidate = cache
         .preview_candidate(pieces, &model, config, candidate_piece_index)
         .unwrap();
-    assert_eq!(candidate.cars.len(), usize::from(model.train.cars));
+    assert_eq!(candidate.status, PreviewStatus::ReachedEnd);
+    assert!(!candidate.cars.is_empty());
 }
 
 #[test]

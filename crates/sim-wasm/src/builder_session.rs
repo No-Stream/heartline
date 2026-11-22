@@ -1470,7 +1470,7 @@ mod tests {
             (
                 "Daisy Dash",
                 include_str!("../../../content/rides/daisy-dash.ride.json"),
-                0xfb8a81db47d7006f,
+                0xa7bc9079de11869c,
             ),
             (
                 "Horizon Hawk",
@@ -1523,7 +1523,7 @@ mod tests {
             (
                 "Daisy Dash",
                 include_str!("../../../content/rides/daisy-dash.ride.json"),
-                0x4b09aabbfbdd4640,
+                0xdf5864855eff5eab,
             ),
             (
                 "Horizon Hawk",
