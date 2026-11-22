@@ -127,7 +127,6 @@ impl WasmSimulation {
             selected: None,
             selected_shape: None,
             selected_element: None,
-            construction_undo_groups: Vec::new(),
             construction_completion: None,
             construction_completion_available: Vec::new(),
             construction_completion_index: 0,
@@ -433,7 +432,10 @@ impl WasmSimulation {
         };
         let result = self
             .park
-            .apply_terrain(terrain_command, self.selected)
+            .apply_terrain(
+                terrain_command,
+                self.editing_coaster_id().zip(self.selected),
+            )
             .map_err(CommandError::from);
         let Some(result) = record_command_result(result, &mut self.terrain_message, false) else {
             return false;
@@ -485,7 +487,7 @@ impl WasmSimulation {
     pub fn construction_message(&self) -> String {
         if self.construction_message.is_empty() {
             self.editing_coaster()
-                .and_then(|coaster| coaster.construction_outcome.clone())
+                .map(|coaster| coaster.construction_message.clone())
                 .unwrap_or_default()
         } else {
             self.construction_message.clone()

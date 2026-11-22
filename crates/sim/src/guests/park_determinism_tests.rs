@@ -6,7 +6,7 @@ use crate::guests::GuestId;
 use crate::guests::park::ParkGuests;
 use crate::park::tick::COASTER_PLACE_ID;
 use crate::park::{CoasterId, Park};
-use crate::physics::{BlockOperation, PhysicsConfig, Train};
+use crate::physics::{BlockOperation, PhysicsConfig, Train, demo_circuit};
 use crate::track::blocks::BlockLayout;
 use crate::track::hybrid_model;
 use crate::world::Surface;
@@ -81,12 +81,19 @@ fn replay<E: Executor<WalkingGuest>>(executor: &E) -> Replay {
             .place_on_path(GuestId(guest_index as u32), queue_entry);
     }
 
-    let demo_train = Train::new(&circuit, &train_configuration, physics_config, 0.0, 0.0);
+    let demo_circuit = demo_circuit();
+    let demo_train = Train::new(
+        &demo_circuit,
+        &train_configuration,
+        physics_config,
+        0.0,
+        0.0,
+    );
     let mut park = Park::new(
         world,
         ParkFacilities::new(),
         simulation,
-        circuit,
+        demo_circuit,
         demo_train,
         train_configuration,
     );

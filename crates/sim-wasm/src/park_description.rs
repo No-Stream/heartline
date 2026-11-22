@@ -202,12 +202,6 @@ impl WasmSimulation {
                 },
             )
             .collect::<Result<Vec<_>, _>>()?;
-        if coasters.len() > 1 {
-            return Err(ParkDescriptionError::Invalid(
-                "this build supports one player coaster per park".into(),
-            ));
-        }
-
         let mut simulation = Self::new(seed, 0, "new".into());
         if !simulation.remove_facility(0) {
             return Err(ParkDescriptionError::Invalid(
@@ -238,7 +232,7 @@ impl WasmSimulation {
             }
         }
 
-        let mut coaster_should_open = false;
+        let mut coaster_open_flags = Vec::with_capacity(coasters.len());
         for (index, coaster) in coasters.into_iter().enumerate() {
             if coaster.ride.station.z != coaster.station.z {
                 return Err(entry_error(
@@ -252,6 +246,7 @@ impl WasmSimulation {
             }
             let mut ride = coaster.ride;
             ride.station = coaster.station;
+            simulation.coaster_stop_editing();
             let mut session = BuilderSession::new(simulation);
             session
                 .replay_ride(&ride)
@@ -260,7 +255,11 @@ impl WasmSimulation {
                 .set_price(coaster.price)
                 .map_err(|error| entry_error("coasters", index, error.to_string()))?;
             simulation = session.into_simulation();
-            coaster_should_open = coaster.open;
+            let id = simulation
+                .editing_coaster_id()
+                .expect("replaying a ride creates its coaster");
+            coaster_open_flags.push((id, coaster.open));
+            simulation.coaster_stop_editing();
         }
 
         for (index, path) in paths.iter().enumerate() {
@@ -329,12 +328,30 @@ impl WasmSimulation {
             }
         }
 
-        if coaster_should_open && !simulation.construction_set_open(true) {
-            return Err(entry_error(
-                "coasters",
-                0,
-                simulation.construction_message(),
-            ));
+        for (index, (id, open)) in coaster_open_flags.iter().copied().enumerate() {
+            if !simulation.coaster_set_open(id.0, open) {
+                return Err(entry_error(
+                    "coasters",
+                    index,
+                    simulation.construction_message(),
+                ));
+            }
+        }
+
+        // Keep the legacy "player" ride key bound to the last described coaster.
+        if let Some((last_coaster_id, last_coaster_open)) = coaster_open_flags.last().copied() {
+            let last_coaster_index = coaster_open_flags.len() - 1;
+            assert!(
+                simulation.coaster_edit(last_coaster_id.0),
+                "last described coaster still exists"
+            );
+            if last_coaster_open && !simulation.coaster_set_open(last_coaster_id.0, true) {
+                return Err(entry_error(
+                    "coasters",
+                    last_coaster_index,
+                    simulation.construction_message(),
+                ));
+            }
         }
 
         let entrance_path = simulation
@@ -478,25 +495,40 @@ mod tests {
     }
 
     #[test]
-    fn descriptions_reject_more_than_one_coaster_before_replaying_either() {
+    fn descriptions_load_multiple_coasters_and_select_the_last_one() {
         let mut description = park_description();
-        let coaster = json!({
+        let first_coaster = json!({
             "ride": ride_file(),
             "station": {"x": 241, "y": 249, "z": 12, "heading": "north"},
             "open": false,
             "price": 6
         });
-        description["coasters"] = json!([coaster.clone(), coaster]);
+        let second_coaster = json!({
+            "ride": ride_file(),
+            "station": {"x": 300, "y": 300, "z": 12, "heading": "east"},
+            "open": false,
+            "price": 8
+        });
+        description["coasters"] = json!([first_coaster, second_coaster]);
         let json = serde_json::to_string(&description).unwrap();
 
-        let error = WasmSimulation::from_park_description(17, 0, &json)
-            .err()
-            .unwrap();
+        let simulation = WasmSimulation::from_park_description(17, 0, &json).unwrap();
+        let coasters: Value = serde_json::from_str(&simulation.coasters_json()).unwrap();
 
-        assert!(
-            error
-                .to_string()
-                .contains("this build supports one player coaster per park")
+        assert_eq!(coasters.as_array().unwrap().len(), 2);
+        assert_eq!(coasters[0]["id"], 0);
+        assert_eq!(coasters[1]["id"], 1);
+        assert_eq!(simulation.editing_coaster_id().unwrap().0, 1);
+        assert_eq!(
+            simulation
+                .editing_construction()
+                .unwrap()
+                .pieces()
+                .first()
+                .unwrap()
+                .entry
+                .x,
+            600
         );
     }
 

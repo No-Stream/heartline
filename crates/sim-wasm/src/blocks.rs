@@ -12,14 +12,59 @@ impl WasmSimulation {
     /// Advance pending block analysis by at most the requested number of physics steps.
     /// Returns true once analysis has finished. Large requests are capped per call.
     pub fn construction_advance_block_analysis(&mut self, work_steps: u32) -> bool {
-        let (complete, error) = self.editing_coaster_id().map_or((true, None), |id| {
-            self.park
-                .construction_advance_block_analysis(id, work_steps)
-        });
-        if let Some(error) = error {
-            self.record_block_error(error);
+        let budget = work_steps.min(1_000);
+        let editing_id = self.editing_coaster_id();
+        let mut coaster_ids = Vec::new();
+        if let Some(id) = editing_id {
+            coaster_ids.push(id);
         }
-        complete
+        coaster_ids.extend(
+            self.park
+                .coasters()
+                .map(|(id, _)| id)
+                .filter(|id| Some(*id) != editing_id),
+        );
+
+        let mut remaining_budget = budget;
+        for id in coaster_ids {
+            if remaining_budget == 0 {
+                if self.coaster_has_pending_block_analysis(id) {
+                    let (_, error, work_used) = self
+                        .park
+                        .construction_advance_block_analysis_with_budget(id, 0);
+                    assert_eq!(work_used, 0, "zero-budget block analysis used work");
+                    if let Some(error) = error {
+                        self.record_block_error_for_coaster(Some(id), error);
+                        return self.park.coasters().all(|(coaster_id, _)| {
+                            !self.coaster_has_pending_block_analysis(coaster_id)
+                        });
+                    }
+                }
+                continue;
+            }
+            while remaining_budget > 0 && self.coaster_has_pending_block_analysis(id) {
+                let (complete, error, work_used) = self
+                    .park
+                    .construction_advance_block_analysis_with_budget(id, remaining_budget);
+                assert!(
+                    work_used <= remaining_budget,
+                    "block analysis exceeded its budget"
+                );
+                remaining_budget -= work_used;
+                if let Some(error) = error {
+                    self.record_block_error_for_coaster(Some(id), error);
+                    return self.park.coasters().all(|(coaster_id, _)| {
+                        !self.coaster_has_pending_block_analysis(coaster_id)
+                    });
+                }
+                if complete || work_used == 0 {
+                    break;
+                }
+            }
+        }
+        self.park
+            .coasters()
+            .all(|(id, _)| !self.coaster_has_pending_block_analysis(id))
     }
 
     pub fn construction_auto_blocks(&mut self) -> bool {
@@ -305,11 +350,27 @@ impl WasmSimulation {
         &mut self,
         error: theme_park_sim::park::block_analysis::BlockCommandError,
     ) {
+        self.record_block_error_for_coaster(self.editing_coaster_id(), error);
+    }
+
+    fn record_block_error_for_coaster(
+        &mut self,
+        id: Option<CoasterId>,
+        error: theme_park_sim::park::block_analysis::BlockCommandError,
+    ) {
         let message = crate::command_errors::command_error_message(CommandError::Block(error));
-        if let Some(coaster) = self.editing_coaster_mut() {
+        if let Some(coaster) = id.and_then(|id| self.park.coaster_mut(id)) {
             coaster.block_message = message.to_owned();
         }
         self.park.construction_message = message.to_owned();
+    }
+
+    fn coaster_has_pending_block_analysis(&self, id: CoasterId) -> bool {
+        self.park.coaster(id).is_some_and(|coaster| {
+            coaster.block_manual_search.is_some()
+                || coaster.block_placement_search.is_some()
+                || coaster.block_throughput_estimator.is_some()
+        })
     }
 
     fn record_block_result(

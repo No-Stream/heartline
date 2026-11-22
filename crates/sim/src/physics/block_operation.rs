@@ -169,6 +169,30 @@ impl BlockOperation {
             .map(|train| (train.id, train.run.train()))
     }
 
+    pub fn train_positions(&self) -> Vec<TrainPosition> {
+        let cars = usize::from(self.configuration.cars);
+        self.trains
+            .iter()
+            .flat_map(|operating_train| {
+                let train = operating_train.run.train();
+                (0..cars).map(move |car| {
+                    let distance = (train.distance()
+                        - car as f64 * self.configuration.length_metres
+                            / f64::from(self.configuration.cars))
+                    .rem_euclid(self.circuit.length());
+                    let sample = self.circuit.sample(distance);
+                    TrainPosition {
+                        position: sample.position,
+                        tangent: sample.tangent,
+                        piece_index: self.circuit.piece_index(distance),
+                        distance,
+                        speed: train.speed().abs(),
+                    }
+                })
+            })
+            .collect()
+    }
+
     /// A fixed-point wait exists only when every stopped train is held at a
     /// brake by a section physically occupied by another stopped train.
     pub(crate) fn is_deadlocked(&self) -> bool {

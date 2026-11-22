@@ -1,6 +1,6 @@
 use crate::facilities::{FacilityKind, ParkFacilities, PlacementError};
 use crate::guests::park::ParkGuests;
-use crate::park::{Park, commands::ParkCommandError};
+use crate::park::{CoasterId, Park, commands::ParkCommandError};
 use crate::physics::{PhysicsConfig, Train, demo_circuit};
 use crate::track::clearance::TunnelPlan;
 use crate::track::construction::Construction;
@@ -157,13 +157,14 @@ fn tunnel_restore_keeps_shared_cells_until_the_last_piece_is_removed() {
     let mut park = empty_park(world);
     let original_hash = park.world.state_hash();
 
-    park.carve_for_construction(&[(0, plan.clone())]).unwrap();
+    park.carve_for_coaster(CoasterId(0), &[(0, plan.clone())])
+        .unwrap();
     let carved_hash = park.world.state_hash();
     assert_ne!(carved_hash, original_hash);
-    park.carve_for_construction(&[(1, plan)]).unwrap();
-    park.restore_tunnel_piece(0);
+    park.carve_for_coaster(CoasterId(1), &[(0, plan)]).unwrap();
+    park.restore_tunnel_piece_for_coaster(CoasterId(0), 0);
     assert_eq!(park.world.state_hash(), carved_hash);
-    park.restore_tunnel_piece(1);
+    park.restore_tunnel_piece_for_coaster(CoasterId(1), 0);
     assert_eq!(park.world.state_hash(), original_hash);
 }
 
@@ -177,7 +178,8 @@ fn placing_track_carves_exactly_the_clearance_cells_in_its_tunnel_plan() {
         .flat_map(|(x, y, bottom, top)| (bottom..top).map(move |height| (x, y, height)))
         .collect();
 
-    park.carve_for_construction(&[(0, plan.clone())]).unwrap();
+    park.carve_for_coaster(CoasterId(0), &[(0, plan.clone())])
+        .unwrap();
 
     let after: BTreeSet<_> = park
         .world
@@ -219,8 +221,8 @@ fn hand_carved_tunnel_cells_are_not_claimed_or_refilled() {
     let mut park = empty_park(world);
     let hand_carved_hash = park.world.state_hash();
 
-    park.carve_for_construction(&[(0, plan)]).unwrap();
-    park.restore_tunnel_piece(0);
+    park.carve_for_coaster(CoasterId(0), &[(0, plan)]).unwrap();
+    park.restore_tunnel_piece_for_coaster(CoasterId(0), 0);
 
     assert_eq!(park.world.state_hash(), hand_carved_hash);
 }
@@ -230,7 +232,8 @@ fn manual_carve_inside_an_automatic_tunnel_survives_piece_deletion() {
     let (world, plan) = tunnel_fixture();
     let mut park = empty_park(world);
     let original_hash = park.world.state_hash();
-    park.carve_for_construction(&[(0, plan.clone())]).unwrap();
+    park.carve_for_coaster(CoasterId(0), &[(0, plan.clone())])
+        .unwrap();
     let min_x = plan.carve_cells.iter().map(|cell| cell.x).min().unwrap();
     let max_x = plan.carve_cells.iter().map(|cell| cell.x).max().unwrap();
     let min_y = plan.carve_cells.iter().map(|cell| cell.y).min().unwrap();
@@ -257,7 +260,7 @@ fn manual_carve_inside_an_automatic_tunnel_survives_piece_deletion() {
         .unwrap();
     let manual_carve_hash = park.world.state_hash();
 
-    park.restore_tunnel_piece(0);
+    park.restore_tunnel_piece_for_coaster(CoasterId(0), 0);
 
     assert_eq!(park.world.state_hash(), manual_carve_hash);
     park.apply_terrain(TerrainCommand::Fill { area, bottom, top }, None)
@@ -276,8 +279,9 @@ fn manual_carve_inside_an_automatic_tunnel_survives_piece_deletion() {
     let next_plan = construction
         .tunnel_plan(PieceId::LevelToGentleDown, &park.world, &[])
         .unwrap();
-    park.carve_for_construction(&[(1, next_plan)]).unwrap();
-    park.restore_tunnel_piece(1);
+    park.carve_for_coaster(CoasterId(1), &[(1, next_plan)])
+        .unwrap();
+    park.restore_tunnel_piece_for_coaster(CoasterId(1), 1);
     assert_eq!(park.world.state_hash(), original_hash);
 }
 
@@ -287,9 +291,11 @@ fn identical_tunnel_commands_produce_identical_park_hashes() {
     let mut first = empty_park(world.clone());
     let mut second = empty_park(world);
     for park in [&mut first, &mut second] {
-        park.carve_for_construction(&[(0, plan.clone())]).unwrap();
-        park.carve_for_construction(&[(1, plan.clone())]).unwrap();
-        park.restore_tunnel_piece(0);
+        park.carve_for_coaster(CoasterId(0), &[(0, plan.clone())])
+            .unwrap();
+        park.carve_for_coaster(CoasterId(1), &[(0, plan.clone())])
+            .unwrap();
+        park.restore_tunnel_piece_for_coaster(CoasterId(0), 0);
     }
 
     assert_eq!(first.world.state_hash(), second.world.state_hash());
@@ -297,21 +303,79 @@ fn identical_tunnel_commands_produce_identical_park_hashes() {
 }
 
 #[test]
-fn replacing_construction_transfers_shared_tunnel_ownership_before_restore() {
+fn demolishing_one_coaster_keeps_shared_tunnel_cells_for_the_other_coaster() {
     let (world, plan) = tunnel_fixture();
     let mut park = empty_park(world);
     let original_hash = park.world.state_hash();
-    park.carve_for_construction(&[(0, plan.clone())]).unwrap();
+    let first_id = park.add_coaster(Construction::new(TrackState::origin(), hybrid_model()));
+    let second_id = park.add_coaster(Construction::new(TrackState::origin(), hybrid_model()));
+    park.carve_for_coaster(first_id, &[(0, plan.clone())])
+        .unwrap();
     let carved_hash = park.world.state_hash();
 
-    let next_generation = park.next_construction_tunnel_generation();
-    park.carve_for_construction_at(next_generation, &[(0, plan)])
-        .unwrap();
-    park.activate_construction_tunnel_generation(next_generation);
+    park.carve_for_coaster(second_id, &[(0, plan)]).unwrap();
+    assert!(park.demolish_coaster(first_id));
     assert_eq!(park.world.state_hash(), carved_hash);
 
-    park.restore_tunnel_piece(0);
+    assert!(park.demolish_coaster(second_id));
     assert_eq!(park.world.state_hash(), original_hash);
+
+    let third_id = park.add_coaster(Construction::new(TrackState::origin(), hybrid_model()));
+    assert_eq!(third_id, CoasterId(2));
+}
+
+#[test]
+fn candidate_track_clearance_checks_every_coaster_and_can_exclude_the_edited_one() {
+    let world = World::new(
+        32,
+        32,
+        Surface {
+            corners: [20; 4],
+            water: None,
+        },
+    );
+    let mut park = empty_park(world.clone());
+    let station_state = TrackState {
+        x: 12,
+        y: 12,
+        z: 10,
+        ..TrackState::origin()
+    };
+    let mut existing = Construction::new(station_state, hybrid_model());
+    existing.append(PieceId::Station, &world, &[]).unwrap();
+    let piece = existing.pieces()[0].clone();
+    let coaster_id = park.add_coaster(existing);
+    let sample = piece.sample(0.0).position;
+    let path_position = crate::world::Position {
+        x: (sample.x / 4.0).floor() as u16,
+        y: (sample.y / 4.0).floor() as u16,
+        height: sample.z.floor() as i16,
+    };
+    park.world.place_path(crate::world::Path {
+        position: path_position,
+        slope: None,
+    });
+    assert_eq!(
+        crate::track::clearance::check_clearance(
+            &park.world,
+            &piece,
+            &hybrid_model().train,
+            std::slice::from_ref(&piece),
+            &[],
+        ),
+        Err(crate::track::clearance::ClearanceCollision::Path)
+    );
+
+    assert_eq!(
+        park.validate_track_clearance(&hybrid_model().train, &piece, None),
+        Err(crate::track::construction::ConstructionError::Clearance(
+            crate::track::clearance::ClearanceCollision::Track
+        ))
+    );
+    assert!(
+        park.validate_track_clearance(&hybrid_model().train, &piece, Some(coaster_id))
+            .is_ok()
+    );
 }
 
 #[test]

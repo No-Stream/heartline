@@ -161,3 +161,40 @@ fn park_without_demo_coaster_ticks_and_has_distinct_state() {
     park.tick();
     assert!(park.demo_coaster.is_none());
 }
+
+#[test]
+fn multiple_coasters_hash_in_stable_id_order_and_keep_price_state_separate() {
+    let mut first = empty_park();
+    let mut second = empty_park();
+    for park in [&mut first, &mut second] {
+        let first_id = park.add_coaster(Construction::new(
+            TrackState {
+                x: 4,
+                y: 4,
+                z: 0,
+                ..TrackState::origin()
+            },
+            hybrid_model(),
+        ));
+        let second_id = park.add_coaster(Construction::new(
+            TrackState {
+                x: 8,
+                y: 8,
+                z: 0,
+                ..TrackState::origin()
+            },
+            crate::track::wooden_twister_model(),
+        ));
+        assert_eq!((first_id, second_id), (CoasterId(0), CoasterId(1)));
+    }
+    assert_eq!(first.state_hash(), second.state_hash());
+
+    let first_hash = first.state_hash();
+    first.rename_coaster(CoasterId(1), String::from("Family Twister"));
+    assert_ne!(first_hash, first.state_hash());
+
+    let renamed_hash = first.state_hash();
+    first.set_coaster_price(Some(CoasterId(0)), 11);
+    assert_ne!(renamed_hash, first.state_hash());
+    assert_eq!(first.coaster_price(Some(CoasterId(1))), 6);
+}

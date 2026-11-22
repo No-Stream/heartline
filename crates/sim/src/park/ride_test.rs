@@ -1,8 +1,12 @@
 //! Headless test runs that rate a coaster without animating a builder test train.
 
-use super::tick::{add_proximity_and_theming, step_demo_train};
+use super::tick::{
+    add_proximity_and_theming, other_coaster_train_positions, step_demo_train,
+    train_positions_for_train,
+};
 use super::{CoasterId, Park};
 use crate::physics::{Circuit, ConstructionTestRunRecorder, PhysicsConfig, TestRun, Train};
+use crate::track::proximity::TrainPosition;
 use crate::track::{CoasterModel, TrainConfiguration, hybrid_model};
 
 const MAXIMUM_TEST_STEPS: u32 = 200_000;
@@ -24,7 +28,8 @@ fn run_test_to_outcome(
     train_configuration: &TrainConfiguration,
     model: &CoasterModel,
     model_key: &str,
-    mut demo_circuit_and_train: Option<(&Circuit, Train)>,
+    mut demo_circuit_and_train: Option<(&Circuit, Train, TrainConfiguration)>,
+    other_coaster_trains: &[TrainPosition],
 ) -> Result<TestRun, String> {
     let mut train = Train::new(
         circuit,
@@ -43,11 +48,15 @@ fn run_test_to_outcome(
     );
     let mut slow_steps = 0;
     for _ in 0..MAXIMUM_TEST_STEPS {
-        let demo_trains = demo_circuit_and_train
-            .as_mut()
-            .map_or_else(Vec::new, |(demo_circuit, demo_train)| {
-                step_demo_train(demo_circuit, demo_train)
-            });
+        let mut other_trains = other_coaster_trains.to_vec();
+        if let Some((demo_circuit, demo_train, demo_configuration)) = &mut demo_circuit_and_train {
+            other_trains.extend(train_positions_for_train(
+                demo_circuit,
+                demo_train,
+                demo_configuration,
+            ));
+            step_demo_train(demo_circuit, demo_train);
+        }
         let was_recovered = !train.notes().is_empty();
         let previous_distance = train.distance();
         train.step(circuit);
@@ -69,7 +78,7 @@ fn run_test_to_outcome(
         recorder.record(&readings, model_key);
         for frame in &readings {
             if let Some(reading) = frame.first() {
-                recorder.record_dueling(circuit, *reading, &demo_trains);
+                recorder.record_dueling(circuit, *reading, &other_trains);
             }
         }
         if let Some(message) = outcome {
@@ -106,15 +115,21 @@ impl Park {
             &model.train,
             model,
             model.name,
-            self.demo_coaster
-                .as_ref()
-                .map(|coaster| (&coaster.circuit, coaster.train.clone())),
+            self.demo_coaster.as_ref().map(|coaster| {
+                (
+                    &coaster.circuit,
+                    coaster.train.clone(),
+                    coaster.train_configuration.clone(),
+                )
+            }),
+            &other_coaster_train_positions(self, Some(coaster_id)),
         )?;
         // The supports cache is derived from the track and excluded from the state hash.
         self.refresh_construction_supports(coaster_id)
             .map_err(|_| "Could not route supports for the placed track.".to_owned())?;
         let obstacles = self.proximity_obstacles();
         let supports = self.proximity_supports(coaster_id);
+        let other_tracks = self.other_tracks(coaster_id);
         let construction = &self
             .coaster(coaster_id)
             .expect("checked above")
@@ -123,9 +138,7 @@ impl Park {
             &self.world,
             construction.pieces(),
             &construction.model().train,
-            self.demo_coaster
-                .as_ref()
-                .map_or(&[], |coaster| coaster.circuit.pieces()),
+            &other_tracks,
             &obstacles,
             &supports,
             std::slice::from_mut(&mut report),
@@ -136,22 +149,46 @@ impl Park {
         Ok(())
     }
 
-    /// The demo track is scanned alone: no support geometry exists for it and the player's track is ignored,
-    /// so the report stays valid whatever the player builds.
+    /// The demo track has no support geometry, but its report includes other coaster tracks.
     fn run_demo_test(&mut self) -> Result<(), String> {
-        let coaster = self
+        let (circuit, train_configuration) = self
             .demo_coaster
             .as_ref()
+            .map(|coaster| (&coaster.circuit, coaster.train_configuration.clone()))
             .ok_or("This park has no demo coaster")?;
         let model = hybrid_model();
-        let mut report =
-            run_test_to_outcome(&coaster.circuit, &model.train, &model, model.name, None)?;
+        let mut report = run_test_to_outcome(
+            circuit,
+            &train_configuration,
+            &model,
+            model.name,
+            None,
+            &other_coaster_train_positions(self, None),
+        )?;
         let obstacles = self.proximity_obstacles();
+        let other_tracks: Vec<_> = self
+            .coasters
+            .values()
+            .flat_map(|coaster| {
+                coaster
+                    .construction
+                    .pieces()
+                    .iter()
+                    .chain(
+                        coaster
+                            .construction
+                            .disconnected_segments()
+                            .iter()
+                            .flat_map(|segment| segment.pieces.iter()),
+                    )
+                    .cloned()
+            })
+            .collect();
         add_proximity_and_theming(
             &self.world,
-            coaster.circuit.pieces(),
+            circuit.pieces(),
             &model.train,
-            &[],
+            &other_tracks,
             &obstacles,
             &[],
             std::slice::from_mut(&mut report),

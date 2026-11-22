@@ -16,9 +16,12 @@ pub struct CoasterId(pub u32);
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Coaster {
     pub construction: Construction,
+    pub name: String,
     pub construction_train: Option<(crate::physics::Circuit, Train)>,
     pub construction_slow_steps: u32,
     pub construction_outcome: Option<String>,
+    pub construction_message: String,
+    pub construction_undo_groups: Vec<usize>,
     #[serde(deserialize_with = "super::deserialize_v6_physics_option")]
     pub construction_recorder: Option<ConstructionTestRunRecorder>,
     #[serde(deserialize_with = "super::deserialize_v6_physics_option")]
@@ -50,11 +53,15 @@ pub struct Coaster {
 
 impl Coaster {
     pub fn new(construction: Construction, coaster_price: u16) -> Self {
+        let name = construction.model().name.to_owned();
         Self {
             construction,
+            name,
             construction_train: None,
             construction_slow_steps: 0,
             construction_outcome: None,
+            construction_message: String::new(),
+            construction_undo_groups: Vec::new(),
             construction_recorder: None,
             construction_report: None,
             coaster_open: false,

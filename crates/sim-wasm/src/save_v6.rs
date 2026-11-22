@@ -4,8 +4,8 @@ use serde::Deserialize;
 use theme_park_sim::facilities::ParkFacilities;
 use theme_park_sim::guests::GuestId;
 use theme_park_sim::guests::behavior::Facility;
+use theme_park_sim::park::DemoCoaster;
 use theme_park_sim::park::{Coaster, CoasterId, Park};
-use theme_park_sim::park::{DemoCoaster, TunnelOwner};
 use theme_park_sim::park_guests::ParkGuests;
 use theme_park_sim::physics::{
     BlockOperation, Circuit, ConstructionTestRunRecorder, TestRun, Train,
@@ -59,8 +59,10 @@ pub(super) struct ParkV6 {
     pub(super) simulation: ParkGuests,
     pub(super) demo_coaster: Option<DemoCoaster>,
     pub(super) construction: Option<Construction>,
-    pub(super) automatic_tunnel_owners: BTreeMap<TerrainCell, BTreeSet<TunnelOwner>>,
+    pub(super) automatic_tunnel_owners:
+        BTreeMap<TerrainCell, BTreeSet<crate::save_v7::TunnelOwnerV7>>,
     pub(super) manual_tunnel_cells: BTreeSet<TerrainCell>,
+    #[allow(dead_code)]
     pub(super) construction_tunnel_generation: u64,
     pub(super) physics_remainder: u32,
     pub(super) construction_train: Option<(Circuit, Train)>,
@@ -130,9 +132,9 @@ impl WasmSimulationV6 {
             simulation,
             demo_coaster,
             construction,
-            automatic_tunnel_owners,
+            automatic_tunnel_owners: old_tunnel_owners,
             manual_tunnel_cells,
-            construction_tunnel_generation,
+            construction_tunnel_generation: _,
             physics_remainder,
             construction_train,
             construction_message,
@@ -167,6 +169,7 @@ impl WasmSimulationV6 {
         let has_construction = construction.is_some();
         if !has_construction
             && !(construction_train.is_none()
+                && construction_undo_groups.is_empty()
                 && construction_slow_steps == 0
                 && construction_outcome.is_none()
                 && construction_recorder.is_none()
@@ -194,18 +197,38 @@ impl WasmSimulationV6 {
             return Err("version 6 save has per-coaster state without a construction");
         }
 
+        let mut automatic_tunnel_owners = BTreeMap::new();
+        for (cell, owners) in old_tunnel_owners {
+            if !owners.is_empty() && !has_construction {
+                return Err("version 6 save has tunnel owners without a construction");
+            }
+            automatic_tunnel_owners.insert(
+                cell,
+                owners
+                    .into_iter()
+                    .map(|owner| theme_park_sim::park::TunnelOwner {
+                        coaster_id: CoasterId(0),
+                        piece_id: owner.piece_id,
+                    })
+                    .collect(),
+            );
+        }
+
         let mut park = Park::new_empty(world, facilities, simulation);
         park.demo_coaster = demo_coaster;
         park.automatic_tunnel_owners = automatic_tunnel_owners;
         park.manual_tunnel_cells = manual_tunnel_cells;
-        park.construction_tunnel_generation = construction_tunnel_generation;
         park.physics_remainder = physics_remainder;
         park.construction_message = construction_message;
         park.demo_report = demo_report;
         park.pending_coaster_price = coaster_price;
 
         if let Some(construction) = construction {
+            let name = construction.model().name.to_owned();
             let mut coaster = Coaster::new(construction, coaster_price);
+            coaster.name = name;
+            coaster.construction_message = park.construction_message.clone();
+            coaster.construction_undo_groups = construction_undo_groups;
             coaster.construction_train = construction_train;
             coaster.construction_slow_steps = construction_slow_steps;
             coaster.construction_outcome = construction_outcome;
@@ -246,7 +269,6 @@ impl WasmSimulationV6 {
             selected,
             selected_shape,
             selected_element,
-            construction_undo_groups,
             construction_completion,
             construction_completion_available,
             construction_completion_search,
@@ -266,6 +288,23 @@ pub(super) fn serialize_v6_for_test(simulation: &WasmSimulation) -> Vec<u8> {
     let coaster = simulation
         .editing_coaster()
         .expect("version 6 test save requires an edited coaster");
+    let automatic_tunnel_owners: BTreeMap<_, BTreeSet<_>> = park
+        .automatic_tunnel_owners
+        .iter()
+        .map(|(cell, owners)| {
+            (
+                *cell,
+                owners
+                    .iter()
+                    .map(|owner| crate::save_v7::TunnelOwnerV7 {
+                        generation: u64::from(owner.coaster_id.0),
+                        piece_id: owner.piece_id,
+                    })
+                    .collect(),
+            )
+        })
+        .collect();
+    let construction_tunnel_generation = 0;
     let snapshot = WasmSimulationV6Ref {
         park: ParkV6Ref {
             world: &park.world,
@@ -273,9 +312,9 @@ pub(super) fn serialize_v6_for_test(simulation: &WasmSimulation) -> Vec<u8> {
             simulation: &park.simulation,
             demo_coaster: &park.demo_coaster,
             construction: Some(&coaster.construction),
-            automatic_tunnel_owners: &park.automatic_tunnel_owners,
+            automatic_tunnel_owners: &automatic_tunnel_owners,
             manual_tunnel_cells: &park.manual_tunnel_cells,
-            construction_tunnel_generation: &park.construction_tunnel_generation,
+            construction_tunnel_generation: &construction_tunnel_generation,
             physics_remainder: &park.physics_remainder,
             construction_train: coaster.construction_train.as_ref(),
             construction_message: &park.construction_message,
@@ -314,7 +353,7 @@ pub(super) fn serialize_v6_for_test(simulation: &WasmSimulation) -> Vec<u8> {
         selected: &simulation.selected,
         selected_shape: &simulation.selected_shape,
         selected_element: &simulation.selected_element,
-        construction_undo_groups: &simulation.construction_undo_groups,
+        construction_undo_groups: &coaster.construction_undo_groups,
         construction_completion: &simulation.construction_completion,
         construction_completion_available: &simulation.construction_completion_available,
         construction_completion_search: &simulation.construction_completion_search,
@@ -357,7 +396,7 @@ struct ParkV6Ref<'a> {
     simulation: &'a ParkGuests,
     demo_coaster: &'a Option<DemoCoaster>,
     construction: Option<&'a Construction>,
-    automatic_tunnel_owners: &'a BTreeMap<TerrainCell, BTreeSet<TunnelOwner>>,
+    automatic_tunnel_owners: &'a BTreeMap<TerrainCell, BTreeSet<crate::save_v7::TunnelOwnerV7>>,
     manual_tunnel_cells: &'a BTreeSet<TerrainCell>,
     construction_tunnel_generation: &'a u64,
     physics_remainder: &'a u32,

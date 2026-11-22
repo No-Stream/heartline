@@ -13,6 +13,8 @@ pub mod reports;
 mod save;
 #[path = "save_v6.rs"]
 mod save_v6;
+#[path = "save_v7.rs"]
+mod save_v7;
 pub use save::SaveLoadError;
 #[cfg(test)]
 mod save_tests;
@@ -93,7 +95,6 @@ pub struct WasmSimulation {
     #[serde(default)]
     selected_shape: Option<theme_park_sim::track::shaped::ElementIntent>,
     selected_element: Option<String>,
-    construction_undo_groups: Vec<usize>,
     construction_completion: Option<Completion>,
     /// Ranked finish options. Byte-compatible with the earlier `Option<Completion>` in saves.
     construction_completion_available: Vec<Completion>,
@@ -170,6 +171,7 @@ impl WasmSimulation {
         coaster.construction_report = None;
         coaster.construction_train = None;
         coaster.construction_outcome = None;
+        coaster.construction_message.clear();
     }
 }
 
@@ -289,6 +291,13 @@ impl WasmSimulation {
     }
 
     fn facility_obstacles(&self) -> Vec<SupportObstacle> {
+        self.facility_obstacles_excluding(self.editing_coaster_id())
+    }
+
+    fn facility_obstacles_excluding(
+        &self,
+        excluded_coaster: Option<CoasterId>,
+    ) -> Vec<SupportObstacle> {
         let mut obstacles: Vec<_> = self
             .park
             .facilities
@@ -314,6 +323,28 @@ impl WasmSimulation {
             obstacles.extend(track_support_obstacles(
                 coaster.circuit.pieces(),
                 &coaster.train_configuration,
+            ));
+        }
+        for (&id, coaster) in &self.park.coasters {
+            if Some(id) == excluded_coaster {
+                continue;
+            }
+            let pieces: Vec<_> = coaster
+                .construction
+                .pieces()
+                .iter()
+                .chain(
+                    coaster
+                        .construction
+                        .disconnected_segments()
+                        .iter()
+                        .flat_map(|segment| &segment.pieces),
+                )
+                .cloned()
+                .collect();
+            obstacles.extend(track_support_obstacles(
+                &pieces,
+                &coaster.construction.model().train,
             ));
         }
         obstacles
@@ -1053,6 +1084,9 @@ mod construction_bridge_tests;
 #[cfg(test)]
 #[path = "tests/facilities.rs"]
 mod facility_bridge_tests;
+#[cfg(test)]
+#[path = "tests/multi_coaster.rs"]
+mod multi_coaster_tests;
 #[cfg(test)]
 #[path = "tests/paths.rs"]
 mod path_bridge_tests;

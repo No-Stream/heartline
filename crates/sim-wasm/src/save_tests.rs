@@ -412,16 +412,16 @@ fn save_keeps_demo_and_player_test_reports() {
 }
 
 #[test]
-fn saves_use_v7_and_round_trip() {
+fn saves_use_v8_and_round_trip() {
     let compatible_v6_bytes = decompress_save_fixture(include_bytes!(
         "../tests/fixtures/coaster-grouping-v6-compatible.save.xz"
     ));
     assert!(compatible_v6_bytes.starts_with(b"TPSAVE\x06"));
     let expected = WasmSimulation::load_state_native(&compatible_v6_bytes).unwrap();
-    let saved_v7 = expected.save_state().unwrap();
-    assert!(saved_v7.starts_with(b"TPSAVE\x07"));
-    let v7_round_trip = WasmSimulation::load_state_native(&saved_v7).unwrap();
-    assert_eq!(expected.state_hash(), v7_round_trip.state_hash());
+    let saved_v8 = expected.save_state().unwrap();
+    assert!(saved_v8.starts_with(b"TPSAVE\x08"));
+    let v8_round_trip = WasmSimulation::load_state_native(&saved_v8).unwrap();
+    assert_eq!(expected.state_hash(), v8_round_trip.state_hash());
 }
 
 #[test]
@@ -482,17 +482,35 @@ fn tested_open_v6_fixture_keeps_its_typed_v4_v5_rejection() {
 }
 
 #[test]
-fn tested_open_v6_fixture_saves_and_reloads_as_v7_without_changing_hash() {
+fn tested_open_v6_fixture_saves_and_reloads_as_v8_without_changing_hash() {
     let rich_v6_bytes = decompress_save_fixture(include_bytes!(
         "../tests/fixtures/coaster-grouping-v6.save.xz"
     ));
     let mut original = WasmSimulation::load_state_native(&rich_v6_bytes).unwrap();
-    let saved_v7 = original.save_state().unwrap();
-    assert!(saved_v7.starts_with(b"TPSAVE\x07"));
-    let mut restored = WasmSimulation::load_state_native(&saved_v7).unwrap();
+    let saved_v8 = original.save_state().unwrap();
+    assert!(saved_v8.starts_with(b"TPSAVE\x08"));
+    let mut restored = WasmSimulation::load_state_native(&saved_v8).unwrap();
     assert_eq!(original.state_hash(), restored.state_hash());
 
     for _ in 0..10 {
+        original.tick();
+        restored.tick();
+        assert_eq!(original.state_hash(), restored.state_hash());
+    }
+}
+
+#[test]
+fn v7_fixture_migrates_to_v8_and_continues_after_reload() {
+    let v7_bytes = decompress_save_fixture(include_bytes!(
+        "../tests/fixtures/coaster-grouping-v7.save.xz"
+    ));
+    let mut original = WasmSimulation::load_state_native(&v7_bytes).unwrap();
+    let v8_bytes = original.save_state().unwrap();
+    assert!(v8_bytes.starts_with(b"TPSAVE\x08"));
+    let mut restored = WasmSimulation::load_state_native(&v8_bytes).unwrap();
+    assert_eq!(original.state_hash(), restored.state_hash());
+
+    for _ in 0..30 {
         original.tick();
         restored.tick();
         assert_eq!(original.state_hash(), restored.state_hash());

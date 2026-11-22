@@ -285,6 +285,15 @@ impl Park {
         id: CoasterId,
         work_steps: u32,
     ) -> (bool, Option<BlockCommandError>) {
+        let (complete, error, _) = self.advance_block_analysis(id, work_steps, false);
+        (complete, error)
+    }
+
+    pub fn construction_advance_block_analysis_with_budget(
+        &mut self,
+        id: CoasterId,
+        work_steps: u32,
+    ) -> (bool, Option<BlockCommandError>, u32) {
         self.advance_block_analysis(id, work_steps, false)
     }
 
@@ -322,9 +331,9 @@ impl Park {
         id: CoasterId,
         work_steps: u32,
         placement_only: bool,
-    ) -> (bool, Option<BlockCommandError>) {
+    ) -> (bool, Option<BlockCommandError>, u32) {
         let Some(coaster) = self.coaster_mut(id) else {
-            return (true, None);
+            return (true, None, 0);
         };
         let has_active_trains = coaster
             .coaster_operation
@@ -349,6 +358,7 @@ impl Park {
             0
         };
         let mut search_steps = 0;
+        let mut throughput_steps = 0;
         if let Some(mut search) = coaster.block_manual_search.take() {
             let before = search.work_completed();
             search.advance(search_budget);
@@ -433,7 +443,9 @@ impl Park {
             .coaster_mut(id)
             .expect("coaster exists during analysis");
         if !placement_only && let Some(mut estimator) = coaster.block_throughput_estimator.take() {
+            let before = estimator.work_steps_completed();
             if let Some(result) = estimator.advance(budget - search_steps) {
+                throughput_steps = estimator.work_steps_completed() - before;
                 let estimate = match result {
                     Ok(throughput) => (throughput, String::new()),
                     Err(reason) => (0.0, reason.to_owned()),
@@ -448,6 +460,7 @@ impl Park {
                     .block_throughput_cache
                     .insert(block_layout_fingerprint(layout), estimate);
             } else {
+                throughput_steps = estimator.work_steps_completed() - before;
                 coaster.block_throughput_estimator = Some(estimator);
             }
         }
@@ -456,6 +469,8 @@ impl Park {
                 && coaster.block_placement_search.is_none()
                 && coaster.block_throughput_estimator.is_none(),
             validation_error,
+            u32::try_from(search_steps + throughput_steps)
+                .expect("block work use is capped at one thousand steps"),
         )
     }
 

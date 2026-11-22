@@ -1451,32 +1451,32 @@ mod tests {
             (
                 "Briar Blitz",
                 include_str!("../../../content/rides/briar-blitz.ride.json"),
-                0x3e329638e2e11605,
+                0x2f041e98bcc4db3c,
             ),
             (
                 "Browser agreement fast circuit",
                 include_str!("../../../content/rides/browser-agreement-fast.ride.json"),
-                0x3085ff1b874c26d7,
+                0x3414060cb78a3d24,
             ),
             (
                 "Daisy Dash",
                 include_str!("../../../content/rides/daisy-dash.ride.json"),
-                0xa7bc9079de11869c,
+                0x2b92b2bf56dbcae9,
             ),
             (
                 "Horizon Hawk",
                 include_str!("../../../content/rides/horizon-hawk.ride.json"),
-                0x0e2b676b7c0035c6,
+                0xbd3e732c2585a903,
             ),
             (
                 "Timber Tumbler",
                 include_str!("../../../content/rides/timber-tumbler.ride.json"),
-                0x3c87cd475133b78a,
+                0x25b289cb5a8d252f,
             ),
             (
                 "Velocity Viper",
                 include_str!("../../../content/rides/velocity-viper.ride.json"),
-                0x89125ac1c28a0e87,
+                0x61867397a8222f69,
             ),
         ] {
             let ride: RideFile = serde_json::from_str(ride_json).unwrap();
@@ -1504,32 +1504,32 @@ mod tests {
             (
                 "Briar Blitz",
                 include_str!("../../../content/rides/briar-blitz.ride.json"),
-                0x8984726f418c071b,
+                0x6319ddb9332ae2bf,
             ),
             (
                 "Browser agreement fast circuit",
                 include_str!("../../../content/rides/browser-agreement-fast.ride.json"),
-                0xcf80a65b2ff78523,
+                0xe5df39dec6b2014a,
             ),
             (
                 "Daisy Dash",
                 include_str!("../../../content/rides/daisy-dash.ride.json"),
-                0xdf5864855eff5eab,
+                0x424647458a464a17,
             ),
             (
                 "Horizon Hawk",
                 include_str!("../../../content/rides/horizon-hawk.ride.json"),
-                0x948e8076fab83fdd,
+                0x3df9651c78413d65,
             ),
             (
                 "Timber Tumbler",
                 include_str!("../../../content/rides/timber-tumbler.ride.json"),
-                0x371e6a77ca33cb73,
+                0xf0414f79257fb302,
             ),
             (
                 "Velocity Viper",
                 include_str!("../../../content/rides/velocity-viper.ride.json"),
-                0x210ac8589df9fa47,
+                0xa85d602e7c4c1295,
             ),
         ] {
             let ride: RideFile = serde_json::from_str(ride_json).unwrap();

@@ -821,6 +821,60 @@ fn baseline_report_distinguishes_unverified_from_observed_stall() {
 }
 
 #[test]
+fn zero_budget_finalizes_completed_block_searches_on_each_coaster() {
+    let circuit = demo_circuit();
+    let train = hybrid_model().train;
+    let config = super::PhysicsConfig {
+        powered_sections: false,
+        ..Default::default()
+    };
+    let completed_search = || {
+        let mut search =
+            super::BlockPlacementSearch::new(circuit.clone(), train.clone(), config).unwrap();
+        search.advance(2_000);
+        assert!(search.is_complete());
+        search
+    };
+
+    let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+    ensure_editing_coaster(&mut simulation);
+    let other_id = simulation
+        .park
+        .add_coaster(Construction::new(TrackState::origin(), hybrid_model()));
+    for (id, search) in [
+        (CoasterId(0), completed_search()),
+        (other_id, completed_search()),
+    ] {
+        simulation
+            .park
+            .install_block_layout(id, search.best().clone(), true);
+        simulation
+            .park
+            .coaster_mut(id)
+            .unwrap()
+            .block_placement_search = Some(search);
+    }
+
+    assert!(simulation.construction_advance_block_analysis(0));
+    assert!(
+        simulation
+            .park
+            .coaster(CoasterId(0))
+            .unwrap()
+            .block_placement_search
+            .is_none()
+    );
+    assert!(
+        simulation
+            .park
+            .coaster(other_id)
+            .unwrap()
+            .block_placement_search
+            .is_none()
+    );
+}
+
+#[test]
 fn applying_an_unfinished_placement_does_not_claim_a_search_limit_was_reached() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     build_block_test_construction(&mut simulation);

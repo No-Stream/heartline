@@ -94,6 +94,53 @@ pub(super) fn step_demo_train(circuit: &Circuit, train: &mut Train) -> Vec<Train
     positions
 }
 
+pub(super) fn train_positions_for_train(
+    circuit: &Circuit,
+    train: &Train,
+    configuration: &TrainConfiguration,
+) -> Vec<TrainPosition> {
+    let cars = usize::from(configuration.cars);
+    (0..cars)
+        .map(|car| {
+            let distance = (train.distance()
+                - car as f64 * configuration.length_metres / f64::from(configuration.cars))
+            .rem_euclid(circuit.length());
+            let sample = circuit.sample(distance);
+            TrainPosition {
+                position: sample.position,
+                tangent: sample.tangent,
+                piece_index: circuit.piece_index(distance),
+                distance,
+                speed: train.speed().abs(),
+            }
+        })
+        .collect()
+}
+
+pub(super) fn other_coaster_train_positions(
+    park: &Park,
+    excluded_id: Option<CoasterId>,
+) -> Vec<TrainPosition> {
+    park.coasters
+        .iter()
+        .filter(|(id, _)| Some(**id) != excluded_id)
+        .flat_map(|(_, coaster)| {
+            let mut positions = coaster
+                .coaster_operation
+                .as_ref()
+                .map_or_else(Vec::new, |operation| operation.train_positions());
+            if let Some((circuit, train)) = &coaster.construction_train {
+                positions.extend(train_positions_for_train(
+                    circuit,
+                    train,
+                    &coaster.construction.model().train,
+                ));
+            }
+            positions
+        })
+        .collect()
+}
+
 pub struct SupportRenderCache {
     obstacles: Vec<SupportObstacle>,
     dependencies: Vec<usize>,
@@ -160,19 +207,48 @@ impl Park {
             .tick_with(&self.world, &facilities, 100, Some(population), executor);
         self.physics_remainder += 200;
         while self.physics_remainder >= 30 {
-            let demo_trains: Vec<_> = if let Some(coaster) = &mut self.demo_coaster {
-                step_demo_train(&coaster.circuit, &mut coaster.train)
-            } else {
-                Vec::new()
-            };
+            let demo_trains = self.demo_coaster.as_ref().map_or_else(Vec::new, |coaster| {
+                train_positions_for_train(
+                    &coaster.circuit,
+                    &coaster.train,
+                    &coaster.train_configuration,
+                )
+            });
+            let coaster_trains: BTreeMap<CoasterId, Vec<TrainPosition>> = self
+                .coasters
+                .iter()
+                .map(|(&id, coaster)| {
+                    let mut positions = coaster
+                        .coaster_operation
+                        .as_ref()
+                        .map_or_else(Vec::new, |operation| operation.train_positions());
+                    if let Some((circuit, train)) = &coaster.construction_train {
+                        positions.extend(train_positions_for_train(
+                            circuit,
+                            train,
+                            &coaster.construction.model().train,
+                        ));
+                    }
+                    (id, positions)
+                })
+                .collect();
+            if let Some(coaster) = &mut self.demo_coaster {
+                step_demo_train(&coaster.circuit, &mut coaster.train);
+            }
             for id in &coaster_ids {
-                self.tick_coaster(*id, &demo_trains);
+                let mut other_trains = demo_trains.clone();
+                for (&other_id, positions) in &coaster_trains {
+                    if other_id != *id {
+                        other_trains.extend_from_slice(positions);
+                    }
+                }
+                self.tick_coaster(*id, &other_trains);
             }
             self.physics_remainder -= 30;
         }
     }
 
-    fn tick_coaster(&mut self, id: CoasterId, demo_trains: &[TrainPosition]) {
+    fn tick_coaster(&mut self, id: CoasterId, other_trains: &[TrainPosition]) {
         if self.coaster(id).is_some_and(|coaster| coaster.coaster_open)
             && !self.block_layout_change_pending(id)
         {
@@ -223,7 +299,7 @@ impl Park {
             coaster
                 .coaster_operation
                 .as_mut()
-                .map(|operation| operation.step(demo_trains, model_key))
+                .map(|operation| operation.step(other_trains, model_key))
                 .unwrap_or_default()
         };
         for (train_id, outcome) in outcomes {
@@ -231,9 +307,7 @@ impl Park {
         }
 
         let report_finished = {
-            let (coasters, construction_message) =
-                (&mut self.coasters, &mut self.construction_message);
-            let coaster = coasters.get_mut(&id).expect("coaster remains present");
+            let coaster = self.coaster_mut(id).expect("coaster remains present");
             if coaster.construction_outcome.is_none()
                 && let Some((circuit, train)) = &mut coaster.construction_train
             {
@@ -241,25 +315,27 @@ impl Park {
                 let previous_distance = train.distance();
                 train.step(circuit);
                 if !was_recovered && !train.notes().is_empty() {
-                    *construction_message = "Train recovered to the station after rollback.".into();
+                    coaster.construction_message =
+                        "Train recovered to the station after rollback.".into();
                 } else if previous_distance < circuit.length()
                     && train.distance() >= circuit.length()
                 {
-                    *construction_message = "Train completed a lap.".into();
+                    coaster.construction_message = "Train completed a lap.".into();
                 }
                 if train.speed().abs() < 0.05 {
                     coaster.construction_slow_steps += 1;
                     if coaster.construction_slow_steps >= 200 && train.notes().is_empty() {
-                        *construction_message = "Train stopped before completing a lap.".into();
+                        coaster.construction_message =
+                            "Train stopped before completing a lap.".into();
                     }
                 } else {
                     coaster.construction_slow_steps = 0;
                 }
-                if construction_message == "Train recovered to the station after rollback."
-                    || construction_message == "Train completed a lap."
-                    || construction_message == "Train stopped before completing a lap."
+                if coaster.construction_message == "Train recovered to the station after rollback."
+                    || coaster.construction_message == "Train completed a lap."
+                    || coaster.construction_message == "Train stopped before completing a lap."
                 {
-                    coaster.construction_outcome = Some(construction_message.clone());
+                    coaster.construction_outcome = Some(coaster.construction_message.clone());
                 }
                 let readings = train.take_readings();
                 if let Some(recorder) = &mut coaster.construction_recorder {
@@ -267,14 +343,14 @@ impl Park {
                     recorder.record(&readings, model_key);
                     for frame in &readings {
                         if let Some(reading) = frame.first() {
-                            recorder.record_dueling(circuit, *reading, demo_trains);
+                            recorder.record_dueling(circuit, *reading, other_trains);
                         }
                     }
                 }
                 if coaster.construction_outcome.is_some() {
                     let recorder = coaster.construction_recorder.take().expect("test recorder");
                     let (report, front_car_report) = recorder.finish_with_front_car(
-                        construction_message == "Train completed a lap.",
+                        coaster.construction_message == "Train completed a lap.",
                         !train.notes().is_empty(),
                     );
                     if front_car_report.completed {
@@ -298,9 +374,9 @@ impl Park {
                 self.construction_message = "Could not route supports for the placed track.".into();
             }
             let obstacles = self.proximity_obstacles();
+            let other_tracks = self.other_tracks(id);
             let supports = self.proximity_supports(id);
-            let (coasters, world, demo_coaster) =
-                (&mut self.coasters, &self.world, &self.demo_coaster);
+            let (coasters, world) = (&mut self.coasters, &self.world);
             let coaster = coasters.get_mut(&id).expect("report requires coaster");
             let construction = &coaster.construction;
             if let Some(report) = &mut coaster.construction_report {
@@ -308,9 +384,7 @@ impl Park {
                     world,
                     construction.pieces(),
                     &construction.model().train,
-                    demo_coaster
-                        .as_ref()
-                        .map_or(&[], |coaster| coaster.circuit.pieces()),
+                    &other_tracks,
                     &obstacles,
                     &supports,
                     std::slice::from_mut(report),
@@ -357,6 +431,27 @@ impl Park {
                 max: obstacle.max,
             })
             .collect()
+    }
+
+    pub(super) fn other_tracks(&self, id: CoasterId) -> Vec<Piece> {
+        let mut pieces = self
+            .demo_coaster
+            .as_ref()
+            .map_or_else(Vec::new, |coaster| coaster.circuit.pieces().to_vec());
+        for (&other_id, coaster) in &self.coasters {
+            if other_id == id {
+                continue;
+            }
+            pieces.extend_from_slice(coaster.construction.pieces());
+            pieces.extend(
+                coaster
+                    .construction
+                    .disconnected_segments()
+                    .iter()
+                    .flat_map(|segment| segment.pieces.iter().cloned()),
+            );
+        }
+        pieces
     }
 
     pub fn proximity_supports(&self, id: CoasterId) -> Vec<OwnedSupportSegment> {
@@ -429,6 +524,7 @@ impl Park {
             self.construction_message = "Could not route supports for the placed track.".into();
         }
         let obstacles = self.proximity_obstacles();
+        let other_tracks = self.other_tracks(id);
         let supports = self.proximity_supports(id);
         let construction = &self
             .coaster(id)
@@ -438,9 +534,7 @@ impl Park {
             &self.world,
             construction.pieces(),
             &construction.model().train,
-            self.demo_coaster
-                .as_ref()
-                .map_or(&[], |coaster| coaster.circuit.pieces()),
+            &other_tracks,
             &obstacles,
             &supports,
             &mut outcome.reports,
@@ -492,11 +586,48 @@ impl Park {
             })
             .collect()
     }
+
+    pub(super) fn construction_support_obstacles(
+        &self,
+        excluded_id: CoasterId,
+    ) -> Vec<SupportObstacle> {
+        let mut obstacles = self.facility_obstacles();
+        if let Some(coaster) = &self.demo_coaster {
+            obstacles.extend(track_support_obstacles(
+                coaster.circuit.pieces(),
+                &coaster.train_configuration,
+            ));
+        }
+        for (&id, coaster) in &self.coasters {
+            if id == excluded_id {
+                continue;
+            }
+            let pieces: Vec<_> = coaster
+                .construction
+                .pieces()
+                .iter()
+                .chain(
+                    coaster
+                        .construction
+                        .disconnected_segments()
+                        .iter()
+                        .flat_map(|segment| &segment.pieces),
+                )
+                .cloned()
+                .collect();
+            obstacles.extend(track_support_obstacles(
+                &pieces,
+                &coaster.construction.model().train,
+            ));
+        }
+        obstacles
+    }
+
     pub fn refresh_construction_supports(
         &mut self,
         id: CoasterId,
     ) -> Result<Vec<f32>, SupportError> {
-        let facility_obstacles = self.facility_obstacles();
+        let support_obstacles = self.construction_support_obstacles(id);
         let (coasters, world) = (&mut self.coasters, &self.world);
         let Some(coaster) = coasters.get_mut(&id) else {
             return Ok(Vec::new());
@@ -518,7 +649,7 @@ impl Park {
             world,
             &construction.model().train,
             construction.model().support_style,
-            &facility_obstacles,
+            &support_obstacles,
             &mut coaster.support_render_cache,
         )
     }

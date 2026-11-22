@@ -202,6 +202,10 @@ impl BehaviorSimulation {
         self.external_rides = ids.iter().copied().collect();
     }
 
+    pub fn queue_length(&self, place_id: u32) -> usize {
+        self.queues.get(&place_id).map_or(0, Vec::len)
+    }
+
     /// Admit one train in queue order and charge each rider at boarding.
     pub fn board_coaster(&mut self, facility: &Facility, guests: &GuestStore) -> Vec<GuestId> {
         self.board_coaster_train(facility, 0, guests)

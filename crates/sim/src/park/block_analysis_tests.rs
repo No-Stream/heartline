@@ -291,7 +291,13 @@ fn manual_validation_and_throughput_share_the_requested_work_budget() {
     );
 
     let hash_before_analysis = park.state_hash();
-    assert!(!advance_successfully(&mut park, 200));
+    let (complete, error, work_used) =
+        park.construction_advance_block_analysis_with_budget(COASTER_ID, 200);
+    assert!(!complete);
+    assert!(
+        error.is_none(),
+        "unexpected block analysis error: {error:?}"
+    );
     assert_ne!(park.state_hash(), hash_before_analysis);
 
     let validation_work = coaster_state(&park)
@@ -307,6 +313,11 @@ fn manual_validation_and_throughput_share_the_requested_work_budget() {
     assert!(validation_work > 0);
     assert!(throughput_work > 0);
     assert!(validation_work + throughput_work <= 200);
+    assert_eq!(
+        work_used as usize,
+        validation_work + throughput_work,
+        "reported work must match consumed validation and throughput steps"
+    );
 }
 
 #[test]

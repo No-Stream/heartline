@@ -482,6 +482,42 @@ pub fn check_clearance(
     )
 }
 
+/// Checks only whether a candidate train envelope intersects existing rail.
+/// Other constructions cannot share connectors, so endpoint allowances do not apply.
+pub fn check_track_clearance(
+    candidate: &Piece,
+    train: &TrainConfiguration,
+    existing_track: &[Piece],
+) -> Result<(), ClearanceCollision> {
+    assert!(
+        train.cars > 0
+            && train.length_metres.is_finite()
+            && train.length_metres > 0.0
+            && train.width_metres.is_finite()
+            && train.width_metres > 0.0
+            && train.height_metres.is_finite()
+            && train.height_metres > 0.0,
+        "invalid train dimensions"
+    );
+    let index = ClearanceIndex::new(existing_track);
+    let envelopes = ClearanceEnvelopes::new(candidate, train);
+    let rail_radius = TRACK_RADIUS + SAMPLE_SPACING / 2.0;
+    for (_, envelope) in &envelopes.envelopes {
+        let bounds = envelope.bounds;
+        let center = (bounds.min + bounds.max) * 0.5;
+        let margin =
+            (bounds.max.x - bounds.min.x).max(bounds.max.y - bounds.min.y) / 2.0 + rail_radius;
+        if index
+            .nearby_samples(center, margin)
+            .iter()
+            .any(|(_, _, rail_bounds)| intersects_envelope(envelope, *rail_bounds))
+        {
+            return Err(ClearanceCollision::Track);
+        }
+    }
+    Ok(())
+}
+
 /// Checks a piece using cached track samples. `excluded_piece` omits one entry
 /// when checking an existing piece against the rest of the index.
 pub fn check_clearance_indexed(
@@ -1168,6 +1204,10 @@ mod tests {
         assert_eq!(
             check_reverse_track_clearance(&index, &straight(12, 4, 3), &train),
             Ok(())
+        );
+        assert_eq!(
+            check_track_clearance(&piece, &train, &[straight(12, 4, 3)]),
+            Err(ClearanceCollision::Track)
         );
     }
 
