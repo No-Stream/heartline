@@ -1,4 +1,5 @@
 use std::collections::{HashSet, VecDeque};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use theme_park_sim::physics::rated_piece::{
     ForceJudge, connected_measurement_track, measurement_contexts, rate_piece,
@@ -1054,97 +1055,123 @@ fn every_floater_hill_gives_default_trains_at_most_good_airtime_at_its_maximum()
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-#[test]
-fn every_model_rated_window_endpoint_passes_with_its_default_train_in_each_applicable_context() {
-    for piece in catalog()
-        .iter()
-        .filter(|piece| piece.design_speeds.is_some())
-    {
-        for model in models()
-            .into_iter()
-            .filter(|model| model.allows_piece(piece))
-        {
-            let Some(rated) = rated_speeds(&model, piece) else {
+fn assert_rated_window_endpoints_pass_in_every_applicable_context(
+    model: &CoasterModel,
+    piece: &Piece,
+) {
+    let Some(rated) = rated_speeds(model, piece) else {
+        assert!(
+            is_known_unavailable_banked_straight(model, piece),
+            "{} has no rated window for {:?} at {:?}",
+            model.name,
+            piece.id,
+            piece.entry.slope
+        );
+        return;
+    };
+    let cars = model.train.cars;
+    let measured_from = measured_rated_window(model, piece)
+        .expect("piece must have a measured window")
+        .measured_from;
+    for speed in [rated.minimum_entry.max(measured_from), rated.maximum_entry] {
+        let rating =
+            rate_piece(model, cars, piece, speed, rating_physics()).expect("rating must complete");
+        assert!(
+            rating.passed,
+            "{:?} {} {cars} cars at {speed}: {rating:?}",
+            piece.id, model.name
+        );
+        let contexts = measurement_contexts(model, cars, piece, speed);
+        assert_eq!(contexts.len(), rating.context_results.len());
+        let mut applicable_contexts = 0;
+        for (context, context_rating) in contexts.iter().zip(&rating.context_results) {
+            assert_eq!(context.name, context_rating.context);
+            if piece.id == PieceId::SteepToSixtyUp
+                && context.name == "connected model-allowed approach"
+            {
+                let element_index = context.circuit.piece_index(context.element_range.start);
+                let preceding_piece = &context.circuit.pieces()[element_index - 1];
+                assert_eq!(preceding_piece.exit.slope, piece.entry.slope);
+                assert_eq!(preceding_piece.exit.bank, piece.entry.bank);
+                assert_eq!(
+                    preceding_piece.exit.horizontal_curvature,
+                    piece.entry.horizontal_curvature
+                );
+                assert_eq!(
+                    preceding_piece.exit.vertical_curvature,
+                    piece.entry.vertical_curvature
+                );
+                assert_eq!(piece.entry.slope, theme_park_sim::track::Slope::UpSteep);
+                assert!(model.allows_piece(preceding_piece));
+            }
+            if context_rating.applicable {
+                applicable_contexts += 1;
                 assert!(
-                    is_known_unavailable_banked_straight(&model, piece),
-                    "{} has no rated window for {:?} at {:?}",
+                    context_rating.passed,
+                    "{:?} {} {cars} cars at {speed}, context {}: {context_rating:?}",
+                    piece.id, model.name, context.name
+                );
+                assert_train_crosses_element_after_preroll(
+                    model,
+                    &context.circuit,
+                    piece.id,
+                    context.element_range.clone(),
+                    cars,
+                    speed,
+                    context.name,
+                );
+            } else {
+                assert!(
+                    context_rating.inapplicable_reason.is_some(),
+                    "{:?} {} {cars} cars at {speed}, context {} has no applicability reason: {context_rating:?}",
+                    piece.id,
                     model.name,
-                    piece.id,
-                    piece.entry.slope
-                );
-                continue;
-            };
-            let cars = model.train.cars;
-            let measured_from = measured_rated_window(&model, piece)
-                .expect("piece must have a measured window")
-                .measured_from;
-            for speed in [rated.minimum_entry.max(measured_from), rated.maximum_entry] {
-                let rating = rate_piece(&model, cars, piece, speed, rating_physics())
-                    .expect("rating must complete");
-                assert!(
-                    rating.passed,
-                    "{:?} {} {cars} cars at {speed}: {rating:?}",
-                    piece.id, model.name
-                );
-                let contexts = measurement_contexts(&model, cars, piece, speed);
-                assert_eq!(contexts.len(), rating.context_results.len());
-                let mut applicable_contexts = 0;
-                for (context, context_rating) in contexts.iter().zip(&rating.context_results) {
-                    assert_eq!(context.name, context_rating.context);
-                    if piece.id == PieceId::SteepToSixtyUp
-                        && context.name == "connected model-allowed approach"
-                    {
-                        let element_index =
-                            context.circuit.piece_index(context.element_range.start);
-                        let preceding_piece = &context.circuit.pieces()[element_index - 1];
-                        assert_eq!(preceding_piece.exit.slope, piece.entry.slope);
-                        assert_eq!(preceding_piece.exit.bank, piece.entry.bank);
-                        assert_eq!(
-                            preceding_piece.exit.horizontal_curvature,
-                            piece.entry.horizontal_curvature
-                        );
-                        assert_eq!(
-                            preceding_piece.exit.vertical_curvature,
-                            piece.entry.vertical_curvature
-                        );
-                        assert_eq!(piece.entry.slope, theme_park_sim::track::Slope::UpSteep);
-                        assert!(model.allows_piece(preceding_piece));
-                    }
-                    if context_rating.applicable {
-                        applicable_contexts += 1;
-                        assert!(
-                            context_rating.passed,
-                            "{:?} {} {cars} cars at {speed}, context {}: {context_rating:?}",
-                            piece.id, model.name, context.name
-                        );
-                        assert_train_crosses_element_after_preroll(
-                            &model,
-                            &context.circuit,
-                            piece.id,
-                            context.element_range.clone(),
-                            cars,
-                            speed,
-                            context.name,
-                        );
-                    } else {
-                        assert!(
-                            context_rating.inapplicable_reason.is_some(),
-                            "{:?} {} {cars} cars at {speed}, context {} has no applicability reason: {context_rating:?}",
-                            piece.id,
-                            model.name,
-                            context.name
-                        );
-                    }
-                }
-                assert!(
-                    applicable_contexts > 0,
-                    "{:?} {} {cars} cars at {speed}: no approach context applies",
-                    piece.id,
-                    model.name
+                    context.name
                 );
             }
         }
+        assert!(
+            applicable_contexts > 0,
+            "{:?} {} {cars} cars at {speed}: no approach context applies",
+            piece.id,
+            model.name
+        );
     }
+}
+
+#[test]
+fn every_model_rated_window_endpoint_passes_with_its_default_train_in_each_applicable_context() {
+    let cases: Vec<(&Piece, CoasterModel)> = catalog()
+        .iter()
+        .filter(|piece| piece.design_speeds.is_some())
+        .flat_map(|piece| {
+            models()
+                .into_iter()
+                .filter(|model| model.allows_piece(piece))
+                .map(move |model| (piece, model))
+        })
+        .collect();
+    let next_case = AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..std::thread::available_parallelism().unwrap().get())
+            .map(|_| {
+                scope.spawn(|| {
+                    while let Some((piece, model)) =
+                        cases.get(next_case.fetch_add(1, Ordering::Relaxed))
+                    {
+                        assert_rated_window_endpoints_pass_in_every_applicable_context(
+                            model, piece,
+                        );
+                    }
+                })
+            })
+            .collect();
+        for worker in workers {
+            if let Err(panic) = worker.join() {
+                std::panic::resume_unwind(panic);
+            }
+        }
+    });
 }
 
 #[test]

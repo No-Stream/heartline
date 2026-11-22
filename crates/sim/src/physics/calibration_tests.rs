@@ -743,52 +743,86 @@ fn print_circuit(name: &str, report: &super::TestRun) {
     );
 }
 
-#[test]
-fn incremental_force_preview_matches_fresh_player_circuit_prefixes() {
-    for (name, ride) in read_player_circuits() {
-        let (model, circuit) = build_player_circuit(&name, &ride);
-        let pieces = circuit.pieces();
-        let config = PhysicsConfig {
-            lift_speed: 5.0,
-            ..PhysicsConfig::default()
-        };
-        let mut cache = super::PreviewCache::default();
-        for length in (1..=pieces.len()).chain((1..pieces.len()).rev()) {
-            let track = &pieces[..length];
-            let cached = cache.preview(track, &model, config).unwrap();
-            let fresh = super::PreviewCache::default()
-                .preview(track, &model, config)
-                .unwrap();
-            assert_eq!(cached.status, fresh.status, "{name} length {length}");
-            assert_eq!(
-                cached.report.samples, fresh.report.samples,
-                "{name} length {length}"
-            );
-            assert_eq!(
-                cached.force_limit_exceeded, fresh.force_limit_exceeded,
-                "{name} length {length}"
-            );
-        }
-        let mut edited = pieces.to_vec();
-        let middle = edited.len() / 2;
-        edited[middle].kind = if edited[middle].kind == crate::track::PieceKind::Brakes {
-            crate::track::PieceKind::Track
-        } else {
-            crate::track::PieceKind::Brakes
-        };
-        cache.preview(pieces, &model, config).unwrap();
-        let cached = cache.preview(&edited, &model, config).unwrap();
-        let fresh = super::PreviewCache::default()
-            .preview(&edited, &model, config)
-            .unwrap();
-        assert_eq!(cached.status, fresh.status, "{name} middle edit");
-        assert_eq!(
-            cached.report.samples, fresh.report.samples,
-            "{name} middle edit"
-        );
-        assert_eq!(
-            cached.force_limit_exceeded, fresh.force_limit_exceeded,
-            "{name} middle edit"
-        );
+fn assert_incremental_preview_matches_fresh(name: &str) {
+    let ride = read_player_circuits()
+        .remove(name)
+        .expect("known player ride");
+    let (model, circuit) = build_player_circuit(name, &ride);
+    let pieces = circuit.pieces();
+    let config = PhysicsConfig {
+        lift_speed: 5.0,
+        ..PhysicsConfig::default()
+    };
+    let mut cache = super::PreviewCache::default();
+    let mut cases: Vec<(String, Vec<crate::track::Piece>, super::TrackPreview)> = Vec::new();
+    for length in (1..=pieces.len()).chain((1..pieces.len()).rev()) {
+        let track = &pieces[..length];
+        let cached = cache.preview(track, &model, config).unwrap();
+        cases.push((format!("{name} length {length}"), track.to_vec(), cached));
     }
+    let mut edited = pieces.to_vec();
+    let middle = edited.len() / 2;
+    edited[middle].kind = if edited[middle].kind == crate::track::PieceKind::Brakes {
+        crate::track::PieceKind::Track
+    } else {
+        crate::track::PieceKind::Brakes
+    };
+    cache.preview(pieces, &model, config).unwrap();
+    let cached = cache.preview(&edited, &model, config).unwrap();
+    cases.push((format!("{name} middle edit"), edited, cached));
+
+    let worker_count = std::thread::available_parallelism().map_or(1, |count| count.get());
+    std::thread::scope(|scope| {
+        for worker in 0..worker_count {
+            let (model, cases) = (&model, &cases);
+            scope.spawn(move || {
+                for (label, track, cached) in cases.iter().skip(worker).step_by(worker_count) {
+                    let fresh = super::PreviewCache::default()
+                        .preview(track, model, config)
+                        .unwrap();
+                    assert_eq!(cached.status, fresh.status, "{label}");
+                    assert_eq!(cached.report.samples, fresh.report.samples, "{label}");
+                    assert_eq!(
+                        cached.force_limit_exceeded, fresh.force_limit_exceeded,
+                        "{label}"
+                    );
+                }
+            });
+        }
+    });
+}
+
+macro_rules! incremental_force_preview_matches_fresh_prefixes {
+    ($($test_name:ident => $ride_name:literal),* $(,)?) => {
+        $(
+            #[test]
+            fn $test_name() {
+                assert_incremental_preview_matches_fresh($ride_name);
+            }
+        )*
+    };
+}
+
+incremental_force_preview_matches_fresh_prefixes! {
+    incremental_force_preview_matches_fresh_timber_tumbler_prefixes => "Timber Tumbler",
+    incremental_force_preview_matches_fresh_velocity_viper_prefixes => "Velocity Viper",
+    incremental_force_preview_matches_fresh_briar_blitz_prefixes => "Briar Blitz",
+    incremental_force_preview_matches_fresh_daisy_dash_prefixes => "Daisy Dash",
+    incremental_force_preview_matches_fresh_horizon_hawk_prefixes => "Horizon Hawk",
+}
+
+#[test]
+fn every_player_circuit_has_an_incremental_preview_test() {
+    let covered = [
+        "Timber Tumbler",
+        "Velocity Viper",
+        "Briar Blitz",
+        "Daisy Dash",
+        "Horizon Hawk",
+    ];
+    let mut player_circuit_names: Vec<_> = read_player_circuits().into_keys().collect();
+    player_circuit_names.sort();
+    let mut covered_names: Vec<_> = covered.iter().map(|name| name.to_string()).collect();
+    covered_names.sort();
+    assert_eq!(player_circuit_names, covered_names);
 }

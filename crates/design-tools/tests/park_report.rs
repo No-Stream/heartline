@@ -78,8 +78,11 @@ fn riders_per_hour(output: &str) -> (f64, f64) {
 fn horizon_hawk_park_report_is_deterministic_and_matches_the_golden() {
     let park_path = repository_root().join("content/parks/horizon-hawk.park.json");
     let park_path = park_path.to_string_lossy();
-    let first = report(&park_path);
-    let second = report(&park_path);
+    let (first, second) = std::thread::scope(|scope| {
+        let first = scope.spawn(|| report(&park_path));
+        let second = scope.spawn(|| report(&park_path));
+        (first.join().unwrap(), second.join().unwrap())
+    });
 
     assert_eq!(first, second);
     assert_eq!(first, include_str!("goldens/horizon_hawk_park_report.txt"));
