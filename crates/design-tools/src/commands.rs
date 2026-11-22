@@ -3833,142 +3833,172 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<CliResponse, String> {
     if paths.is_empty() {
         return Err("usage: tools/design check <ride file> ...".into());
     }
+    let ride_checks: Vec<Result<RideCheck, String>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = paths
+            .iter()
+            .map(|path| scope.spawn(|| check_ride(path)))
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("ride check thread panicked"))
+            .collect()
+    });
     let mut rows = Vec::new();
     let mut text = String::new();
     let mut failed_ride_summaries = Vec::new();
-    for path in paths {
-        let bytes = fs::read(path).map_err(|error| format!("read ride {path}: {error}"))?;
-        let ride = RideFile::from_json_slice(&bytes)
-            .map_err(|error| format!("parse ride {path}: {error}"))?;
-        let model = validate_model(&ride.model)?;
-        theme_park_sim::track::saved_shape_check::check_saved_shaped_geometry(&ride)
-            .map_err(|error| format!("{path}: stale shaped geometry: {error}"))?;
-        let (test_run, estimates, browser_estimates, circuit) =
-            test_ride_with_browser_estimates(&ride).map_err(|error| format!("{path}: {error}"))?;
-        let agreement = compare_estimates(&ride, &test_run, &estimates)?;
-        let rated_speed_margins = crate::report::rated_speed_margins(&circuit, &model)
-            .map_err(|error| format!("{path}: {error}"))?;
-        let rated_speed_failures = rated_speed_margin_failures(&rated_speed_margins);
-        let default_test_run = default_physics_test_run(&circuit, &model);
-        let force_headroom = [
-            force_headroom_results(
-                &default_test_run,
-                model.design_force_targets,
-                "default physics",
-            ),
-            force_headroom_results(
-                &test_run,
-                model.design_force_targets,
-                "construction-test physics",
-            ),
-        ]
-        .concat();
-        let force_headroom_failures: Vec<_> = force_headroom
-            .iter()
-            .filter(|result| !result.passed)
-            .map(|result| result.failure())
-            .collect();
-        let expectation_results = evaluate_expectations(&ride, &test_run, &model, &circuit)?;
-        let default_expectation_results =
-            evaluate_expectations(&ride, &default_test_run, &model, &circuit)?;
-        let failures: Vec<_> = expectation_results
-            .iter()
-            .filter(|result| !result.passed)
-            .map(ExpectationResult::format)
-            .collect();
-        let default_expectation_failures: Vec<_> = default_expectation_results
-            .iter()
-            .filter(|result| !result.passed)
-            .map(|result| format!("default physics: {}", result.format()))
-            .collect();
-        let design_margins_required = ride
-            .expect
-            .as_ref()
-            .and_then(|expectation| expectation.design_margins)
-            .unwrap_or(false);
-        let failed_gates = check_failed_gates(
-            &failures,
-            &default_expectation_failures,
-            &agreement,
-            &rated_speed_failures,
-            &force_headroom_failures,
-            design_margins_required,
-        );
-        if !failed_gates.is_empty() {
-            failed_ride_summaries.push(format!("{}: {}", ride.name, failed_gates.join(", ")));
-        }
-        writeln!(
-            text,
-            "{}: expectations {}; native agreement {}",
-            ride.name,
-            if failures.is_empty() && default_expectation_failures.is_empty() {
-                "pass"
-            } else {
-                "fail"
-            },
-            if agreement.passed { "pass" } else { "fail" }
-        )
-        .unwrap();
-        text.push_str(&crate::report::format_rated_speed_margins(
-            &rated_speed_margins,
-        ));
-        text.push_str(&format_force_headroom_results(&force_headroom));
-        for result in &expectation_results {
-            writeln!(text, "  {}", result.format()).unwrap();
-        }
-        for result in &default_expectation_results {
-            writeln!(text, "  default physics {}", result.format()).unwrap();
-        }
-        for failure in &rated_speed_failures {
-            writeln!(text, "  rated speed margin failure: {failure}").unwrap();
-        }
-        for failure in &force_headroom_failures {
-            writeln!(text, "  force headroom failure: {failure}").unwrap();
-        }
-        for failure in &agreement.failures {
-            writeln!(
-                text,
-                "  piece {} {:?} {}: {}",
-                failure.piece_index, failure.check, failure.metric, failure.reason
-            )
-            .unwrap();
-        }
-        rows.push(json!({
-            "path": path,
-            "name": ride.name,
-            "agreementGate": "enabled; finished-track agreement failures exit nonzero",
-            "ratedSpeedMargins": rated_speed_margins.iter().map(|margin| json!({
-                "pieceIndex": margin.piece_index,
-                "pieceId": margin.piece_id,
-                "carIndex": margin.car_index,
-                "entrySpeed": margin.entry_speed,
-                "ratedWindow": [margin.window.0, margin.window.1],
-                "ruleMargin": margin.rule_margin,
-                "status": if margin.unavailable_reason.is_some() {
-                    "UNAVAILABLE"
-                } else {
-                    match margin.rule_margin {
-                        Some(rule_margin) if rule_margin >= 0.0 => "PASS",
-                        Some(_) => "FAIL",
-                        None => "UNAVAILABLE",
-                    }
-                },
-                "unavailableReason": margin.unavailable_reason,
-                "physicsConfiguration": if margin.construction_test { "construction-test" } else { "default" },
-            })).collect::<Vec<_>>(),
-            "expectations": expectation_results.iter().map(ExpectationResult::json).collect::<Vec<_>>(),
-            "expectationFailures": failures,
-            "defaultPhysicsExpectations": default_expectation_results.iter().map(ExpectationResult::json).collect::<Vec<_>>(),
-            "defaultPhysicsExpectationFailures": default_expectation_failures,
-            "ratedSpeedMarginFailures": rated_speed_failures,
-            "forceHeadroom": force_headroom,
-            "forceHeadroomFailures": force_headroom_failures,
-            "agreement": agreement_json(&agreement),
-            "browserEstimates": browser_estimates,
-            "reportSamples": test_run.samples,
-        }));
+    for ride_check in ride_checks {
+        let ride_check = ride_check?;
+        rows.push(ride_check.row);
+        text.push_str(&ride_check.text);
+        failed_ride_summaries.extend(ride_check.failed_summary);
     }
     check_response(json_mode, rows, text, &failed_ride_summaries)
+}
+
+struct RideCheck {
+    row: Value,
+    text: String,
+    failed_summary: Option<String>,
+}
+
+fn check_ride(path: &String) -> Result<RideCheck, String> {
+    let mut text = String::new();
+    let mut failed_summary = None;
+    let bytes = fs::read(path).map_err(|error| format!("read ride {path}: {error}"))?;
+    let ride =
+        RideFile::from_json_slice(&bytes).map_err(|error| format!("parse ride {path}: {error}"))?;
+    let model = validate_model(&ride.model)?;
+    theme_park_sim::track::saved_shape_check::check_saved_shaped_geometry(&ride)
+        .map_err(|error| format!("{path}: stale shaped geometry: {error}"))?;
+    let (test_run, estimates, browser_estimates, circuit) =
+        test_ride_with_browser_estimates(&ride).map_err(|error| format!("{path}: {error}"))?;
+    let agreement = compare_estimates(&ride, &test_run, &estimates)?;
+    let rated_speed_margins = crate::report::rated_speed_margins(&circuit, &model)
+        .map_err(|error| format!("{path}: {error}"))?;
+    let rated_speed_failures = rated_speed_margin_failures(&rated_speed_margins);
+    let default_test_run = default_physics_test_run(&circuit, &model);
+    let force_headroom = [
+        force_headroom_results(
+            &default_test_run,
+            model.design_force_targets,
+            "default physics",
+        ),
+        force_headroom_results(
+            &test_run,
+            model.design_force_targets,
+            "construction-test physics",
+        ),
+    ]
+    .concat();
+    let force_headroom_failures: Vec<_> = force_headroom
+        .iter()
+        .filter(|result| !result.passed)
+        .map(|result| result.failure())
+        .collect();
+    let expectation_results = evaluate_expectations(&ride, &test_run, &model, &circuit)?;
+    let default_expectation_results =
+        evaluate_expectations(&ride, &default_test_run, &model, &circuit)?;
+    let failures: Vec<_> = expectation_results
+        .iter()
+        .filter(|result| !result.passed)
+        .map(ExpectationResult::format)
+        .collect();
+    let default_expectation_failures: Vec<_> = default_expectation_results
+        .iter()
+        .filter(|result| !result.passed)
+        .map(|result| format!("default physics: {}", result.format()))
+        .collect();
+    let design_margins_required = ride
+        .expect
+        .as_ref()
+        .and_then(|expectation| expectation.design_margins)
+        .unwrap_or(false);
+    let failed_gates = check_failed_gates(
+        &failures,
+        &default_expectation_failures,
+        &agreement,
+        &rated_speed_failures,
+        &force_headroom_failures,
+        design_margins_required,
+    );
+    if !failed_gates.is_empty() {
+        failed_summary = Some(format!("{}: {}", ride.name, failed_gates.join(", ")));
+    }
+    writeln!(
+        text,
+        "{}: expectations {}; native agreement {}",
+        ride.name,
+        if failures.is_empty() && default_expectation_failures.is_empty() {
+            "pass"
+        } else {
+            "fail"
+        },
+        if agreement.passed { "pass" } else { "fail" }
+    )
+    .unwrap();
+    text.push_str(&crate::report::format_rated_speed_margins(
+        &rated_speed_margins,
+    ));
+    text.push_str(&format_force_headroom_results(&force_headroom));
+    for result in &expectation_results {
+        writeln!(text, "  {}", result.format()).unwrap();
+    }
+    for result in &default_expectation_results {
+        writeln!(text, "  default physics {}", result.format()).unwrap();
+    }
+    for failure in &rated_speed_failures {
+        writeln!(text, "  rated speed margin failure: {failure}").unwrap();
+    }
+    for failure in &force_headroom_failures {
+        writeln!(text, "  force headroom failure: {failure}").unwrap();
+    }
+    for failure in &agreement.failures {
+        writeln!(
+            text,
+            "  piece {} {:?} {}: {}",
+            failure.piece_index, failure.check, failure.metric, failure.reason
+        )
+        .unwrap();
+    }
+    let row = json!({
+        "path": path,
+        "name": ride.name,
+        "agreementGate": "enabled; finished-track agreement failures exit nonzero",
+        "ratedSpeedMargins": rated_speed_margins.iter().map(|margin| json!({
+            "pieceIndex": margin.piece_index,
+            "pieceId": margin.piece_id,
+            "carIndex": margin.car_index,
+            "entrySpeed": margin.entry_speed,
+            "ratedWindow": [margin.window.0, margin.window.1],
+            "ruleMargin": margin.rule_margin,
+            "status": if margin.unavailable_reason.is_some() {
+                "UNAVAILABLE"
+            } else {
+                match margin.rule_margin {
+                    Some(rule_margin) if rule_margin >= 0.0 => "PASS",
+                    Some(_) => "FAIL",
+                    None => "UNAVAILABLE",
+                }
+            },
+            "unavailableReason": margin.unavailable_reason,
+            "physicsConfiguration": if margin.construction_test { "construction-test" } else { "default" },
+        })).collect::<Vec<_>>(),
+        "expectations": expectation_results.iter().map(ExpectationResult::json).collect::<Vec<_>>(),
+        "expectationFailures": failures,
+        "defaultPhysicsExpectations": default_expectation_results.iter().map(ExpectationResult::json).collect::<Vec<_>>(),
+        "defaultPhysicsExpectationFailures": default_expectation_failures,
+        "ratedSpeedMarginFailures": rated_speed_failures,
+        "forceHeadroom": force_headroom,
+        "forceHeadroomFailures": force_headroom_failures,
+        "agreement": agreement_json(&agreement),
+        "browserEstimates": browser_estimates,
+        "reportSamples": test_run.samples,
+    });
+    Ok(RideCheck {
+        row,
+        text,
+        failed_summary,
+    })
 }
 
 /// Names the check gates a ride failed; rated-margin and force-headroom failures only gate

@@ -1391,44 +1391,58 @@ mod tests {
 
     #[test]
     fn session_outputs_match_the_worker_benchmark_digest_for_all_three_circuits() {
-        for (ride_name, model_key) in [
-            ("Timber Tumbler", "hybrid"),
-            ("Velocity Viper", "velocity_viper"),
-            ("Briar Blitz", "wooden_twister"),
-        ] {
-            let ride = fixture_ride_file(ride_name);
-            assert_eq!(ride.model, model_key, "{ride_name} ride model");
-            let commands = ride_commands(&ride);
-            let expected = benchmark_trace(ride_name, model_key, &commands);
-            let actual = session_trace(model_key, &commands);
-            assert_eq!(
-                trace_digest(&actual),
-                trace_digest(&expected),
-                "{ride_name}: {}",
-                first_trace_difference(&expected, &actual)
-            );
-        }
+        std::thread::scope(|scope| {
+            for (ride_name, model_key) in [
+                ("Timber Tumbler", "hybrid"),
+                ("Velocity Viper", "velocity_viper"),
+                ("Briar Blitz", "wooden_twister"),
+            ] {
+                scope.spawn(move || {
+                    let ride = fixture_ride_file(ride_name);
+                    assert_eq!(ride.model, model_key, "{ride_name} ride model");
+                    let commands = ride_commands(&ride);
+                    let expected = benchmark_trace(ride_name, model_key, &commands);
+                    let actual = session_trace(model_key, &commands);
+                    assert_eq!(
+                        trace_digest(&actual),
+                        trace_digest(&expected),
+                        "{ride_name}: {}",
+                        first_trace_difference(&expected, &actual)
+                    );
+                });
+            }
+        });
     }
 
     #[test]
     fn classic_builder_outputs_keep_the_recorded_digests() {
-        let mut mismatches = Vec::new();
-        for (ride_name, model_key, expected_digest) in [
-            ("Timber Tumbler", "hybrid", 0xc4a457b50554c017),
-            ("Velocity Viper", "velocity_viper", 0x31ecbb395bf3d36d),
-            ("Briar Blitz", "wooden_twister", 0x1c5eaef31b4a2a0c),
-        ] {
-            let commands = circuit_lines(ride_name);
-            let actual = session_trace(model_key, &commands);
-            let actual_digest = trace_digest(&actual);
-            if actual_digest != expected_digest {
-                let benchmark = benchmark_trace(ride_name, model_key, &commands);
-                mismatches.push(format!(
-                    "{ride_name}: expected {expected_digest:016x}, got {actual_digest:016x} ({})",
-                    first_trace_difference(&benchmark, &actual)
-                ));
-            }
-        }
+        let mismatches: Vec<String> = std::thread::scope(|scope| {
+            let checks: Vec<_> = [
+                ("Timber Tumbler", "hybrid", 0xc4a457b50554c017),
+                ("Velocity Viper", "velocity_viper", 0x31ecbb395bf3d36d),
+                ("Briar Blitz", "wooden_twister", 0x1c5eaef31b4a2a0c),
+            ]
+            .into_iter()
+            .map(|(ride_name, model_key, expected_digest)| {
+                scope.spawn(move || {
+                    let commands = circuit_lines(ride_name);
+                    let actual = session_trace(model_key, &commands);
+                    let actual_digest = trace_digest(&actual);
+                    (actual_digest != expected_digest).then(|| {
+                        let benchmark = benchmark_trace(ride_name, model_key, &commands);
+                        format!(
+                            "{ride_name}: expected {expected_digest:016x}, got {actual_digest:016x} ({})",
+                            first_trace_difference(&benchmark, &actual)
+                        )
+                    })
+                })
+            })
+            .collect();
+            checks
+                .into_iter()
+                .filter_map(|check| check.join().unwrap())
+                .collect()
+        });
         assert!(
             mismatches.is_empty(),
             "classic builder digest mismatches:\n{}",
@@ -1508,50 +1522,60 @@ mod tests {
 
     #[test]
     fn content_ride_builder_output_traces_match_recorded_baselines() {
-        let mut mismatches = Vec::new();
-        for (ride_name, ride_json, expected_digest) in [
-            (
-                "Briar Blitz",
-                include_str!("../../../content/rides/briar-blitz.ride.json"),
-                0x8984726f418c071b,
-            ),
-            (
-                "Browser agreement fast circuit",
-                include_str!("../../../content/rides/browser-agreement-fast.ride.json"),
-                0xcf80a65b2ff78523,
-            ),
-            (
-                "Daisy Dash",
-                include_str!("../../../content/rides/daisy-dash.ride.json"),
-                0xdf5864855eff5eab,
-            ),
-            (
-                "Horizon Hawk",
-                include_str!("../../../content/rides/horizon-hawk.ride.json"),
-                0x948e8076fab83fdd,
-            ),
-            (
-                "Timber Tumbler",
-                include_str!("../../../content/rides/timber-tumbler.ride.json"),
-                0x371e6a77ca33cb73,
-            ),
-            (
-                "Velocity Viper",
-                include_str!("../../../content/rides/velocity-viper.ride.json"),
-                0x210ac8589df9fa47,
-            ),
-        ] {
-            let ride: RideFile = serde_json::from_str(ride_json).unwrap();
-            assert_eq!(ride.name, ride_name);
-            let trace = content_ride_trace(&ride);
-            let actual_digest = trace_digest(&trace);
-            if actual_digest != expected_digest {
-                mismatches.push(format!(
-                    "{ride_name}: expected {expected_digest:016x}, got {actual_digest:016x} ({} trace calls)",
-                    trace.len()
-                ));
-            }
-        }
+        let mismatches: Vec<String> = std::thread::scope(|scope| {
+            let checks: Vec<_> = [
+                (
+                    "Briar Blitz",
+                    include_str!("../../../content/rides/briar-blitz.ride.json"),
+                    0x8984726f418c071b,
+                ),
+                (
+                    "Browser agreement fast circuit",
+                    include_str!("../../../content/rides/browser-agreement-fast.ride.json"),
+                    0xcf80a65b2ff78523,
+                ),
+                (
+                    "Daisy Dash",
+                    include_str!("../../../content/rides/daisy-dash.ride.json"),
+                    0xdf5864855eff5eab,
+                ),
+                (
+                    "Horizon Hawk",
+                    include_str!("../../../content/rides/horizon-hawk.ride.json"),
+                    0x948e8076fab83fdd,
+                ),
+                (
+                    "Timber Tumbler",
+                    include_str!("../../../content/rides/timber-tumbler.ride.json"),
+                    0x371e6a77ca33cb73,
+                ),
+                (
+                    "Velocity Viper",
+                    include_str!("../../../content/rides/velocity-viper.ride.json"),
+                    0x210ac8589df9fa47,
+                ),
+            ]
+            .into_iter()
+            .map(|(ride_name, ride_json, expected_digest)| {
+                scope.spawn(move || {
+                    let ride: RideFile = serde_json::from_str(ride_json).unwrap();
+                    assert_eq!(ride.name, ride_name);
+                    let trace = content_ride_trace(&ride);
+                    let actual_digest = trace_digest(&trace);
+                    (actual_digest != expected_digest).then(|| {
+                        format!(
+                            "{ride_name}: expected {expected_digest:016x}, got {actual_digest:016x} ({} trace calls)",
+                            trace.len()
+                        )
+                    })
+                })
+            })
+            .collect();
+            checks
+                .into_iter()
+                .filter_map(|check| check.join().unwrap())
+                .collect()
+        });
         assert!(
             mismatches.is_empty(),
             "content ride trace mismatches:\n{}",
