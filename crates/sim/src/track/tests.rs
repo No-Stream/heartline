@@ -111,15 +111,18 @@ fn speed_matched_turn_catalog_banks_for_each_design_speed() {
                 let before = piece.sample(distance - heart_curvature_step).heart;
                 let after = piece.sample(distance + heart_curvature_step).heart;
                 let heart_first = (after - before) / (2.0 * heart_curvature_step);
-                let heart_second =
-                    (before - sample.heart * 2.0 + after) / heart_curvature_step.powi(2);
-                let heart_horizontal_speed = (heart_first.x.powi(2) + heart_first.y.powi(2)).sqrt();
+                let heart_second = (before - sample.heart * 2.0 + after)
+                    / crate::math::powi(heart_curvature_step, 2);
+                let heart_horizontal_speed = (crate::math::powi(heart_first.x, 2)
+                    + crate::math::powi(heart_first.y, 2))
+                .sqrt();
                 let heart_signed_curvature = (heart_first.x * heart_second.y
                     - heart_first.y * heart_second.x)
-                    / heart_horizontal_speed.powi(3);
-                let expected_bank = (design_speed.powi(2) * heart_signed_curvature
-                    / crate::physics::GRAVITY)
-                    .atan();
+                    / crate::math::powi(heart_horizontal_speed, 3);
+                let expected_bank = crate::math::atan(
+                    crate::math::powi(design_speed, 2) * heart_signed_curvature
+                        / crate::physics::GRAVITY,
+                );
                 assert!(
                     (sample.roll - expected_bank).abs() < 0.002,
                     "{id:?} bank should follow heart-path curvature at {distance:.2} m: {:.6} vs {:.6} rad",
@@ -254,11 +257,11 @@ fn speed_matched_turn_roll_acceleration_is_continuous_at_connectors_and_center()
         let start_acceleration_at_step = (roll_at(2.0 * connector_step_metres)
             - 2.0 * roll_at(connector_step_metres)
             + start_roll)
-            / connector_step_metres.powi(2);
+            / crate::math::powi(connector_step_metres, 2);
         let half_connector_step = connector_step_metres / 2.0;
         let start_acceleration_at_half_step =
             (roll_at(connector_step_metres) - 2.0 * roll_at(half_connector_step) + start_roll)
-                / half_connector_step.powi(2);
+                / crate::math::powi(half_connector_step, 2);
         assert!(
             start_acceleration_at_half_step.abs() <= start_acceleration_at_step.abs() * 0.75 + 1e-4,
             "{:?} entry roll acceleration does not approach the level connector smoothly: {:.6} then {:.6} rad/m²",
@@ -271,11 +274,11 @@ fn speed_matched_turn_roll_acceleration_is_continuous_at_connectors_and_center()
         let end_acceleration_at_step = (end_roll
             - 2.0 * roll_at(piece.length() - connector_step_metres)
             + roll_at(piece.length() - 2.0 * connector_step_metres))
-            / connector_step_metres.powi(2);
+            / crate::math::powi(connector_step_metres, 2);
         let end_acceleration_at_half_step = (end_roll
             - 2.0 * roll_at(piece.length() - half_connector_step)
             + roll_at(piece.length() - connector_step_metres))
-            / half_connector_step.powi(2);
+            / crate::math::powi(half_connector_step, 2);
         assert!(
             end_acceleration_at_half_step.abs() <= end_acceleration_at_step.abs() * 0.75 + 1e-4,
             "{:?} exit roll acceleration does not approach the level connector smoothly: {:.6} then {:.6} rad/m²",
@@ -288,11 +291,11 @@ fn speed_matched_turn_roll_acceleration_is_continuous_at_connectors_and_center()
         let left_center_acceleration = (roll_at(center)
             - 2.0 * roll_at(center - center_step_metres)
             + roll_at(center - 2.0 * center_step_metres))
-            / center_step_metres.powi(2);
+            / crate::math::powi(center_step_metres, 2);
         let right_center_acceleration = (roll_at(center + 2.0 * center_step_metres)
             - 2.0 * roll_at(center + center_step_metres)
             + roll_at(center))
-            / center_step_metres.powi(2);
+            / crate::math::powi(center_step_metres, 2);
         assert!(
             (left_center_acceleration - right_center_acceleration).abs() <= 0.01,
             "{:?} roll acceleration is discontinuous at the turn center: left {:.6}, right {:.6} rad/m²",
@@ -345,7 +348,7 @@ fn speed_matched_turns_keep_the_heart_on_a_planar_path_with_a_steady_center() {
         let exit_tangent = piece.exit.tangent().unit();
         let hand_sign = if hand == Hand::Left { 1.0 } else { -1.0 };
         let signed_turn = |from: Vec3, to: Vec3| {
-            (from.x * to.y - from.y * to.x).atan2(from.x * to.x + from.y * to.y)
+            crate::math::atan2(from.x * to.y - from.y * to.x, from.x * to.x + from.y * to.y)
         };
         let expected_turn = hand_sign * signed_turn(entry_tangent, exit_tangent);
         assert!(
@@ -1199,8 +1202,8 @@ fn near_vec_with_tolerance(a: Vec3, b: Vec3, tolerance: f64) {
     assert!((a.z - b.z).abs() < tolerance, "{a:?} != {b:?}");
 }
 fn near_angle(a: f64, b: f64) {
-    near((a - b).sin(), 0.0);
-    near((a - b).cos(), 1.0);
+    near(crate::math::sin(a - b), 0.0);
+    near(crate::math::cos(a - b), 1.0);
 }
 
 #[test]
@@ -1290,8 +1293,8 @@ fn mirrored_geometry_matches(piece: &Piece, candidate: &Piece) -> bool {
         let expected_up = Vec3::new(original.up.x, -original.up.y, original.up.z);
         (mirrored.position - expected_position).length() < 1e-8
             && (mirrored.up - expected_up).length() < 1e-8
-            && (mirrored.roll + original.roll).sin().abs() < 1e-8
-            && (mirrored.roll + original.roll).cos() > 1.0 - 1e-8
+            && crate::math::sin(mirrored.roll + original.roll).abs() < 1e-8
+            && crate::math::cos(mirrored.roll + original.roll) > 1.0 - 1e-8
     })
 }
 
@@ -1918,21 +1921,19 @@ fn sixty_degree_slope_templates_have_grid_aligned_geometry() {
         );
         assert!((piece.exit.position().z - piece.entry.position().z).abs() > 0.0);
         if matches!(id, SixtyUp | SixtyDown) {
-            let horizontal_distance = (piece.exit.position() - piece.entry.position())
-                .x
-                .hypot((piece.exit.position() - piece.entry.position()).y);
+            let position_delta = piece.exit.position() - piece.entry.position();
+            let horizontal_distance = crate::math::hypot(position_delta.x, position_delta.y);
             let vertical_distance = (piece.exit.position().z - piece.entry.position().z).abs();
-            let grid_angle = vertical_distance.atan2(horizontal_distance).to_degrees();
+            let grid_angle =
+                crate::math::atan2(vertical_distance, horizontal_distance).to_degrees();
             assert!(
                 (grid_angle - 60.0).abs() < 1.0,
                 "{id:?}: {grid_angle:.3} degrees"
             );
         }
         for state in [piece.entry, piece.exit] {
-            let angle = state
-                .tangent()
-                .z
-                .atan2(state.tangent().x.hypot(state.tangent().y))
+            let tangent = state.tangent();
+            let angle = crate::math::atan2(tangent.z, crate::math::hypot(tangent.x, tangent.y))
                 .to_degrees()
                 .abs();
             if state.slope == Slope::UpSixty || state.slope == Slope::DownSixty {
@@ -2846,9 +2847,10 @@ fn barrel_drop_supports_stay_outside_inverted_sections() {
         assert!(inverted.up.z < 0.0);
         assert!(
             supports.iter().any(|support| {
-                (support.anchor.x - inverted.position.x)
-                    .hypot(support.anchor.y - inverted.position.y)
-                    < 8.0
+                crate::math::hypot(
+                    support.anchor.x - inverted.position.x,
+                    support.anchor.y - inverted.position.y,
+                ) < 8.0
                     && support.footing.z < support.anchor.z
             }),
             "{id:?}: nearby grounded support is still required"

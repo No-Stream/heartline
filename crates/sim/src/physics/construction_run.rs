@@ -246,7 +246,9 @@ mod tests {
             strength: 1.0,
             distance: 1.0,
         }]);
-        assert!((report.excitement - excitement - (1.0 - (-0.5_f64).exp())).abs() < 1e-10);
+        assert!(
+            (report.excitement - excitement - (1.0 - crate::math::exp(-0.5_f64))).abs() < 1e-10
+        );
         assert!((report.intensity - intensity).abs() < 1e-10);
     }
 

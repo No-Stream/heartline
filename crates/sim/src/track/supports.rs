@@ -654,8 +654,11 @@ fn boundary_candidates<'a>(
         .flat_map(|&x| candidate_y.iter().map(move |&y| (x, y)))
         .collect();
     candidates.sort_by(|first, second| {
-        ((first.0 - anchor.x).powi(2) + (first.1 - anchor.y).powi(2))
-            .total_cmp(&((second.0 - anchor.x).powi(2) + (second.1 - anchor.y).powi(2)))
+        (crate::math::powi(first.0 - anchor.x, 2) + crate::math::powi(first.1 - anchor.y, 2))
+            .total_cmp(
+                &(crate::math::powi(second.0 - anchor.x, 2)
+                    + crate::math::powi(second.1 - anchor.y, 2)),
+            )
     });
     candidates
 }
@@ -690,7 +693,7 @@ fn footing_candidates<'a>(
 }
 
 fn additional_footing_candidates(anchor: Vec3, obstacles: &[&SupportObstacle]) -> Vec<(f64, f64)> {
-    let radius_squared = f64::from(SUPPORT_SEARCH_RADIUS_METRES).powi(2);
+    let radius_squared = crate::math::powi(f64::from(SUPPORT_SEARCH_RADIUS_METRES), 2);
     let mut additional: Vec<_> = (-SUPPORT_SEARCH_RADIUS_METRES..=SUPPORT_SEARCH_RADIUS_METRES)
         .flat_map(|dx| {
             (-SUPPORT_SEARCH_RADIUS_METRES..=SUPPORT_SEARCH_RADIUS_METRES).map(move |dy| (dx, dy))
@@ -703,10 +706,15 @@ fn additional_footing_candidates(anchor: Vec3, obstacles: &[&SupportObstacle]) -
         obstacles.iter().copied(),
         &[BEAM_CLEARANCE, FOOTER_HALF_WIDTH],
     ));
-    additional.retain(|(x, y)| (x - anchor.x).powi(2) + (y - anchor.y).powi(2) <= radius_squared);
+    additional.retain(|(x, y)| {
+        crate::math::powi(x - anchor.x, 2) + crate::math::powi(y - anchor.y, 2) <= radius_squared
+    });
     additional.sort_by(|first, second| {
-        ((first.0 - anchor.x).powi(2) + (first.1 - anchor.y).powi(2))
-            .total_cmp(&((second.0 - anchor.x).powi(2) + (second.1 - anchor.y).powi(2)))
+        (crate::math::powi(first.0 - anchor.x, 2) + crate::math::powi(first.1 - anchor.y, 2))
+            .total_cmp(
+                &(crate::math::powi(second.0 - anchor.x, 2)
+                    + crate::math::powi(second.1 - anchor.y, 2)),
+            )
             .then_with(|| first.0.total_cmp(&second.0))
             .then_with(|| first.1.total_cmp(&second.1))
     });

@@ -179,7 +179,12 @@ impl TrackState {
     }
     pub fn tangent(self) -> Vec3 {
         let a = f64::from(self.heading.index()) * FRAC_PI_4;
-        Vec3::new(a.cos(), a.sin(), self.slope.gradient()).unit()
+        Vec3::new(
+            crate::math::cos(a),
+            crate::math::sin(a),
+            self.slope.gradient(),
+        )
+        .unit()
     }
 
     pub(crate) fn hash_into(self, hash: &mut StateHasher) {
@@ -770,7 +775,7 @@ impl TrackState {
     pub(crate) fn curvature_vector(self) -> Vec3 {
         let tangent = self.tangent();
         let angle = f64::from(self.heading.index()) * FRAC_PI_4;
-        let left = Vec3::new(-angle.sin(), angle.cos(), 0.0);
+        let left = Vec3::new(-crate::math::sin(angle), crate::math::cos(angle), 0.0);
         let up = tangent.cross(left);
         let scale = if self.heading.index() % 2 == 0 {
             1.0
@@ -800,7 +805,7 @@ fn smooth(t: f64) -> (f64, f64, f64) {
     )
 }
 fn curvature(velocity: Vec3, acceleration: Vec3) -> f64 {
-    velocity.cross(acceleration).length() / velocity.length().powi(3)
+    velocity.cross(acceleration).length() / crate::math::powi(velocity.length(), 3)
 }
 pub(crate) const SPEED_TURN_STEPS: usize = 4096;
 const SPEED_TURN_RAMP: f64 = 0.39;
@@ -838,73 +843,33 @@ fn speed_turn_bank_fraction(t: f64) -> f64 {
     let easing = SPEED_TURN_EASING;
     if u < easing {
         let v = u / easing;
-        easing * (v.powi(3) - 0.5 * v.powi(4)) / (1.0 - easing)
+        easing * (crate::math::powi(v, 3) - 0.5 * crate::math::powi(v, 4)) / (1.0 - easing)
     } else if u > 1.0 - easing {
         let v = (1.0 - u) / easing;
-        1.0 - easing * (v.powi(3) - 0.5 * v.powi(4)) / (1.0 - easing)
+        1.0 - easing * (crate::math::powi(v, 3) - 0.5 * crate::math::powi(v, 4)) / (1.0 - easing)
     } else {
         (u - easing / 2.0) / (1.0 - easing)
     }
 }
 
-fn track_sin(shape: &Shape, value: f64) -> f64 {
-    if matches!(shape, Shape::ResolvedBank { .. }) {
-        libm::sin(value)
-    } else {
-        value.sin()
-    }
+fn track_sin(value: f64) -> f64 {
+    crate::math::sin(value)
 }
 
-fn track_cos(shape: &Shape, value: f64) -> f64 {
-    if matches!(shape, Shape::ResolvedBank { .. }) {
-        libm::cos(value)
-    } else {
-        value.cos()
-    }
+fn track_cos(value: f64) -> f64 {
+    crate::math::cos(value)
 }
 
 #[cfg(test)]
 mod shaped_turn_math_tests {
-    use super::{Shape, track_cos, track_sin};
-    use crate::track::ride_file::{RideFile, RideStep};
-    use std::sync::Arc;
+    use super::{track_cos, track_sin};
 
     #[test]
-    fn shaped_turn_math_uses_portable_trigonometry_and_preserves_classic_math() {
-        let ride = RideFile::from_json_str(include_str!(
-            "../../../../content/rides/horizon-hawk.ride.json"
-        ))
-        .expect("Horizon Hawk ride file is valid");
-        let first_shaped_spec = ride
-            .steps
-            .iter()
-            .find_map(|step| match step {
-                RideStep::Shape(shape) => Some(shape.spec.clone()),
-                _ => None,
-            })
-            .expect("Horizon Hawk contains a shaped turn");
-        let shaped_turn = Shape::ResolvedBank {
-            spec: Arc::new(first_shaped_spec),
-        };
-        let classic_turn = Shape::SpeedBank { design_speed: 28.0 };
+    fn track_math_uses_the_libm_reference_results() {
         let roll_angle = f64::from_bits(0x3fc0_7ea3_1ae8_ab71);
 
-        assert_eq!(
-            track_sin(&shaped_turn, roll_angle).to_bits(),
-            0x3fc0_72f5_bc71_89c4
-        );
-        assert_eq!(
-            track_cos(&shaped_turn, roll_angle).to_bits(),
-            0x3fef_bc13_5335_81bb
-        );
-        assert_eq!(
-            track_sin(&classic_turn, roll_angle).to_bits(),
-            roll_angle.sin().to_bits()
-        );
-        assert_eq!(
-            track_cos(&classic_turn, roll_angle).to_bits(),
-            roll_angle.cos().to_bits()
-        );
+        assert_eq!(track_sin(roll_angle).to_bits(), 0x3fc0_72f5_bc71_89c4);
+        assert_eq!(track_cos(roll_angle).to_bits(), 0x3fef_bc13_5335_81bb);
     }
 }
 
@@ -914,8 +879,8 @@ fn build_speed_turn(radius: f64, design_speed: f64) -> SpeedTurnGeometry {
         let curvatures: Vec<_> = (0..SPEED_TURN_STEPS)
             .map(|index| {
                 let t = (index as f64 + 0.5) * step;
-                (peak_bank * speed_turn_bank_fraction(t)).tan() * crate::physics::GRAVITY
-                    / design_speed.powi(2)
+                crate::math::tan(peak_bank * speed_turn_bank_fraction(t)) * crate::physics::GRAVITY
+                    / crate::math::powi(design_speed, 2)
             })
             .collect();
         let length = std::f64::consts::FRAC_PI_2 / (curvatures.iter().sum::<f64>() * step);
@@ -926,8 +891,8 @@ fn build_speed_turn(radius: f64, design_speed: f64) -> SpeedTurnGeometry {
         for curvature in curvatures {
             let angle = curvature * distance;
             let midpoint = heading + angle / 2.0;
-            x += distance * midpoint.cos();
-            y += distance * midpoint.sin();
+            x += distance * crate::math::cos(midpoint);
+            y += distance * crate::math::sin(midpoint);
             heading += angle;
             knots.push(SpeedTurnKnot { x, y, heading });
         }
@@ -971,7 +936,8 @@ pub(crate) fn shaped_speed_turn_geometry(
         integrate_shaped_turn_at_bank(design_speed_mps, resolved_bank, speed_loss_fraction)
             .expect("shaped turn heart-curvature has a real solution");
     if raw_radius_m < minimum_radius_m {
-        resolved_bank = (resolved_bank.tan() * raw_radius_m / minimum_radius_m).atan();
+        resolved_bank =
+            crate::math::atan(crate::math::tan(resolved_bank) * raw_radius_m / minimum_radius_m);
         (raw_radius_m, length_m, knots) =
             integrate_shaped_turn_at_bank(design_speed_mps, resolved_bank, speed_loss_fraction)
                 .expect("radius-limited shaped turn has a real solution");
@@ -1043,8 +1009,9 @@ fn integrate_shaped_turn_at_bank(
         let t = (index as f64 + 0.5) / SPEED_TURN_STEPS as f64;
         let bank = peak_bank_radians * speed_turn_bank_fraction(t);
         let local_speed = design_speed_mps * (1.0 - speed_loss_fraction * t);
-        let required_curvature = crate::physics::GRAVITY * bank.tan() / local_speed.powi(2);
-        let heart_offset_factor = HEART_HEIGHT_METRES * bank.sin();
+        let required_curvature =
+            crate::physics::GRAVITY * crate::math::tan(bank) / crate::math::powi(local_speed, 2);
+        let heart_offset_factor = HEART_HEIGHT_METRES * crate::math::sin(bank);
         let discriminant = 1.0 - 4.0 * heart_offset_factor * required_curvature;
         if !discriminant.is_finite() || discriminant < 0.0 {
             return Err("shaped turn heart-curvature has no real solution".into());
@@ -1060,8 +1027,8 @@ fn integrate_shaped_turn_at_bank(
     for curvature in curvatures {
         let angle = curvature * distance;
         let midpoint = heading + angle / 2.0;
-        x += distance * midpoint.cos();
-        y += distance * midpoint.sin();
+        x += distance * crate::math::cos(midpoint);
+        y += distance * crate::math::sin(midpoint);
         heading += angle;
         knots.push(SpeedTurnKnot { x, y, heading });
     }
@@ -1077,8 +1044,8 @@ pub(crate) fn speed_turn_radius_for_peak_bank(peak_bank: f64, design_speed: f64)
     assert!(design_speed.is_finite() && design_speed > 0.0);
     let curvature_at = |index: usize| {
         let t = (index as f64 + 0.5) / SPEED_TURN_STEPS as f64;
-        (peak_bank * speed_turn_bank_fraction(t)).tan() * crate::physics::GRAVITY
-            / design_speed.powi(2)
+        crate::math::tan(peak_bank * speed_turn_bank_fraction(t)) * crate::physics::GRAVITY
+            / crate::math::powi(design_speed, 2)
     };
     let step = 1.0 / SPEED_TURN_STEPS as f64;
     let total_curvature = (0..SPEED_TURN_STEPS).map(curvature_at).sum::<f64>();
@@ -1088,8 +1055,8 @@ pub(crate) fn speed_turn_radius_for_peak_bank(peak_bank: f64, design_speed: f64)
     for index in 0..SPEED_TURN_STEPS {
         let angle = curvature_at(index) * distance;
         let midpoint = heading + angle / 2.0;
-        x += distance * midpoint.cos();
-        y += distance * midpoint.sin();
+        x += distance * crate::math::cos(midpoint);
+        y += distance * crate::math::sin(midpoint);
         heading += angle;
     }
     (x + y) / 2.0
@@ -1194,7 +1161,8 @@ impl Piece {
                         })
                         .sum::<f64>()
                         / cars as f64;
-                    let speed = (entry_speed.powi(2) - 2.0 * 9.81 * mean_height).sqrt();
+                    let speed =
+                        (crate::math::powi(entry_speed, 2) - 2.0 * 9.81 * mean_height).sqrt();
                     peak = peak.max((roll_per_metre * speed).abs().to_degrees());
                 }
             }
@@ -1255,24 +1223,16 @@ impl Piece {
         let (x0, y0, heading0) = (knot0.x, knot0.y, knot0.heading);
         let (x1, y1, heading1) = (knot1.x, knot1.y, knot1.heading);
         let h = geometry.length / SPEED_TURN_STEPS as f64;
-        let h00 = 2.0 * fraction.powi(3) - 3.0 * fraction.powi(2) + 1.0;
-        let h10 = fraction.powi(3) - 2.0 * fraction.powi(2) + fraction;
-        let h01 = -2.0 * fraction.powi(3) + 3.0 * fraction.powi(2);
-        let h11 = fraction.powi(3) - fraction.powi(2);
-        let x = h00 * x0
-            + h10 * h * track_cos(&self.shape, heading0)
-            + h01 * x1
-            + h11 * h * track_cos(&self.shape, heading1);
-        let y = h00 * y0
-            + h10 * h * track_sin(&self.shape, heading0)
-            + h01 * y1
-            + h11 * h * track_sin(&self.shape, heading1);
+        let h00 = 2.0 * crate::math::powi(fraction, 3) - 3.0 * crate::math::powi(fraction, 2) + 1.0;
+        let h10 = crate::math::powi(fraction, 3) - 2.0 * crate::math::powi(fraction, 2) + fraction;
+        let h01 = -2.0 * crate::math::powi(fraction, 3) + 3.0 * crate::math::powi(fraction, 2);
+        let h11 = crate::math::powi(fraction, 3) - crate::math::powi(fraction, 2);
+        let x = h00 * x0 + h10 * h * track_cos(heading0) + h01 * x1 + h11 * h * track_cos(heading1);
+        let y = h00 * y0 + h10 * h * track_sin(heading0) + h01 * y1 + h11 * h * track_sin(heading1);
         let heading = heading0 + (heading1 - heading0) * fraction;
-        let tangent = forward * track_cos(&self.shape, heading)
-            + left * (hand * track_sin(&self.shape, heading));
+        let tangent = forward * track_cos(heading) + left * (hand * track_sin(heading));
         let roll = hand * geometry.peak_bank * speed_turn_bank_fraction(t);
-        let up = vertical * track_cos(&self.shape, roll)
-            + vertical.cross(tangent) * track_sin(&self.shape, roll);
+        let up = vertical * track_cos(roll) + vertical.cross(tangent) * track_sin(roll);
         let heart = self.entry.position()
             + forward * x
             + left * (hand * y)
@@ -1305,7 +1265,7 @@ impl Piece {
         (
             point,
             (next - previous) / (2.0 * step),
-            (previous - point * 2.0 + next) / step.powi(2),
+            (previous - point * 2.0 + next) / crate::math::powi(step, 2),
         )
     }
 
@@ -1327,9 +1287,10 @@ impl Piece {
         let velocity = (forward * first[0] + vertical * first[1]) * (length * diagonal)
             + vertical * (correction * smooth_first);
         let acceleration = (forward * second[0] + vertical * second[1])
-            * (length.powi(2) * diagonal)
+            * (crate::math::powi(length, 2) * diagonal)
             + vertical * (correction * smooth_second);
-        let jerk = (forward * third[0] + vertical * third[1]) * (length.powi(3) * diagonal)
+        let jerk = (forward * third[0] + vertical * third[1])
+            * (crate::math::powi(length, 3) * diagonal)
             + vertical * (correction * smooth_third);
         let tangent = velocity.unit();
         let base_up = (forward * -tangent.z + vertical * tangent.dot(forward)).unit();
@@ -1338,17 +1299,17 @@ impl Piece {
         let omega_first = -velocity.cross(jerk).dot(left) / speed_squared
             - 2.0 * omega * velocity.dot(acceleration) / speed_squared;
         let base_first = tangent * -omega;
-        let base_second = tangent * -omega_first - base_up * omega.powi(2);
+        let base_second = tangent * -omega_first - base_up * crate::math::powi(omega, 2);
         let (angle, angle_first, angle_second) = twist.sample(t * length, self.mirrored);
         let angle = angle + self.entry.bank.radians();
         let angle_first = angle_first * length;
-        let angle_second = angle_second * length.powi(2);
-        let (sin, cos) = angle.sin_cos();
+        let angle_second = angle_second * crate::math::powi(length, 2);
+        let (sin, cos) = crate::math::sin_cos(angle);
         let up = base_up * cos + left * sin;
         let up_first = base_first * cos + (left * cos - base_up * sin) * angle_first;
         let up_second = base_second * cos - base_first * (2.0 * sin * angle_first)
             + (left * cos - base_up * sin) * angle_second
-            - up * angle_first.powi(2);
+            - up * crate::math::powi(angle_first, 2);
         let heart = self.entry.position()
             + forward * (position[0] * diagonal)
             + vertical * (position[1] * diagonal + correction * smooth)
@@ -1529,9 +1490,9 @@ impl Piece {
                 forward * (dx * scale * diagonal_scale)
                     + left * (side_displacement * smooth_first)
                     + up * (dz * scale * diagonal_scale + vertical_correction * smooth_first),
-                forward * (ddx * scale.powi(2) * diagonal_scale)
+                forward * (ddx * crate::math::powi(scale, 2) * diagonal_scale)
                     + left * (side_displacement * smooth_second)
-                    + up * (ddz * scale.powi(2) * diagonal_scale
+                    + up * (ddz * crate::math::powi(scale, 2) * diagonal_scale
                         + vertical_correction * smooth_second),
             );
         }
@@ -1550,8 +1511,8 @@ impl Piece {
         let delta = self.exit.position() - p0;
         let v0 = self.entry.tangent() * self.tangent_scale;
         let v1 = self.exit.tangent() * self.tangent_scale;
-        let a0 = self.entry.curvature_vector() * self.tangent_scale.powi(2);
-        let a1 = self.exit.curvature_vector() * self.tangent_scale.powi(2);
+        let a0 = self.entry.curvature_vector() * crate::math::powi(self.tangent_scale, 2);
+        let a1 = self.exit.curvature_vector() * crate::math::powi(self.tangent_scale, 2);
         let q0 = (t2 - 3.0 * t3 + 3.0 * t4 - t5) / 2.0;
         let q1 = (t3 - 2.0 * t4 + t5) / 2.0;
         let dq0 = (2.0 * t - 9.0 * t2 + 12.0 * t3 - 5.0 * t4) / 2.0;
@@ -1561,13 +1522,13 @@ impl Piece {
         let j0 = delta * 60.0 - v0 * 36.0 - v1 * 24.0 - a0 * 9.0 + a1 * 3.0;
         let j1 = delta * 60.0 - v0 * 24.0 - v1 * 36.0 - a0 * 3.0 + a1 * 9.0;
         let desired_j0 = v0
-            * (-self.tangent_scale.powi(2)
+            * (-crate::math::powi(self.tangent_scale, 2)
                 * self
                     .entry
                     .curvature_vector()
                     .dot(self.entry.curvature_vector()));
         let desired_j1 = v1
-            * (-self.tangent_scale.powi(2)
+            * (-crate::math::powi(self.tangent_scale, 2)
                 * self
                     .exit
                     .curvature_vector()
@@ -1698,8 +1659,8 @@ impl Piece {
             let start_speed = arc_table.speeds[index - 1];
             let end_speed = arc_table.speeds[index];
             let scaled_distance = (distance - low) * steps as f64;
-            let discriminant =
-                start_speed.powi(2) + 2.0 * (end_speed - start_speed) * scaled_distance;
+            let discriminant = crate::math::powi(start_speed, 2)
+                + 2.0 * (end_speed - start_speed) * scaled_distance;
             let fraction = 2.0 * scaled_distance / (start_speed + discriminant.sqrt());
             (index as f64 - 1.0 + fraction) / steps as f64
         }
@@ -1747,7 +1708,7 @@ impl Piece {
                 tangent: sample.first.unit(),
                 up: sample.up,
                 curvature: sample.first.cross(sample.second).length()
-                    / sample.first.length().powi(3),
+                    / crate::math::powi(sample.first.length(), 3),
                 roll: sample.roll,
             };
         }
@@ -1760,7 +1721,7 @@ impl Piece {
                 tangent: sample.first.unit(),
                 up: sample.up,
                 curvature: sample.first.cross(sample.second).length()
-                    / sample.first.length().powi(3),
+                    / crate::math::powi(sample.first.length(), 3),
                 roll: sample.roll,
             };
         }
@@ -1781,10 +1742,13 @@ impl Piece {
         let (s, _, _) = smooth(t);
         let overbank = if matches!(&self.shape, Shape::Overbank) {
             2.0 * std::f64::consts::PI / 3.0
-                * (std::f64::consts::PI * t).sin().powi(2)
+                * crate::math::powi(crate::math::sin(std::f64::consts::PI * t), 2)
                 * if self.mirrored { -1.0 } else { 1.0 }
         } else if let Shape::WaveTurn { peak, .. } = &self.shape {
-            peak * 64.0 * t.powi(3) * (1.0 - t).powi(3) * if self.mirrored { -1.0 } else { 1.0 }
+            peak * 64.0
+                * crate::math::powi(t, 3)
+                * crate::math::powi(1.0 - t, 3)
+                * if self.mirrored { -1.0 } else { 1.0 }
         } else {
             0.0
         };
@@ -1795,13 +1759,14 @@ impl Piece {
         };
         let angle = overbank + bank;
         let left = base_up.cross(tangent).unit();
-        let up = base_up * angle.cos() + left * angle.sin();
+        let up = base_up * crate::math::cos(angle) + left * crate::math::sin(angle);
         TrackSample {
             position,
             heart: position + up * HEART_HEIGHT_METRES,
             tangent,
             up,
-            curvature: velocity.cross(acceleration).length() / velocity.length().powi(3),
+            curvature: velocity.cross(acceleration).length()
+                / crate::math::powi(velocity.length(), 3),
             roll: angle
                 + if profile_shape
                     && (self.entry.bank == Bank::Inverted || self.exit.bank == Bank::Inverted)
@@ -2109,7 +2074,7 @@ mod shape_tests {
             let delta = 0.02;
             (piece.sample(distance - delta).heart - piece.sample(distance).heart * 2.0
                 + piece.sample(distance + delta).heart)
-                / delta.powi(2)
+                / crate::math::powi(delta, 2)
         };
         for index in 1..20 {
             let fraction = f64::from(index) / 20.0;
@@ -2250,7 +2215,7 @@ mod shape_tests {
                         assert!(sample.first.unit().dot(connector.tangent().unit()) > 1.0 - 1e-10);
                         assert!(
                             sample.first.cross(sample.second).length()
-                                / sample.first.length().powi(3)
+                                / crate::math::powi(sample.first.length(), 3)
                                 < 1e-8
                         );
                     }

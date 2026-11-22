@@ -605,7 +605,7 @@ fn level_small_turn_reads_lateral_g_from_its_sixteen_metre_radius() {
     let speed = 20.0;
 
     let forces = rider_g(piece, piece.length() / 2.0, speed, 0.0);
-    let expected_lateral = speed.powi(2) / (GRAVITY * 16.0);
+    let expected_lateral = crate::math::powi(speed, 2) / (GRAVITY * 16.0);
 
     assert!(
         (forces.lateral - expected_lateral).abs() <= expected_lateral * 0.02,
@@ -779,7 +779,12 @@ fn wooden_twister_completes_a_lap_through_its_structure() {
     let crossing_high = circuit.pieces()[26]
         .sample(circuit.pieces()[26].length())
         .position;
-    assert!((crossing_low.x - crossing_high.x).hypot(crossing_low.y - crossing_high.y) < 0.01);
+    assert!(
+        crate::math::hypot(
+            crossing_low.x - crossing_high.x,
+            crossing_low.y - crossing_high.y
+        ) < 0.01
+    );
     assert!(crossing_high.z - crossing_low.z > model.train.height_metres);
     let obstacles = track_support_obstacles(&circuit.pieces()[1..3], &model.train);
     let supports: Vec<_> = circuit.pieces()[26..28]
@@ -919,8 +924,9 @@ fn unchanged_launch_keeps_the_model_acceleration_and_exit_speed() {
         }
         train.step(&circuit);
     }
-    let expected_exit_speed =
-        (2.0_f64.powi(2) + 2.0 * launch.acceleration * (launch_end - launch_start)).sqrt();
+    let expected_exit_speed = (crate::math::powi(2.0_f64, 2)
+        + 2.0 * launch.acceleration * (launch_end - launch_start))
+        .sqrt();
     assert!((train.speed() - expected_exit_speed).abs() < 0.2);
 }
 
@@ -1128,7 +1134,7 @@ fn vertical_loop_g_uses_curvature_projected_onto_rider_up() {
         assert!(curvature_along_rider_up > 0.0);
         let heart_curvature = curvature_along_rider_up
             * (1.0 - crate::track::HEART_HEIGHT_METRES * curvature_along_rider_up);
-        let expected = sample.up.z + 20.0_f64.powi(2) * heart_curvature / GRAVITY;
+        let expected = sample.up.z + crate::math::powi(20.0_f64, 2) * heart_curvature / GRAVITY;
         let g = rider_g(loop_piece, distance, 20.0, 0.0);
         assert!(
             (g.vertical - expected).abs() < 0.01,
@@ -1206,7 +1212,7 @@ fn descent_converts_height_to_speed() {
         train.step(&circuit);
     }
     let drop = initial_height - circuit.sample(train.distance()).position.z;
-    let expected = (initial_speed.powi(2) + 2.0 * GRAVITY * drop).sqrt();
+    let expected = (crate::math::powi(initial_speed, 2) + 2.0 * GRAVITY * drop).sqrt();
     assert!(drop > 7.9);
     assert!((train.speed() - expected).abs() < 0.01);
 }
@@ -1530,7 +1536,7 @@ fn demo_has_track_crossing_with_vertical_clearance() {
             .enumerate()
             .skip(index + 20)
             .find(|(_, other)| {
-                (point.x - other.x).hypot(point.y - other.y) < 1.0
+                crate::math::hypot(point.x - other.x, point.y - other.y) < 1.0
                     && (point.z - other.z).abs() >= 4.0
             })
             .map(|(other_index, other)| (index, other_index, *point, *other))

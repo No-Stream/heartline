@@ -27,18 +27,18 @@ pub fn predicted_hill_forces(piece: &Piece, entry_speed: f64) -> Option<Predicte
     };
     let mut previous: Option<(f64, f64, f64, f64)> = None;
     for (distance, rail_height, angle, heart_curvature, rail_curvature) in profile.force_samples() {
-        let heart_height = rail_height + HEART_HEIGHT_METRES * (angle.cos() - 1.0);
-        let speed_squared = entry_speed.powi(2) - 2.0 * GRAVITY * heart_height;
+        let heart_height = rail_height + HEART_HEIGHT_METRES * (crate::math::cos(angle) - 1.0);
+        let speed_squared = crate::math::powi(entry_speed, 2) - 2.0 * GRAVITY * heart_height;
         if speed_squared <= 0.0 {
             return None;
         }
         let speed = speed_squared.sqrt();
         let roll = twist.map_or(0.0, |twist| twist.sample(distance, piece.mirrored).0);
-        let planar_g = angle.cos() + heart_curvature * speed_squared / GRAVITY;
-        let vertical_g = planar_g * roll.cos();
+        let planar_g = crate::math::cos(angle) + heart_curvature * speed_squared / GRAVITY;
+        let vertical_g = planar_g * crate::math::cos(roll);
         result.maximum_absolute_lateral_g = result
             .maximum_absolute_lateral_g
-            .max((planar_g * roll.sin()).abs());
+            .max((planar_g * crate::math::sin(roll)).abs());
         result.minimum_vertical_g = result.minimum_vertical_g.min(vertical_g);
         result.maximum_vertical_g = result.maximum_vertical_g.max(vertical_g);
         let heart_distance_factor = 1.0 - HEART_HEIGHT_METRES * rail_curvature;

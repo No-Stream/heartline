@@ -681,7 +681,7 @@ pub(super) fn peak_force_limits() -> [f64; 5] {
     ]
 }
 fn soft(measure: f64, (weight, scale): (f64, f64)) -> f64 {
-    weight * (1.0 - (-measure / scale).exp())
+    weight * (1.0 - crate::math::exp(-measure / scale))
 }
 fn add(
     items: &mut Vec<Contribution>,
@@ -859,7 +859,7 @@ pub(super) fn score(features: &RideFeatures, bands: &ForceBandDurations) -> Scor
                 .iter()
                 .filter(|(previous, _)| previous == kind)
                 .count();
-            SCORING.inversion_repeat_factor.powi(previous as i32)
+            crate::math::powi(SCORING.inversion_repeat_factor, previous as i32)
                 * if *heartlining == Heartlining::Heartlined {
                     SCORING.heartlined_inversion_weight
                 } else {

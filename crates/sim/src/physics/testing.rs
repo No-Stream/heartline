@@ -2091,10 +2091,10 @@ fn piece_turn_angle_radians(piece: &Piece) -> f64 {
     for step in 0..=GEOMETRY_STEPS {
         let distance = piece.length() * step as f64 / GEOMETRY_STEPS as f64;
         let tangent = piece.sample(distance).tangent;
-        if tangent.x.hypot(tangent.y) < MINIMUM_HORIZONTAL_TANGENT {
+        if crate::math::hypot(tangent.x, tangent.y) < MINIMUM_HORIZONTAL_TANGENT {
             continue;
         }
-        let yaw = tangent.y.atan2(tangent.x);
+        let yaw = crate::math::atan2(tangent.y, tangent.x);
         if let Some(previous_yaw) = previous_yaw {
             let difference = (yaw - previous_yaw + std::f64::consts::PI)
                 .rem_euclid(std::f64::consts::TAU)
@@ -2554,9 +2554,7 @@ pub(super) fn ride_statistics(
             stats.drops += 1;
         }
         if height_delta < 0.0 {
-            let angle = (-height_delta / distance.max(1e-9))
-                .clamp(-1.0, 1.0)
-                .asin()
+            let angle = crate::math::asin((-height_delta / distance.max(1e-9)).clamp(-1.0, 1.0))
                 .to_degrees();
             stats.steepest_drop_angle_degrees = stats.steepest_drop_angle_degrees.max(angle);
         }
@@ -3655,7 +3653,10 @@ mod tests {
         reversed.add_proximity_events(&events.iter().rev().copied().collect::<Vec<_>>());
         assert_eq!(one.intensity, baseline.intensity);
         assert!(one.excitement - baseline.excitement > two.excitement - one.excitement);
-        assert!((all.excitement - baseline.excitement - (1.0 - (-5.0_f64).exp())).abs() < 1e-10);
+        assert!(
+            (all.excitement - baseline.excitement - (1.0 - crate::math::exp(-5.0_f64))).abs()
+                < 1e-10
+        );
         assert_eq!(all.intensity, baseline.intensity);
         assert!((all.excitement - reversed.excitement).abs() < 1e-10);
         assert!((all.intensity - reversed.intensity).abs() < 1e-10);

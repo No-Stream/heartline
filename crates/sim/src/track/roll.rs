@@ -67,8 +67,8 @@ impl Twist {
             Self::OuterBank { peak, .. } => {
                 let w = u * (1.0 - u);
                 (
-                    peak * 64.0 * w.powi(3),
-                    peak * 192.0 * w.powi(2) * (1.0 - 2.0 * u),
+                    peak * 64.0 * crate::math::powi(w, 3),
+                    peak * 192.0 * crate::math::powi(w, 2) * (1.0 - 2.0 * u),
                     peak * 384.0 * w * (1.0 - 5.0 * u + 5.0 * u * u),
                 )
             }
@@ -82,10 +82,18 @@ impl Twist {
                 let width = (1.0 - hold) / 2.0;
                 if u < width {
                     let (v, d, dd) = roll_schedule(u / width, ramp);
-                    (PI * v, PI * d / width, PI * dd / width.powi(2))
+                    (
+                        PI * v,
+                        PI * d / width,
+                        PI * dd / crate::math::powi(width, 2),
+                    )
                 } else if u > 1.0 - width {
                     let (v, d, dd) = roll_schedule((1.0 - u) / width, ramp);
-                    (PI * v, -PI * d / width, PI * dd / width.powi(2))
+                    (
+                        PI * v,
+                        -PI * d / width,
+                        PI * dd / crate::math::powi(width, 2),
+                    )
                 } else {
                     (PI, 0.0, 0.0)
                 }
@@ -95,7 +103,7 @@ impl Twist {
         (
             sign * value,
             sign * first / (end - start),
-            sign * second / (end - start).powi(2),
+            sign * second / crate::math::powi(end - start, 2),
         )
     }
 }
@@ -234,9 +242,9 @@ impl RollGeometry {
     pub(crate) fn general_helix_for_connector() -> Self {
         let (mut radius, mut beta) = (4.5914_f64, 42.530_f64.to_radians());
         let displacement = |radius: f64, beta: f64| {
-            let omega = beta.sin() / radius;
-            let curvature = omega * beta.sin();
-            let torsion = -omega * beta.cos();
+            let omega = crate::math::sin(beta) / radius;
+            let curvature = omega * crate::math::sin(beta);
+            let torsion = -omega * crate::math::cos(beta);
             let positions = helix_positions(curvature, torsion, 0.25, 1.0);
             let end = positions.last().unwrap();
             (end.x, end.y)
@@ -262,9 +270,9 @@ impl RollGeometry {
         }
         let (x, y) = displacement(radius, beta);
         assert!((x - 28.0).abs() < 1e-9 && (y - 16.0).abs() < 1e-9);
-        let omega = beta.sin() / radius;
-        let curvature = omega * beta.sin();
-        let torsion = -omega * beta.cos();
+        let omega = crate::math::sin(beta) / radius;
+        let curvature = omega * crate::math::sin(beta);
+        let torsion = -omega * crate::math::cos(beta);
         Self {
             path: RollPath::GeneralHelix {
                 curvature,
@@ -362,14 +370,14 @@ impl RollGeometry {
             let one_step = rail(t + step);
             let two_steps = rail(t + 2.0 * step);
             let first = (at_start * -3.0 + one_step * 4.0 - two_steps) / (2.0 * step);
-            let second = (at_start - one_step * 2.0 + two_steps) / step.powi(2);
+            let second = (at_start - one_step * 2.0 + two_steps) / crate::math::powi(step, 2);
             (first, second)
         } else if 1.0 - t < step {
             let at_end = position;
             let one_step = rail(t - step);
             let two_steps = rail(t - 2.0 * step);
             let first = (at_end * 3.0 - one_step * 4.0 + two_steps) / (2.0 * step);
-            let second = (at_end - one_step * 2.0 + two_steps) / step.powi(2);
+            let second = (at_end - one_step * 2.0 + two_steps) / crate::math::powi(step, 2);
             (first, second)
         } else {
             let previous = rail(t - step);
@@ -377,7 +385,7 @@ impl RollGeometry {
             let next = rail(t + step);
             (
                 (next - previous) / (2.0 * step),
-                (previous - current * 2.0 + next) / step.powi(2),
+                (previous - current * 2.0 + next) / crate::math::powi(step, 2),
             )
         }
     }
@@ -412,7 +420,7 @@ impl RollGeometry {
                 let tangent = heart_tangent.unit();
                 let base_up = unbanked_up(tangent);
                 let left = base_up.cross(tangent).unit();
-                base_up * roll.cos() + left * roll.sin()
+                base_up * crate::math::cos(roll) + left * crate::math::sin(roll)
             }
             RollPath::GeneralHelix {
                 curvature,
@@ -454,10 +462,14 @@ impl RollGeometry {
                 let u = 1.0 - t;
                 let offset = -256.0 * *descent_bias;
                 let vertical = Vec3::new(0.0, 0.0, offset);
-                let base = t.powi(4) * u.powi(4);
-                let base_first = 4.0 * t.powi(3) * u.powi(3) * (1.0 - 2.0 * t);
-                let base_second = 12.0 * t.powi(2) * u.powi(2) * (1.0 - 2.0 * t).powi(2)
-                    - 8.0 * t.powi(3) * u.powi(3);
+                let base = crate::math::powi(t, 4) * crate::math::powi(u, 4);
+                let base_first =
+                    4.0 * crate::math::powi(t, 3) * crate::math::powi(u, 3) * (1.0 - 2.0 * t);
+                let base_second = 12.0
+                    * crate::math::powi(t, 2)
+                    * crate::math::powi(u, 2)
+                    * crate::math::powi(1.0 - 2.0 * t, 2)
+                    - 8.0 * crate::math::powi(t, 3) * crate::math::powi(u, 3);
                 let asymmetry = 1.0 + *descent_asymmetry * (t - 0.5);
                 (
                     position + vertical * (base * asymmetry),
@@ -476,7 +488,7 @@ impl RollGeometry {
                 tangents,
                 ..
             } => {
-                let omega = curvature.hypot(*torsion);
+                let omega = crate::math::hypot(*curvature, *torsion);
                 let scale = (end - start).length() / positions.last().unwrap().length();
                 let length = TAU * turns / omega * scale;
                 let scaled = t.clamp(0.0, 1.0) * 1024.0;
@@ -485,10 +497,17 @@ impl RollGeometry {
                 let tangent0 = tangents[index];
                 let tangent1 = tangents[index + 1];
                 let h = 1.0 / 1024.0;
-                let position = positions[index] * scale * (2.0 * u.powi(3) - 3.0 * u.powi(2) + 1.0)
-                    + tangent0 * (length * h * (u.powi(3) - 2.0 * u.powi(2) + u))
-                    + positions[index + 1] * scale * (-2.0 * u.powi(3) + 3.0 * u.powi(2))
-                    + tangent1 * (length * h * (u.powi(3) - u.powi(2)));
+                let position = positions[index]
+                    * scale
+                    * (2.0 * crate::math::powi(u, 3) - 3.0 * crate::math::powi(u, 2) + 1.0)
+                    + tangent0
+                        * (length
+                            * h
+                            * (crate::math::powi(u, 3) - 2.0 * crate::math::powi(u, 2) + u))
+                    + positions[index + 1]
+                        * scale
+                        * (-2.0 * crate::math::powi(u, 3) + 3.0 * crate::math::powi(u, 2))
+                    + tangent1 * (length * h * (crate::math::powi(u, 3) - crate::math::powi(u, 2)));
                 let (tangent, normal) = helix_frame(*curvature, *torsion, *ramp, *turns, t);
                 let (_, rate, _) = roll_schedule(t, *ramp);
                 (
@@ -538,7 +557,7 @@ impl RollGeometry {
                 let tangent = transform_frame(entry, tangent, mirrored);
                 let normal = transform_frame(entry, normal, mirrored);
                 let base = unbanked_up(tangent);
-                let angle = normal.dot(base.cross(tangent)).atan2(normal.dot(base));
+                let angle = crate::math::atan2(normal.dot(base.cross(tangent)), normal.dot(base));
                 let index = ((t.clamp(0.0, 1.0) * 1024.0).floor() as usize).min(1024);
                 let reference = start + direction * unwrapped_roll[index];
                 angle + TAU * ((reference - angle) / TAU).round()
@@ -603,13 +622,13 @@ fn roll_schedule(t: f64, ramp: f64) -> (f64, f64, f64) {
 }
 
 fn helix_frame(curvature: f64, torsion: f64, ramp: f64, turns: f64, t: f64) -> (Vec3, Vec3) {
-    let omega = curvature.hypot(torsion);
+    let omega = crate::math::hypot(curvature, torsion);
     let axis = Vec3::new(torsion / omega, -curvature / omega, 0.0);
     let angle = TAU * turns * roll_schedule(t, ramp).0;
     let rotate = |vector: Vec3| {
-        vector * angle.cos()
-            + axis.cross(vector) * angle.sin()
-            + axis * (axis.dot(vector) * (1.0 - angle.cos()))
+        vector * crate::math::cos(angle)
+            + axis.cross(vector) * crate::math::sin(angle)
+            + axis * (axis.dot(vector) * (1.0 - crate::math::cos(angle)))
     };
     (
         rotate(Vec3::new(1.0, 0.0, 0.0)),
@@ -623,7 +642,7 @@ fn helix_roll_knots(curvature: f64, torsion: f64, ramp: f64, turns: f64) -> Vec<
         let (tangent, normal) =
             helix_frame(curvature, torsion, ramp, turns, f64::from(index) / 1024.0);
         let base = unbanked_up(tangent);
-        let angle = normal.dot(base.cross(tangent)).atan2(normal.dot(base));
+        let angle = crate::math::atan2(normal.dot(base.cross(tangent)), normal.dot(base));
         let reference = knots.last().copied().unwrap_or(0.0);
         knots.push(angle + TAU * ((reference - angle) / TAU).round());
     }
@@ -631,7 +650,7 @@ fn helix_roll_knots(curvature: f64, torsion: f64, ramp: f64, turns: f64) -> Vec<
 }
 
 fn helix_positions(curvature: f64, torsion: f64, ramp: f64, turns: f64) -> Vec<Vec3> {
-    let length = TAU * turns / curvature.hypot(torsion);
+    let length = TAU * turns / crate::math::hypot(curvature, torsion);
     let mut positions = Vec::with_capacity(1025);
     positions.push(Vec3::new(0.0, 0.0, 0.0));
     for index in 0..1024 {
@@ -667,7 +686,7 @@ fn bank_up(state: TrackState) -> Vec3 {
     let base_up = unbanked_up(tangent);
     let left = base_up.cross(tangent).unit();
     let bank = state.bank.radians();
-    base_up * bank.cos() + left * bank.sin()
+    base_up * crate::math::cos(bank) + left * crate::math::sin(bank)
 }
 
 fn state_up(state: TrackState) -> Vec3 {
@@ -802,8 +821,8 @@ mod tests {
                 let (_, heart_first, heart_second) =
                     geometry.heart_kinematics(entry, exit, false, scale, t);
                 let speed = sample.first.length();
-                let heart_curve = heart_second / speed.powi(2)
-                    - heart_first * (sample.first.dot(sample.second) / speed.powi(4));
+                let heart_curve = heart_second / crate::math::powi(speed, 2)
+                    - heart_first * (sample.first.dot(sample.second) / crate::math::powi(speed, 4));
                 let tangent = sample.first.unit();
                 let velocity_squared = 225.0 - 19.62 * sample.position.z;
                 let force = heart_curve * velocity_squared
@@ -904,8 +923,9 @@ mod tests {
             let previous = piece.sample(distance - step);
             let sample = piece.sample(distance);
             let next = piece.sample(distance + step);
-            let acceleration =
-                (previous.heart - sample.heart * 2.0 + next.heart) / step.powi(2) * speed.powi(2);
+            let acceleration = (previous.heart - sample.heart * 2.0 + next.heart)
+                / crate::math::powi(step, 2)
+                * crate::math::powi(speed, 2);
             peak_acceleration = peak_acceleration
                 .max((acceleration - Vec3::new(acceleration.x, 0.0, 0.0)).length() / GRAVITY);
             peak_along_axis = peak_along_axis.max(acceleration.x.abs() / GRAVITY);

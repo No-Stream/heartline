@@ -601,8 +601,9 @@ impl Train {
                                 + circuit.pieces[index].length()
                                 - self.distance)
                                 .max(time_step * self.speed.max(1.0));
-                            let acceleration = ((target_speed.powi(2) - previous_speed.powi(2))
-                                .max(0.0)
+                            let acceleration = ((crate::math::powi(target_speed, 2)
+                                - crate::math::powi(previous_speed, 2))
+                            .max(0.0)
                                 / (2.0 * remaining_distance))
                                 .min(LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED);
                             next_speed = next_speed
@@ -774,24 +775,24 @@ fn rider_g(piece: &Piece, distance: f64, speed: f64, acceleration: f64) -> GForc
         let next_next = piece.sample(distance + 2.0 * step).heart;
         (
             (sample.heart * -3.0 + next * 4.0 - next_next) / (2.0 * step),
-            (sample.heart - next * 2.0 + next_next) / step.powi(2),
+            (sample.heart - next * 2.0 + next_next) / crate::math::powi(step, 2),
         )
     } else if piece.length() - distance < step {
         let previous = piece.sample(distance - step).heart;
         let previous_previous = piece.sample(distance - 2.0 * step).heart;
         (
             (sample.heart * 3.0 - previous * 4.0 + previous_previous) / (2.0 * step),
-            (sample.heart - previous * 2.0 + previous_previous) / step.powi(2),
+            (sample.heart - previous * 2.0 + previous_previous) / crate::math::powi(step, 2),
         )
     } else {
         let previous = piece.sample(distance - step).heart;
         let next = piece.sample(distance + step).heart;
         (
             (next - previous) / (2.0 * step),
-            (previous - sample.heart * 2.0 + next) / step.powi(2),
+            (previous - sample.heart * 2.0 + next) / crate::math::powi(step, 2),
         )
     };
-    let force = heart_curvature * speed.powi(2)
+    let force = heart_curvature * crate::math::powi(speed, 2)
         + heart_tangent * acceleration
         + Vec3::new(0.0, 0.0, GRAVITY);
     GForces {

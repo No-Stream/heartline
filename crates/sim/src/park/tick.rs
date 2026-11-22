@@ -48,7 +48,7 @@ pub(super) fn track_theming(world: &World, pieces: &[Piece]) -> f64 {
     }
 
     let weighted_scenery_per_100_metres = weighted_scenery_samples * 100.0 / track_length;
-    1.0 - (-weighted_scenery_per_100_metres / THEMING_SCALE_PER_100_METRES).exp()
+    1.0 - crate::math::exp(-weighted_scenery_per_100_metres / THEMING_SCALE_PER_100_METRES)
 }
 
 /// Adds proximity events and theming to freshly finished reports of one track.

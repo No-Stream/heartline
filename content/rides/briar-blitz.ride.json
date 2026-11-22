@@ -25,6 +25,9 @@
       "place": "GentleUp"
     },
     {
+      "place": "OneTileGentleUp"
+    },
+    {
       "place": "TurnSmallStandalone"
     },
     {
@@ -43,73 +46,76 @@
       "place": "LevelToGentleDown"
     },
     {
-      "place": "BankLeft"
+      "place": "OneTileGentleDown"
     },
     {
-      "place": "BankedTurnStandalone"
+      "place": "GentleToSteepDown"
     },
     {
-      "place": "UnbankLeft"
+      "place": "SteepToGentleDown"
     },
     {
-      "place": "GentleDownToLevel"
+      "place": "LongGentleDownToLevel"
     },
     {
-      "place": "Straight"
+      "place": "SpeedTurnLarge28Left"
     },
     {
-      "place": "Straight"
-    },
-    {
-      "place": "Straight"
-    },
-    {
-      "place": "Straight"
-    },
-    {
-      "place": "Straight"
-    },
-    {
-      "place": "Straight"
-    },
-    {
-      "place": "Straight"
+      "place": "FloaterHill16x112"
     },
     {
       "place": "TopHat"
     },
     {
-      "place": "Straight"
+      "place": "FloaterHill16x112"
     },
     {
-      "place": "Straight"
+      "place": "FloaterHill12x96"
     },
     {
-      "place": "Straight"
+      "place": "Brakes"
     },
     {
-      "place": "Straight"
+      "place": "Brakes"
     },
     {
-      "place": "Straight"
+      "place": "FloaterHill12x80"
     },
     {
-      "place": "Straight"
+      "place": "SpeedTurnLarge20Left"
     },
     {
-      "place": "Straight"
+      "place": "SpeedTurnLarge20Left"
     },
     {
-      "place": "Straight"
+      "place": "SpeedTurnLarge20Right"
     },
     {
-      "place": "Straight"
+      "place": "SpeedTurnLarge20Left"
     },
     {
-      "place": "Straight"
+      "place": "WoodenEjectorHill8x64"
     },
     {
-      "place": "TightTwisterLeft"
+      "place": "SpeedTurnLarge20Right"
+    },
+    {
+      "place": "SpeedTurnLarge20Left"
+    },
+    {
+      "place": "WoodenEjectorHill8x64"
+    },
+    {
+      "place": "LevelToGentleUp"
+    },
+    {
+      "place": "GentleUp"
+    },
+    {
+      "place": "GentleUpToLevel"
+    },
+    {
+      "place": "FullOffsetRight"
     },
     {
       "place": "TightTwisterRight"
@@ -121,109 +127,81 @@
       "place": "TightTwisterLeft"
     },
     {
-      "place": "Straight"
+      "place": "TightTwisterRight"
+    },
+    {
+      "place": "LevelToGentleDown"
+    },
+    {
+      "place": "OneTileGentleDown"
+    },
+    {
+      "place": "OneTileGentleDown"
+    },
+    {
+      "place": "LongGentleDownToLevel"
+    },
+    {
+      "place": "FloaterHill4x48"
     },
     {
       "place": "Straight"
     },
     {
-      "place": "Straight"
+      "place": "OneTileStraight"
     },
     {
-      "place": "Straight"
-    },
-    {
-      "place": "Straight"
-    },
-    {
-      "place": "Straight"
-    },
-    {
-      "place": "Straight"
-    },
-    {
-      "place": "Straight"
-    },
-    {
-      "place": "Straight"
-    },
-    {
-      "place": "Straight"
-    },
-    {
-      "place": "Straight"
-    },
-    {
-      "place": "Straight"
-    },
-    {
-      "place": "Straight"
-    },
-    {
-      "place": "Straight"
-    },
-    {
-      "place": "Straight"
-    },
-    {
-      "place": "Straight"
-    },
-    {
-      "place": "Straight"
-    },
-    {
-      "place": "Straight"
-    },
-    {
-      "place": "Straight"
-    },
-    {
-      "place": "Straight"
-    },
-    {
-      "place": "Straight"
-    },
-    {
-      "place": "TurnLargeRightStandalone"
-    },
-    {
-      "place": "Straight"
-    },
-    {
-      "place": "TurnSmallStandalone"
+      "place": "Brakes"
     },
     {
       "close": true
     }
   ],
   "expect": {
+    "excitement": [
+      4.5,
+      7.0
+    ],
+    "sustainedMaxVerticalG": [
+      2.5,
+      3.25
+    ],
+    "sustainedMinVerticalG": [
+      -0.75,
+      -0.3
+    ],
+    "maxLateralG": 0.6,
     "inversions": 0,
     "invertedSeconds": 0.0,
+    "airtimeMomentsAtLeast": 6,
+    "withinComfortableForceLimits": true,
+    "launches": 0,
+    "biggestDropAtLeast": 36.0,
     "features": {
       "piecePrefixesAtLeast": {
-        "TopHat": 1
+        "TopHat": 1,
+        "SpeedTurnLarge": 4
       },
       "piecePrefixGroupsAtLeast": [
         {
-          "prefixes": ["TightTwister", "Twister"],
+          "prefixes": [
+            "TightTwister",
+            "Twister"
+          ],
           "minimum": 2
-        }
-      ],
-      "piecePrefixesAfter": [
-        {
-          "prefix": "BankedTurnStandalone",
-          "after": { "chain": false }
         }
       ],
       "orderedSteps": [
         [
-          { "chain": true },
-          { "place": "TurnSmallStandalone" },
-          { "chain": false }
-        ],
-        [
-          { "chain": false },
-          { "place": "BankedTurnStandalone" }
+          {
+            "chain": true
+          },
+          {
+            "place": "TurnSmallStandalone"
+          },
+          {
+            "chain": false
+          }
         ]
       ]
     }

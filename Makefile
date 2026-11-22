@@ -98,8 +98,8 @@ test-canvas-sizing:
 
 lint:
 	$(CARGO) fmt --all -- --check
-	$(CARGO) clippy --workspace --all-targets -- -D warnings
-	$(CARGO) clippy -p theme-park-sim --all-targets --features threads -- -D warnings
+	$(CARGO) clippy --workspace --all-targets -- -D clippy::disallowed_methods -D warnings
+	$(CARGO) clippy -p theme-park-sim --all-targets --features threads -- -D clippy::disallowed_methods -D warnings
 	npm run typecheck
 
 serve:

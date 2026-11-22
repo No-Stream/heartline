@@ -47,8 +47,9 @@ fn lift_prefix(model: &CoasterModel, speed_mps: f64) -> Vec<Piece> {
             .expect("station starts at the origin"),
     ];
     let default_physics = PhysicsConfig::default();
-    let acceleration_distance_m = (speed_mps.powi(2) - default_physics.station_speed.powi(2))
-        .max(0.0)
+    let acceleration_distance_m = (theme_park_sim::math::powi(speed_mps, 2)
+        - theme_park_sim::math::powi(default_physics.station_speed, 2))
+    .max(0.0)
         / (2.0 * default_physics.drive_acceleration);
     let required_lift_length_m = acceleration_distance_m + model.train.length_metres + 40.0;
     let straight_count = (required_lift_length_m / straight_template.length()).ceil() as usize;

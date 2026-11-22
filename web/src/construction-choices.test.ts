@@ -140,6 +140,7 @@ describe("construction steppers", () => {
     expect(pieceDisplayName(turn("Begin small left turn", "UpGentle"))).toBe("Start of a climbing small left turn");
     expect(pieceDisplayName(turn("End large right-banked right turn", "DownGentle"))).toBe("End of a descending large right-banked turn");
     expect(pieceDisplayName(turn("Standalone small left turn", "UpGentle"))).toBe("Climbing small left turn");
+    expect(pieceDisplayName(turn("Standalone small left-banked left turn", "DownGentle"))).toBe("Descending small left-banked turn");
     expect(pieceDisplayName(turn("Standalone large right turn", "Level"))).toBe("Large right turn");
     expect(pieceDisplayName(turn("Begin small left-banked left turn", "Level"))).toBe("Start of a small left-banked turn");
     expect(pieceDisplayName(turn("End small right-banked right turn", "Level"))).toBe("End of a small right-banked turn");

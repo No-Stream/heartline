@@ -51,7 +51,7 @@ impl Construction {
                 - 2.0 * config.rolling_resistance * GRAVITY * piece.length())
             .max(0.0);
             match piece.kind {
-                PieceKind::Lift => speed_squared = config.lift_speed.powi(2),
+                PieceKind::Lift => speed_squared = crate::math::powi(config.lift_speed, 2),
                 PieceKind::Launch => {
                     let target_speed = piece.launch_target_speed.unwrap_or_else(|| {
                         self.model
@@ -60,7 +60,7 @@ impl Construction {
                             .expect("launch piece requires launch parameters")
                             .target_speed
                     });
-                    speed_squared = target_speed.powi(2);
+                    speed_squared = crate::math::powi(target_speed, 2);
                 }
                 _ => {}
             }
@@ -167,7 +167,7 @@ mod tests {
         descent.kind = PieceKind::Track;
         descent.entry.z = 10;
         descent.exit.z = 8;
-        let expected = (config.lift_speed.powi(2) + 2.0 * GRAVITY * 4.0
+        let expected = (crate::math::powi(config.lift_speed, 2) + 2.0 * GRAVITY * 4.0
             - 2.0 * config.rolling_resistance * GRAVITY * descent.length())
         .sqrt();
         construction.pieces = vec![lift, descent];

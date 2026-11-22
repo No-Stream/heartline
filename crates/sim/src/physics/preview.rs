@@ -788,7 +788,7 @@ fn candidate_force_sample(
         speed_mps: reading.speed,
         height_m: reading.height_m,
         force_g: reading.g.vertical,
-        pitch_degrees: sample.tangent.z.asin().to_degrees(),
+        pitch_degrees: crate::math::asin(sample.tangent.z).to_degrees(),
         rail_curvature_per_m: sample.curvature,
         mean_train_slope_z,
     }

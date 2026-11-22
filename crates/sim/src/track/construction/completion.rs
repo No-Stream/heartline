@@ -345,7 +345,7 @@ impl Construction {
                 rank: 0.0,
                 brake_count: 0,
                 rated_piece_count: 0,
-                speed_squared_estimate: end_speed_mps.powi(2),
+                speed_squared_estimate: crate::math::powi(end_speed_mps, 2),
                 shaped_piece_count: 0,
                 shaped_turns: Vec::new(),
             }],
@@ -729,8 +729,9 @@ impl CompletionSearch {
             construction_preview_physics(),
         );
         // Positive force grows roughly with the inverse radius at the automatic turn's bank.
-        let force_limited_radius = automatic_radius * (rules.turn_vertical_g.powi(2) - 1.0).sqrt()
-            / (MAXIMUM_SHAPED_TURN_VERTICAL_G.powi(2) - 1.0).sqrt();
+        let force_limited_radius = automatic_radius
+            * (crate::math::powi(rules.turn_vertical_g, 2) - 1.0).sqrt()
+            / (crate::math::powi(MAXIMUM_SHAPED_TURN_VERTICAL_G, 2) - 1.0).sqrt();
         let smallest_step = (force_limited_radius.max(rules.minimum_turn_radius_m)
             / SHAPED_TURN_RADIUS_STEP_METRES)
             .ceil() as u32;
@@ -1051,7 +1052,9 @@ impl CompletionSearch {
             if piece.kind == PieceKind::Brakes {
                 brake_energy_kj += 0.5
                     * train_mass_kg
-                    * (entry_speed_mps.powi(2) - exit_speed_mps.powi(2)).max(0.0)
+                    * (crate::math::powi(entry_speed_mps, 2)
+                        - crate::math::powi(exit_speed_mps, 2))
+                    .max(0.0)
                     / 1000.0;
             }
             reports.push(CompletionPieceReport {
@@ -1321,9 +1324,9 @@ fn estimated_exit_speed_squared(entry_speed_squared: f64, piece: &Piece) -> f64 
     let mut speed_squared = entry_speed_squared
         - 2.0 * GRAVITY * (piece.exit.position().z - piece.entry.position().z)
         - 2.0 * config.rolling_resistance * GRAVITY * piece.length();
-    if piece.kind == PieceKind::Brakes && speed_squared > config.brake_speed.powi(2) {
+    if piece.kind == PieceKind::Brakes && speed_squared > crate::math::powi(config.brake_speed, 2) {
         speed_squared = (speed_squared - 2.0 * config.braking_acceleration * piece.length())
-            .max(config.brake_speed.powi(2));
+            .max(crate::math::powi(config.brake_speed, 2));
     }
     speed_squared
 }

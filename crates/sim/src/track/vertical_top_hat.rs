@@ -34,7 +34,7 @@ fn ascent_profile() -> Vec<Point> {
         curvature: 0.0,
     }];
     let step = FRAC_PI_2 / ANGLE_STEPS as f64;
-    let mut speed_squared = DESIGN_SPEED.powi(2);
+    let mut speed_squared = crate::math::powi(DESIGN_SPEED, 2);
     let mut distance = 0.0;
     let mut x = 0.0;
     let mut z = 0.0;
@@ -52,18 +52,18 @@ fn ascent_profile() -> Vec<Point> {
                 MINIMUM_VERTICAL_G
             };
             let force_component = if phase == 0 {
-                force_limit - angle.cos()
+                force_limit - crate::math::cos(angle)
             } else {
-                angle.cos() - force_limit
+                crate::math::cos(angle) - force_limit
             };
             let angle_taper = taper(progress);
             let curvature_magnitude = GRAVITY * force_component * angle_taper / speed_squared;
             let arc_step = step / curvature_magnitude;
             let signed_curvature = curvature_magnitude * if phase == 0 { 1.0 } else { -1.0 };
             distance += arc_step;
-            x += angle.cos() * arc_step;
-            z += angle.sin() * arc_step;
-            speed_squared -= 2.0 * GRAVITY * angle.sin() * arc_step;
+            x += crate::math::cos(angle) * arc_step;
+            z += crate::math::sin(angle) * arc_step;
+            speed_squared -= 2.0 * GRAVITY * crate::math::sin(angle) * arc_step;
             assert!(speed_squared > 0.0, "top hat design profile stalls");
             let end_angle = if phase == 0 {
                 (index + 1) as f64 * step
@@ -108,7 +108,7 @@ fn descent_profile(mut speed_squared: f64, descent_minimum_g: f64) -> Vec<Point>
             } else {
                 MAXIMUM_VERTICAL_G
             };
-            let force_component = force_limit - angle.cos();
+            let force_component = force_limit - crate::math::cos(angle);
             let curvature_magnitude =
                 GRAVITY * force_component.abs() * taper(progress) / speed_squared;
             let arc_step = step / curvature_magnitude;
@@ -118,9 +118,9 @@ fn descent_profile(mut speed_squared: f64, descent_minimum_g: f64) -> Vec<Point>
                 curvature_magnitude
             };
             distance += arc_step;
-            x += angle.cos() * arc_step;
-            z += angle.sin() * arc_step;
-            speed_squared -= 2.0 * GRAVITY * angle.sin() * arc_step;
+            x += crate::math::cos(angle) * arc_step;
+            z += crate::math::sin(angle) * arc_step;
+            speed_squared -= 2.0 * GRAVITY * crate::math::sin(angle) * arc_step;
             let end_angle = if phase == 0 {
                 -((index + 1) as f64) * step
             } else {
@@ -149,7 +149,7 @@ fn profile() -> &'static [Point] {
         for _ in 0..24 {
             let test_limit = (low_limit + high_limit) / 2.0;
             let test_descent = descent_profile(
-                DESIGN_SPEED.powi(2) - 2.0 * GRAVITY * ascent_end.z,
+                crate::math::powi(DESIGN_SPEED, 2) - 2.0 * GRAVITY * ascent_end.z,
                 test_limit,
             );
             if ascent_end.z + test_descent.last().unwrap().z > 0.0 {
@@ -159,7 +159,7 @@ fn profile() -> &'static [Point] {
             }
         }
         let descent = descent_profile(
-            DESIGN_SPEED.powi(2) - 2.0 * GRAVITY * ascent_end.z,
+            crate::math::powi(DESIGN_SPEED, 2) - 2.0 * GRAVITY * ascent_end.z,
             (low_limit + high_limit) / 2.0,
         );
         let descent_end = *descent.last().unwrap();
@@ -204,15 +204,15 @@ fn interpolate(
 ) -> ([f64; 2], [f64; 2], [f64; 2]) {
     let segment_length = end.distance - start.distance;
     let parameter = (distance - start.distance) / segment_length;
-    let tangent_start = [start.angle.cos(), start.angle.sin()];
-    let tangent_end = [end.angle.cos(), end.angle.sin()];
+    let tangent_start = [crate::math::cos(start.angle), crate::math::sin(start.angle)];
+    let tangent_end = [crate::math::cos(end.angle), crate::math::sin(end.angle)];
     let curvature_start = [
-        -start.angle.sin() * start.curvature,
-        start.angle.cos() * start.curvature,
+        -crate::math::sin(start.angle) * start.curvature,
+        crate::math::cos(start.angle) * start.curvature,
     ];
     let curvature_end = [
-        -end.angle.sin() * end.curvature,
-        end.angle.cos() * end.curvature,
+        -crate::math::sin(end.angle) * end.curvature,
+        crate::math::cos(end.angle) * end.curvature,
     ];
     let mut position = [0.0; 2];
     let mut first = [0.0; 2];
@@ -227,8 +227,8 @@ fn interpolate(
         let delta = p1 - p0;
         let m0 = segment_length * v0;
         let m1 = segment_length * v1;
-        let n0 = segment_length.powi(2) * a0;
-        let n1 = segment_length.powi(2) * a1;
+        let n0 = crate::math::powi(segment_length, 2) * a0;
+        let n1 = crate::math::powi(segment_length, 2) * a1;
         let coefficient_a = 6.0 * delta - 3.0 * (m0 + m1) - (n0 - n1) / 2.0;
         let coefficient_b = -15.0 * delta + 8.0 * m0 + 7.0 * m1 + 1.5 * n0 - n1;
         let coefficient_c = 10.0 * delta - 6.0 * m0 - 4.0 * m1 - 1.5 * n0 + n1 / 2.0;
@@ -252,7 +252,7 @@ fn interpolate(
             + 6.0 * coefficient_c)
             * parameter
             + n0)
-            * (total_length / segment_length).powi(2);
+            * crate::math::powi(total_length / segment_length, 2);
     }
     (position, first, second)
 }
@@ -278,19 +278,24 @@ mod tests {
         assert!((end.x - 88.0).abs() < 1e-6);
         assert!(points.iter().all(|point| point.z >= -1e-6));
         assert!(points.iter().all(|point| {
-            let speed_squared = DESIGN_SPEED.powi(2) - 2.0 * GRAVITY * point.z;
+            let speed_squared = crate::math::powi(DESIGN_SPEED, 2) - 2.0 * GRAVITY * point.z;
             speed_squared > 0.0
-                && (MINIMUM_VERTICAL_G - 0.01..=MAXIMUM_VERTICAL_G + 0.01)
-                    .contains(&(point.angle.cos() + speed_squared * point.curvature / GRAVITY))
+                && (MINIMUM_VERTICAL_G - 0.01..=MAXIMUM_VERTICAL_G + 0.01).contains(
+                    &(crate::math::cos(point.angle) + speed_squared * point.curvature / GRAVITY),
+                )
         }));
         for index in 0..=4000 {
             let (position, first, second) = sample(index as f64 / 4000.0);
-            let tangent_speed = first[0].hypot(first[1]);
-            let curvature = (first[0] * second[1] - first[1] * second[0]) / tangent_speed.powi(3);
-            let speed_squared = DESIGN_SPEED.powi(2) - 2.0 * GRAVITY * position[1];
+            let tangent_speed = crate::math::hypot(first[0], first[1]);
+            let curvature =
+                (first[0] * second[1] - first[1] * second[0]) / crate::math::powi(tangent_speed, 3);
+            let speed_squared = crate::math::powi(DESIGN_SPEED, 2) - 2.0 * GRAVITY * position[1];
             let vertical_g = position[1];
             let local_tangent_z = first[1] / tangent_speed;
-            let local_up_dot_gravity = local_tangent_z.atan2(first[0] / tangent_speed).cos();
+            let local_up_dot_gravity = crate::math::cos(crate::math::atan2(
+                local_tangent_z,
+                first[0] / tangent_speed,
+            ));
             let measured_vertical_g = speed_squared * curvature / GRAVITY + local_up_dot_gravity;
             assert!(
                 (MINIMUM_VERTICAL_G - 0.02..=MAXIMUM_VERTICAL_G + 0.02)

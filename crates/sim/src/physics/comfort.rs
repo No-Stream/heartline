@@ -373,7 +373,7 @@ impl EnvelopeTracker {
             (1, 2, EnvelopeAxis::LateralLongitudinal),
         ];
         for (pair_index, (left, right, axis)) in pairs.into_iter().enumerate() {
-            let magnitude = normalized[left].hypot(normalized[right]);
+            let magnitude = crate::math::hypot(normalized[left], normalized[right]);
             push_level(
                 &mut self.pair_stacks[pair_index],
                 magnitude,

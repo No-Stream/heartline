@@ -1683,9 +1683,9 @@ fn state_value_with_estimates(
     let start = construction.start();
     let end_position = end.position();
     let start_position = start.position();
-    let offset_to_station = ((end_position.x - start_position.x).powi(2)
-        + (end_position.y - start_position.y).powi(2)
-        + (end_position.z - start_position.z).powi(2))
+    let offset_to_station = (theme_park_sim::math::powi(end_position.x - start_position.x, 2)
+        + theme_park_sim::math::powi(end_position.y - start_position.y, 2)
+        + theme_park_sim::math::powi(end_position.z - start_position.z, 2))
     .sqrt();
     let offset_to_station_tiles = offset_to_station / METRES_PER_TILE;
     let heading_mismatch_degrees = heading_mismatch_degrees(end.heading, start.heading);
@@ -4927,9 +4927,13 @@ mod expectation_tests {
             serde_json::from_str(include_str!("../../../content/rides/briar-blitz.ride.json"))
                 .unwrap();
         let circuit = theme_park_sim::physics::demo_circuit();
-        let features = ride.expect.as_ref().unwrap().features.as_ref().unwrap();
+        let features: RideExpectFeatures = serde_json::from_value(serde_json::json!({
+            "piecePrefixGroupsAtLeast": [{"prefixes": ["TightTwister", "Twister"], "minimum": 2}],
+            "piecePrefixesAfter": [{"prefix": "TightTwister", "after": {"chain": false}}]
+        }))
+        .unwrap();
 
-        let results = evaluate_feature_expectations(&ride.steps, features, &circuit).unwrap();
+        let results = evaluate_feature_expectations(&ride.steps, &features, &circuit).unwrap();
         assert!(results.iter().all(|result| result.passed));
         assert!(
             results

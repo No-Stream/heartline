@@ -14,7 +14,7 @@ pub(crate) fn piece_shape_report(piece: &Piece) -> PieceShapeReport {
     const SAMPLES: usize = 32;
     let origin = piece.entry.position();
     let angle = -(piece.entry.heading as i32 as f64) * std::f64::consts::FRAC_PI_4;
-    let (sin, cos) = angle.sin_cos();
+    let (sin, cos) = theme_park_sim::math::sin_cos(angle);
     let local = |vector: Vec3| {
         [
             vector.x * cos - vector.y * sin,

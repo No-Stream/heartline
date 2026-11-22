@@ -497,8 +497,9 @@ impl WalkingSimulation {
             let previous_y = guest.y;
             let offset = guest.offset;
             set_position(&mut guest, graph, offset);
-            guest.distance +=
-                ((guest.x - previous_x).powi(2) + (guest.y - previous_y).powi(2)).sqrt();
+            guest.distance += (crate::math::powi_f32(guest.x - previous_x, 2)
+                + crate::math::powi_f32(guest.y - previous_y, 2))
+            .sqrt();
             if guest.progress >= 1.0 {
                 guest.node = guest.next;
                 guest.progress = 0.0;

@@ -2,6 +2,7 @@ pub mod demo_world;
 pub mod executor;
 pub mod facilities;
 pub mod guests;
+pub mod math;
 pub mod park;
 pub mod physics;
 pub mod save;

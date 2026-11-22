@@ -837,7 +837,7 @@ impl Construction {
             return None;
         }
         let entry_speed = self.predicted_speed_at(index);
-        let maximum = (entry_speed.powi(2)
+        let maximum = (crate::math::powi(entry_speed, 2)
             + 2.0 * LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED * piece.length())
         .sqrt()
         .min(LAUNCH_MAX_SPEED_METRES_PER_SECOND);
@@ -851,7 +851,8 @@ impl Construction {
         let mut speed: f64 = 0.0;
         let mut previous_height = self.start.position().z;
         for piece in &self.pieces[..piece_index] {
-            speed = (speed.powi(2) - 2.0 * 9.81 * (piece.exit.position().z - previous_height))
+            speed = (crate::math::powi(speed, 2)
+                - 2.0 * 9.81 * (piece.exit.position().z - previous_height))
                 .max(0.0)
                 .sqrt();
             match piece.kind {
@@ -864,9 +865,10 @@ impl Construction {
                             .train
                             .launch
                             .expect("launch pieces require model launch parameters");
-                        speed = (speed.powi(2) + 2.0 * launch.acceleration * piece.length())
-                            .sqrt()
-                            .min(launch.target_speed);
+                        speed = (crate::math::powi(speed, 2)
+                            + 2.0 * launch.acceleration * piece.length())
+                        .sqrt()
+                        .min(launch.target_speed);
                     }
                 }
                 PieceKind::Lift => speed = 3.0,

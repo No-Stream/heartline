@@ -51,7 +51,8 @@ fn rolled_inversion_minimum_entry(piece: &Piece) -> f64 {
             })
         })
         .fold(f64::NEG_INFINITY, f64::max);
-    (2.0 * GRAVITY * (maximum_mean_height - initial_height) + MINIMUM_SPEED.powi(2)).sqrt()
+    (2.0 * GRAVITY * (maximum_mean_height - initial_height) + crate::math::powi(MINIMUM_SPEED, 2))
+        .sqrt()
 }
 
 fn build_catalog() -> Vec<Piece> {
@@ -785,7 +786,8 @@ fn build_catalog() -> Vec<Piece> {
                         }),
                         HalfCorkscrewLeftDown => Some(RatedSpeeds {
                             minimum_entry: 5.0,
-                            maximum_entry: (22.0_f64.powi(2) - 2.0 * 9.81 * 12.0).sqrt(),
+                            maximum_entry: (crate::math::powi(22.0_f64, 2) - 2.0 * 9.81 * 12.0)
+                                .sqrt(),
                         }),
                         RavenRollLeftUp => Some(RatedSpeeds {
                             minimum_entry: 8.0,
@@ -815,13 +817,13 @@ fn build_catalog() -> Vec<Piece> {
                         }),
                         WideSixtyDownToLevel => Some(RatedSpeeds {
                             minimum_entry: 2.0,
-                            maximum_entry: (38.5_f64.powi(2)
+                            maximum_entry: (crate::math::powi(38.5_f64, 2)
                                 - 2.0 * 9.81 * WIDE_SIXTY_PULL.endpoint()[1])
                                 .sqrt(),
                         }),
                         SixtyDownToLevel => Some(RatedSpeeds {
                             minimum_entry: 2.0,
-                            maximum_entry: (34.0_f64.powi(2)
+                            maximum_entry: (crate::math::powi(34.0_f64, 2)
                                 - 2.0 * 9.81 * SIXTY_PULL.endpoint()[1])
                                 .sqrt(),
                         }),
@@ -837,7 +839,7 @@ fn build_catalog() -> Vec<Piece> {
                         }),
                         HalfLoopDown => Some(RatedSpeeds {
                             minimum_entry: 4.0,
-                            maximum_entry: (31.3_f64.powi(2)
+                            maximum_entry: (crate::math::powi(31.3_f64, 2)
                                 - 2.0 * 9.81 * HALF_LOOP.endpoint()[1])
                                 .sqrt(),
                         }),
