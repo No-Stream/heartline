@@ -7,8 +7,8 @@ use theme_park_sim::track::ride_file::{RideFile, RideHeading, RideStep};
 use theme_park_sim::track::shaped::ElementIntent;
 use theme_park_sim::track::{
     CoasterModel, DesignForceTargets, Heading, Heartlining, HillFeel, PieceId, PieceKind,
-    TrackState, catalog, family_coaster_model, hybrid_model, hyper_model, multi_launch_model,
-    rated_speed_margin, rated_speeds, wooden_twister_model,
+    TrackState, catalog, family_coaster_model, feel_rated_speeds, hybrid_model, hyper_model,
+    multi_launch_model, rated_speed_margin, rated_speeds, wooden_twister_model,
 };
 use theme_park_sim::world::{Surface, World};
 
@@ -175,7 +175,8 @@ fn assert_design_margins(circuit: &Circuit, model: &CoasterModel, construction_t
     );
     let pieces = circuit.pieces();
     for (index, (piece, speeds)) in pieces.iter().zip(entries).enumerate() {
-        if let Some(window) = rated_speeds(model, piece) {
+        if let Some(window) = feel_rated_speeds(model, piece).or_else(|| rated_speeds(model, piece))
+        {
             // A crest fed straight from the chain lift is entered at lift speed by the front car, while the rear
             // cars cross it as the front of the train falls away. The rated test measures such a crest by the front
             // car's entry speed with the full train behind it, so the margin applies to the front car alone there.
@@ -296,7 +297,9 @@ fn assert_timber_margins(circuit: &Circuit, model: &CoasterModel, construction: 
                 let piece = &circuit.pieces()[reading.piece_index];
                 if !entries[reading.piece_index][car] {
                     entries[reading.piece_index][car] = true;
-                    if let Some(window) = rated_speeds(model, piece) {
+                    if let Some(window) =
+                        feel_rated_speeds(model, piece).or_else(|| rated_speeds(model, piece))
+                    {
                         minimum_speed_margin = minimum_speed_margin.min(
                             (reading.speed - window.minimum_entry)
                                 .min(window.maximum_entry - reading.speed),

@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use theme_park_design_tools::run_cli;
 use theme_park_sim::physics::{Circuit, ConstructionTestRunRecorder, PhysicsConfig, Train};
 use theme_park_sim::track::ride_file::RideFile;
-use theme_park_sim::track::{PieceKind, rated_speeds};
+use theme_park_sim::track::{PieceKind, feel_rated_speeds, rated_speeds};
 use theme_park_sim_wasm::WasmSimulation;
 use theme_park_sim_wasm::builder_session::BuilderSession;
 
@@ -170,7 +170,8 @@ fn historical_timber_report_preserves_its_speed_window_and_force_regressions() {
 
     let mut outside_piece_ids = BTreeSet::new();
     for (index, (piece, piece_entries)) in pieces.iter().zip(entries).enumerate() {
-        let Some(window) = rated_speeds(&model, piece) else {
+        let Some(window) = feel_rated_speeds(&model, piece).or_else(|| rated_speeds(&model, piece))
+        else {
             continue;
         };
         let fed_by_lift = pieces[(index + pieces.len() - 1) % pieces.len()].kind == PieceKind::Lift;

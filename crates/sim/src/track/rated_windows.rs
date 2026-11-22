@@ -24,8 +24,10 @@ pub enum RatedWindowSource {
     EnergyMinimum,
     /// Raised until every allowed train keeps the clearance speed and clears the piece and its tail.
     ClearanceMinimum,
-    /// The edge where some allowed train first fails the duration-aware force evaluator.
+    /// The edge where some allowed train first fails the global ASTM comfort envelope.
     ForceBound,
+    /// The edge where some allowed train first fails the model's design force targets.
+    DesignTarget,
     /// Forces stay within the limits past this maximum; the catalog keeps it as a design choice.
     DesignCap,
     /// Above this a descending half corkscrew clears faster than its 22 m/s clearing-speed rule.
@@ -48,6 +50,12 @@ pub struct MeasuredRatedWindow {
     pub maximum_entry: f64,
     /// Lowest approach-reachable entry speed in the scan range; it does not imply a force or clearance pass.
     pub measured_from: f64,
+    /// Inner design-target / model-feel window minimum inside `[minimum_entry, maximum_entry]`.
+    pub feel_minimum_entry: Option<f64>,
+    /// Inner design-target / model-feel window maximum inside `[minimum_entry, maximum_entry]`.
+    pub feel_maximum_entry: Option<f64>,
+    /// Why the inner feel window ends where it does, when one exists.
+    pub feel_maximum_source: Option<RatedWindowSource>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,13 +89,24 @@ pub fn measured_rated_window(
     )
 }
 
-/// Returns the model-specific measured window, or `None` for an unrated piece.
+/// Returns the model-specific measured hard window, or `None` for an unrated piece.
 pub fn rated_speeds(model: &CoasterModel, piece: &Piece) -> Option<RatedSpeeds> {
     let _design_speeds = piece.design_speeds?;
     let window = measured_rated_window(model, piece)?;
     Some(RatedSpeeds {
         minimum_entry: window.minimum_entry,
         maximum_entry: window.maximum_entry,
+    })
+}
+
+/// Returns the model's inner design-target / feel window, or `None` for an unrated piece or one
+/// whose hard window contains no speed within the model's design targets.
+pub fn feel_rated_speeds(model: &CoasterModel, piece: &Piece) -> Option<RatedSpeeds> {
+    let _design_speeds = piece.design_speeds?;
+    let window = measured_rated_window(model, piece)?;
+    Some(RatedSpeeds {
+        minimum_entry: window.feel_minimum_entry?,
+        maximum_entry: window.feel_maximum_entry?,
     })
 }
 
@@ -156,6 +175,35 @@ mod tests {
                 window.measured_from,
                 window.maximum_entry
             );
+            if let (Some(feel_min), Some(feel_max)) =
+                (window.feel_minimum_entry, window.feel_maximum_entry)
+            {
+                assert!(
+                    window.minimum_entry <= feel_min
+                        && feel_min <= feel_max
+                        && feel_max <= window.maximum_entry,
+                    "{} {:?}: feel window {feel_min}..{feel_max} is outside hard window {}..{}",
+                    window.model_key,
+                    window.id,
+                    window.minimum_entry,
+                    window.maximum_entry
+                );
+                assert!(
+                    window.feel_maximum_source.is_some(),
+                    "{} {:?}: feel window lacks feel_maximum_source",
+                    window.model_key,
+                    window.id
+                );
+            } else {
+                assert!(
+                    window.feel_minimum_entry.is_none()
+                        && window.feel_maximum_entry.is_none()
+                        && window.feel_maximum_source.is_none(),
+                    "{} {:?}: partial feel window fields",
+                    window.model_key,
+                    window.id
+                );
+            }
         }
     }
 
@@ -190,6 +238,9 @@ mod tests {
             minimum_entry: 20.0,
             maximum_entry: 25.0,
             measured_from: 20.0,
+            feel_minimum_entry: Some(20.0),
+            feel_maximum_entry: Some(25.0),
+            feel_maximum_source: Some(RatedWindowSource::DesignTarget),
         }];
         let unavailable = [UnavailableRatedWindow {
             model_key: KEY,

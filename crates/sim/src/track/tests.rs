@@ -92,8 +92,11 @@ fn speed_matched_turn_catalog_banks_for_each_design_speed() {
             .find(|model| model.allows_piece(piece))
             .expect("speed turns must be allowed by a model");
         let rated = rated_speeds(model, piece).expect("speed turns are rated");
-        near(rated.minimum_entry, design_speed - 3.0);
-        near(rated.maximum_entry, design_speed + 3.0);
+        let feel = feel_rated_speeds(model, piece).expect("speed turns have a feel window");
+        near(feel.minimum_entry, design_speed - 3.0);
+        near(feel.maximum_entry, design_speed + 3.0);
+        assert!(rated.minimum_entry <= feel.minimum_entry);
+        assert!(rated.maximum_entry >= feel.maximum_entry);
 
         let mut peak_bank_radians: f64 = 0.0;
         let heart_curvature_step = piece.length() / 100.0;

@@ -16,7 +16,7 @@ use crate::track::{
     CoasterColors, CoasterModel, Heartlining, HillFeel,
     LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED, LAUNCH_MAX_SPEED_METRES_PER_SECOND,
     LaunchSpeedBounds, Piece, PieceFamily, PieceId, PieceKind, Shape, SupportStyle, TrackState,
-    TrainConfiguration, Vec3, catalog, rated_speeds,
+    TrainConfiguration, Vec3, catalog, feel_rated_speeds, rated_speeds,
 };
 use crate::world::World;
 use std::cell::{Cell, RefCell};
@@ -59,7 +59,8 @@ mod speed_estimate;
 mod walk_tests;
 pub use completion::{
     Completion, CompletionPhysics, CompletionPieceReport, CompletionSearch,
-    CompletionSearchProgress, FORCE_HEADROOM_G, construction_preview_physics, shaped_turn_intent,
+    CompletionSearchProgress, FORCE_HEADROOM_G, FinishForceJudge, construction_preview_physics,
+    shaped_turn_intent,
 };
 pub use elements::ElementChoice;
 pub use speed_estimate::{EndSpeedEstimate, EndSpeedSource};
@@ -93,7 +94,9 @@ pub struct SpeedMatchedVariant {
 }
 
 /// Select a fitting hill closest to its target force, or the rated candidate
-/// with the largest margin. If no window fits, select the nearest window.
+/// with the largest margin. Candidates inside the model's inner feel window
+/// outrank candidates that fit only the hard ASTM envelope; if no hard window
+/// fits, select the nearest hard window.
 pub fn select_speed_matched_variant(
     candidates: &[Piece],
     entry_speed: f64,
@@ -104,6 +107,7 @@ pub fn select_speed_matched_variant(
         entry_speed,
         model.design_force_targets.minimum_vertical_g,
         |piece| rated_speeds(model, piece),
+        |piece| feel_rated_speeds(model, piece),
     )
 }
 
@@ -111,19 +115,27 @@ fn select_speed_matched_variant_with_windows(
     candidates: &[Piece],
     entry_speed: f64,
     minimum_vertical_g: f64,
-    rated_speeds: impl Fn(&Piece) -> Option<super::RatedSpeeds>,
+    hard_speeds: impl Fn(&Piece) -> Option<super::RatedSpeeds>,
+    feel_speeds: impl Fn(&Piece) -> Option<super::RatedSpeeds>,
 ) -> Option<SpeedMatchedVariant> {
     assert!(entry_speed.is_finite() && entry_speed >= 0.0);
-    let mut best: Option<(SpeedMatchedVariant, f64)> = None;
+    let mut best: Option<(SpeedMatchedVariant, u8, f64)> = None;
     for piece in candidates {
-        let Some(window) = rated_speeds(piece) else {
+        let Some(hard_window) = hard_speeds(piece) else {
             continue;
         };
-        assert!(window.minimum_entry.is_finite() && window.maximum_entry.is_finite());
-        assert!(window.minimum_entry >= 0.0 && window.minimum_entry <= window.maximum_entry);
-        let headroom = window.maximum_entry - entry_speed;
-        let margin = (entry_speed - window.minimum_entry).min(headroom);
-        let fits = margin >= 0.0;
+        assert!(hard_window.minimum_entry.is_finite() && hard_window.maximum_entry.is_finite());
+        assert!(
+            hard_window.minimum_entry >= 0.0
+                && hard_window.minimum_entry <= hard_window.maximum_entry
+        );
+        let hard_margin =
+            (entry_speed - hard_window.minimum_entry).min(hard_window.maximum_entry - entry_speed);
+        let fits_hard = hard_margin >= 0.0;
+        let feel_margin = feel_speeds(piece).map(|feel_window| {
+            (entry_speed - feel_window.minimum_entry).min(feel_window.maximum_entry - entry_speed)
+        });
+        let fits_feel = fits_hard && feel_margin.is_some_and(|margin| margin >= 0.0);
         let target = piece.family.and_then(|family| match family {
             PieceFamily::Hill(family) => match family.feel {
                 // Target −1.2 g on steel and −0.7 g on wood, leaving 0.3 g above the model limit.
@@ -135,27 +147,41 @@ fn select_speed_matched_variant_with_windows(
             },
             PieceFamily::SpeedTurn { .. } => None,
         });
-        // Fitting windows outrank every window that does not fit.
-        let score = if fits {
+        // Tier 2: fits feel window. Tier 1: fits hard envelope only. Tier 0: outside hard envelope.
+        let tier = if fits_feel {
+            2
+        } else if fits_hard {
+            1
+        } else {
+            0
+        };
+        let active_margin = if fits_feel {
+            feel_margin.unwrap()
+        } else {
+            hard_margin
+        };
+        let score = if fits_hard {
             match target {
                 Some(target) => super::predicted_hill_forces(piece, entry_speed)
                     .map_or(0.0, |forces| {
                         1.0 / (1.0 + (forces.minimum_vertical_g - target).abs())
                     }),
-                None => margin,
+                None => active_margin,
             }
         } else {
-            margin
+            hard_margin
         };
-        let choice = SpeedMatchedVariant { id: piece.id, fits };
-        if best
-            .as_ref()
-            .is_none_or(|(_, best_score)| score > *best_score)
-        {
-            best = Some((choice, score));
+        let choice = SpeedMatchedVariant {
+            id: piece.id,
+            fits: fits_hard,
+        };
+        if best.as_ref().is_none_or(|(_, best_tier, best_score)| {
+            tier > *best_tier || (tier == *best_tier && score > *best_score)
+        }) {
+            best = Some((choice, tier, score));
         }
     }
-    best.map(|(choice, _)| choice)
+    best.map(|(choice, _, _)| choice)
 }
 
 #[derive(Clone)]

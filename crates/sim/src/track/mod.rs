@@ -40,7 +40,7 @@ pub mod proximity;
 
 pub mod profile;
 pub mod rated_windows;
-pub use rated_windows::{rated_speed_margin, rated_speeds};
+pub use rated_windows::{feel_rated_speeds, rated_speed_margin, rated_speeds};
 mod roll;
 
 mod hill_forces;

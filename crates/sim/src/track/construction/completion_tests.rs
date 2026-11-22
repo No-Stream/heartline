@@ -158,8 +158,12 @@ fn constructed_reference_laps_report_ratings() {
     let report = recorder.finish(completed, !train.notes().is_empty());
     assert!(report.completed, "train notes: {:?}", train.notes());
     assert_eq!(report.statistics.inversions, 1);
-    // Excessive forces reduce excitement under the calibrated scoring model.
-    assert!((2.0..3.0).contains(&report.excitement));
+    // Forces past the ASTM comfort envelope still reduce excitement without double-penalizing.
+    assert!(
+        (3.5..4.5).contains(&report.excitement),
+        "excitement={:.3}",
+        report.excitement
+    );
     assert!(report.statistics.max_positive_vertical_g > 5.0);
     assert!(report.statistics.max_lateral_g > 4.0);
     assert!(report.notes.iter().any(|note| note.contains("F2291")));

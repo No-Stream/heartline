@@ -9,7 +9,9 @@
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use theme_park_sim::physics::rated_piece::{connected_measurement_track, rate_piece, unpowered};
+use theme_park_sim::physics::rated_piece::{
+    ForceJudge, connected_measurement_track, rate_piece, rate_piece_with_judge, unpowered,
+};
 use theme_park_sim::physics::{ForceEvaluator, TIME_STEP, Train};
 use theme_park_sim::track::catalog::unmeasured_catalog;
 use theme_park_sim::track::rated_windows::RatedWindowSource;
@@ -105,22 +107,24 @@ fn roll_rate_rule(piece: &'static Piece) -> Option<Box<dyn Fn(f64) -> f64>> {
     {
         return Some(Box::new(|speed| piece.rolled_hill_peak_roll_rate(speed)));
     }
-    matches!(
-        piece.id,
-        PieceId::BankLeft
-            | PieceId::UnbankLeft
-            | PieceId::BankRight
-            | PieceId::UnbankRight
-            | PieceId::RolloutLeft
-            | PieceId::RolloutRight
-            | PieceId::HalfCorkscrewLeftUp
-            | PieceId::HalfCorkscrewRightUp
-            | PieceId::HalfCorkscrewLeftDown
-            | PieceId::HalfCorkscrewRightDown
-    )
-    .then(|| {
-        Box::new(|speed| piece.constant_speed_peak_roll_rate(speed)) as Box<dyn Fn(f64) -> f64>
-    })
+    if matches!(piece.family, Some(PieceFamily::SpeedTurn { .. }))
+        || matches!(
+            piece.id,
+            PieceId::BankLeft
+                | PieceId::UnbankLeft
+                | PieceId::BankRight
+                | PieceId::UnbankRight
+                | PieceId::RolloutLeft
+                | PieceId::RolloutRight
+                | PieceId::HalfCorkscrewLeftUp
+                | PieceId::HalfCorkscrewRightUp
+                | PieceId::HalfCorkscrewLeftDown
+                | PieceId::HalfCorkscrewRightDown
+        )
+    {
+        return Some(Box::new(|speed| piece.constant_speed_peak_roll_rate(speed)));
+    }
+    None
 }
 
 fn models() -> Vec<CoasterModel> {
@@ -166,6 +170,15 @@ fn refine_boundary(
 
 /// The first allowed configuration that fails at this speed, described for the review table.
 fn failure(piece: &Piece, model: &CoasterModel, speed: f64) -> Option<ScanFailure> {
+    failure_with_judge(piece, model, speed, ForceJudge::Envelope)
+}
+
+fn failure_with_judge(
+    piece: &Piece,
+    model: &CoasterModel,
+    speed: f64,
+    judge: ForceJudge,
+) -> Option<ScanFailure> {
     assert!(
         model.allows_piece(piece),
         "{} does not allow {:?}",
@@ -173,12 +186,13 @@ fn failure(piece: &Piece, model: &CoasterModel, speed: f64) -> Option<ScanFailur
         piece.id
     );
     let cars = model.train.cars;
-    let rating = rate_piece(model, cars, piece, speed, unpowered()).unwrap_or_else(|error| {
-        panic!(
-            "{:?}, {} {cars} cars, {speed} m/s: {error}",
-            piece.id, model.name
-        )
-    });
+    let rating = rate_piece_with_judge(model, cars, piece, speed, unpowered(), judge)
+        .unwrap_or_else(|error| {
+            panic!(
+                "{:?}, {} {cars} cars, {speed} m/s: {error}",
+                piece.id, model.name
+            )
+        });
     if let Some(reason) = rating.failure {
         let kind = if rating
             .context_results
@@ -198,10 +212,14 @@ fn failure(piece: &Piece, model: &CoasterModel, speed: f64) -> Option<ScanFailur
         });
     }
     if let Some(violation) = &rating.violation {
+        let rule_name = match judge {
+            ForceJudge::Envelope => "the ASTM comfort envelope",
+            ForceJudge::DesignTargets(_) => "the model design targets",
+        };
         return Some(ScanFailure {
             kind: FailureKind::Other,
             diagnostic: format!(
-                "{} {cars} cars: {} {:+.3} g past the duration rule",
+                "{} {cars} cars: {} {:+.3} g past {rule_name}",
                 model.name, AXIS_NAMES[violation.axis], violation.force
             ),
         });
@@ -468,6 +486,9 @@ struct ScannedWindow {
     measured_from: Option<f64>,
     minimum_source: Option<RatedWindowSource>,
     maximum_source: Option<RatedWindowSource>,
+    feel_minimum_entry: Option<f64>,
+    feel_maximum_entry: Option<f64>,
+    feel_maximum_source: Option<RatedWindowSource>,
     unavailable_reason: Option<String>,
     /// The failure just above a force- or clearance-bound maximum.
     upper_failure: Option<String>,
@@ -533,6 +554,9 @@ fn scan(template: &'static Piece, model: &CoasterModel) -> ScannedWindow {
                     measured_from: None,
                     minimum_source: None,
                     maximum_source: None,
+                    feel_minimum_entry: None,
+                    feel_maximum_entry: None,
+                    feel_maximum_source: None,
                     unavailable_reason: Some(format!(
                         "no passing speed above catalog minimum {:.2} m/s: {}",
                         old.minimum_entry, diagnostic.diagnostic
@@ -623,11 +647,7 @@ fn scan(template: &'static Piece, model: &CoasterModel) -> ScannedWindow {
             );
             (old.maximum_entry, RatedWindowSource::DesignCap, None)
         }
-        Some(_)
-            if (DESIGN_CAPPED_PIECES.contains(&template.id)
-                || matches!(template.family, Some(PieceFamily::SpeedTurn { .. })))
-                && old_maximum_in_run =>
-        {
+        Some(_) if DESIGN_CAPPED_PIECES.contains(&template.id) && old_maximum_in_run => {
             (old.maximum_entry, RatedWindowSource::DesignCap, None)
         }
         Some((failing_speed, diagnostic)) => {
@@ -665,18 +685,13 @@ fn scan(template: &'static Piece, model: &CoasterModel) -> ScannedWindow {
         _ => (maximum_entry, maximum_source, upper_failure),
     };
 
-    let (maximum_entry, maximum_source, upper_failure) =
-        match cap_maximum_for_hill_feel(template, model, minimum_entry, maximum_entry) {
-            Some(maximum) => {
-                let feel = hill_family(template).unwrap().feel;
-                let above = format!(
-                    "default-train airtime leaves {feel:?} feel above {:.2} m/s",
-                    maximum + 0.01
-                );
-                (maximum, RatedWindowSource::AirtimeFeel, Some(above))
-            }
-            None => (maximum_entry, maximum_source, upper_failure),
-        };
+    let (feel_minimum_entry, feel_maximum_entry, feel_maximum_source) = scan_feel(
+        template,
+        model,
+        minimum_entry,
+        maximum_entry,
+        maximum_source,
+    );
 
     assert!(
         measured_from <= maximum_entry,
@@ -692,6 +707,19 @@ fn scan(template: &'static Piece, model: &CoasterModel) -> ScannedWindow {
                 "{:?}: endpoint {speed} fails: {}",
                 template.id, diagnostic.diagnostic
             ));
+        }
+    }
+    if let (Some(feel_min), Some(feel_max)) = (feel_minimum_entry, feel_maximum_entry) {
+        let feel_judge = ForceJudge::DesignTargets(model.design_force_targets);
+        for speed in [feel_min, feel_max] {
+            if let Some(diagnostic) = failure_with_judge(template, model, speed, feel_judge)
+                .filter(|failure| failure.kind != FailureKind::ApproachReachability)
+            {
+                acceptance_failures.push(format!(
+                    "{:?}: feel endpoint {speed} fails design targets: {}",
+                    template.id, diagnostic.diagnostic
+                ));
+            }
         }
     }
     let loop_piece = matches!(
@@ -719,7 +747,8 @@ fn scan(template: &'static Piece, model: &CoasterModel) -> ScannedWindow {
         ) && family.twist.is_none()
     }) {
         let cars = model.train.cars;
-        let rating = rate_piece(model, cars, template, maximum_entry, unpowered()).unwrap();
+        let check_speed = feel_maximum_entry.unwrap_or(maximum_entry);
+        let rating = rate_piece(model, cars, template, check_speed, unpowered()).unwrap();
         let class = model.design_force_targets.classify_force(
             ForceRatingAxis::Airtime,
             rating.minimum_filtered_vertical,
@@ -731,7 +760,7 @@ fn scan(template: &'static Piece, model: &CoasterModel) -> ScannedWindow {
         ));
         if family.feel == HillFeel::Ejector && class != ForceRating::Great {
             acceptance_failures.push(format!(
-                "{:?}: {} default {cars}-car train has {class:?} airtime ({:.3} g) at the {maximum_entry} m/s maximum; expected Great",
+                "{:?}: {} default {cars}-car train has {class:?} airtime ({:.3} g) at the {check_speed} m/s feel maximum; expected Great",
                 template.id, model.name, rating.minimum_filtered_vertical
             ));
         }
@@ -745,6 +774,9 @@ fn scan(template: &'static Piece, model: &CoasterModel) -> ScannedWindow {
         measured_from: Some(measured_from),
         minimum_source: Some(minimum_source),
         maximum_source: Some(maximum_source),
+        feel_minimum_entry,
+        feel_maximum_entry,
+        feel_maximum_source,
         unavailable_reason: None,
         upper_failure,
         minimum_failure: minimum_failure.map(|failure| failure.diagnostic),
@@ -754,13 +786,124 @@ fn scan(template: &'static Piece, model: &CoasterModel) -> ScannedWindow {
     }
 }
 
+/// Scans the inner feel window inside `[hard_min, hard_max]` using the model's `DesignForceTargets`,
+/// hill airtime feel ceiling, and speed-turn catalog design caps.
+fn scan_feel(
+    template: &'static Piece,
+    model: &CoasterModel,
+    hard_min: f64,
+    hard_max: f64,
+    hard_max_source: RatedWindowSource,
+) -> (Option<f64>, Option<f64>, Option<RatedWindowSource>) {
+    let old = template.design_speeds.unwrap();
+    let judge = ForceJudge::DesignTargets(model.design_force_targets);
+    let first_index = (hard_min / GRID_STEP).floor() as usize + 1;
+    let last_index = (hard_max / GRID_STEP).floor() as usize;
+    let mut grid: Vec<(f64, Option<ScanFailure>)> = Vec::new();
+    for index in first_index..=last_index {
+        let speed = index as f64 * GRID_STEP;
+        if speed > hard_min && speed < hard_max {
+            grid.push((speed, failure_with_judge(template, model, speed, judge)));
+        }
+    }
+    grid.push((
+        hard_max,
+        failure_with_judge(template, model, hard_max, judge),
+    ));
+
+    let min_failure = failure_with_judge(template, model, hard_min, judge);
+    let feel_min = match &min_failure {
+        None => hard_min,
+        Some(diagnostic) => {
+            let Some(first_pass) = grid.iter().position(|(_, failure)| failure.is_none()) else {
+                return (None, None, None);
+            };
+            let boundary_failure = if first_pass == 0 {
+                diagnostic
+            } else {
+                grid[first_pass - 1]
+                    .1
+                    .as_ref()
+                    .expect("the sample before the first feel pass must fail")
+            };
+            if boundary_failure.kind == FailureKind::ApproachReachability {
+                hard_min
+            } else {
+                let below = if first_pass == 0 {
+                    hard_min
+                } else {
+                    grid[first_pass - 1].0
+                };
+                refine_boundary(below, grid[first_pass].0, true, |speed| {
+                    failure_with_judge(template, model, speed, judge).is_none()
+                })
+                .max(hard_min)
+            }
+        }
+    };
+
+    let mut last_pass = feel_min;
+    let mut first_failure: Option<f64> = None;
+    for (speed, failure) in grid.iter().filter(|(speed, _)| *speed > feel_min) {
+        match failure {
+            None => last_pass = *speed,
+            Some(diagnostic) if diagnostic.kind == FailureKind::ApproachReachability => {}
+            Some(_) => {
+                first_failure = Some(*speed);
+                break;
+            }
+        }
+    }
+
+    let speed_turn_cap =
+        matches!(template.family, Some(PieceFamily::SpeedTurn { .. })).then_some(old.maximum_entry);
+    let (mut feel_max, mut feel_max_source) = match first_failure {
+        None => (hard_max, hard_max_source),
+        Some(failing_speed) => {
+            let refined = refine_boundary(last_pass, failing_speed, false, |speed| {
+                failure_with_judge(template, model, speed, judge).is_none()
+            })
+            .min(hard_max);
+            (refined, RatedWindowSource::DesignTarget)
+        }
+    };
+    if let Some(cap) = speed_turn_cap
+        && cap >= feel_min
+        && cap < feel_max
+        && failure_with_judge(template, model, cap, judge).is_none()
+    {
+        feel_max = cap;
+        feel_max_source = RatedWindowSource::DesignCap;
+    }
+
+    if feel_max < feel_min {
+        return (None, None, None);
+    }
+
+    if !rated_hill_airtime_within_feel_ceiling(template, model, feel_min) {
+        return (None, None, None);
+    }
+    if let Some(capped) = cap_maximum_for_hill_feel(template, model, feel_min, feel_max)
+        && capped < feel_max
+    {
+        feel_max = capped;
+        feel_max_source = RatedWindowSource::AirtimeFeel;
+    }
+
+    (Some(feel_min), Some(feel_max), Some(feel_max_source))
+}
+
 fn generated_rated_windows_contents(date: &str, windows: &[ScannedWindow]) -> String {
     let rows: Vec<String> = windows
         .iter()
         .filter(|window| window.minimum_entry.is_some())
         .map(|window| {
+            let feel_source = match window.feel_maximum_source {
+                Some(source) => format!("Some(RatedWindowSource::{source:?})"),
+                None => "None".to_owned(),
+            };
             format!(
-                "    MeasuredRatedWindow {{ model_key: {:?}, id: PieceId::{:?}, entry_slope: Slope::{:?}, exit_slope: Slope::{:?}, minimum_source: RatedWindowSource::{:?}, maximum_source: RatedWindowSource::{:?}, minimum_entry: {:?}, maximum_entry: {:?}, measured_from: {:?} }},",
+                "    MeasuredRatedWindow {{ model_key: {:?}, id: PieceId::{:?}, entry_slope: Slope::{:?}, exit_slope: Slope::{:?}, minimum_source: RatedWindowSource::{:?}, maximum_source: RatedWindowSource::{:?}, minimum_entry: {:?}, maximum_entry: {:?}, measured_from: {:?}, feel_minimum_entry: {:?}, feel_maximum_entry: {:?}, feel_maximum_source: {feel_source} }},",
                 window.model_key,
                 window.template.id,
                 window.template.entry.slope,
@@ -769,7 +912,9 @@ fn generated_rated_windows_contents(date: &str, windows: &[ScannedWindow]) -> St
                 window.maximum_source.unwrap(),
                 window.minimum_entry.unwrap(),
                 window.maximum_entry.unwrap(),
-                window.measured_from.unwrap()
+                window.measured_from.unwrap(),
+                window.feel_minimum_entry,
+                window.feel_maximum_entry,
             )
         })
         .collect();
@@ -788,7 +933,7 @@ fn generated_rated_windows_contents(date: &str, windows: &[ScannedWindow]) -> St
         })
         .collect();
     let contents = format!(
-        "// Generated by make generate-rated-windows on {date}: 5 Hz filtered forces use sustained limits, 0.5 g allowance for 0.2 s.\n\
+        "// Generated by make generate-rated-windows on {date}: hard edge uses the global ASTM comfort envelope; feel edge uses model DesignForceTargets and hill feel.\n\
          #[rustfmt::skip]\n\
          const MEASURED_RATED_WINDOWS: &[MeasuredRatedWindow] = &[\n{}\n];\n",
         rows.join("\n")
@@ -1139,10 +1284,31 @@ mod tests {
         model.key = "no_passing_window_test_model";
         model.design_force_targets.maximum_vertical_g = 0.01;
         let scan_result = scan(template, &model);
-        assert_eq!(scan_result.minimum_entry, None);
-        assert_eq!(scan_result.maximum_entry, None);
+        assert!(scan_result.minimum_entry.is_some());
+        assert!(scan_result.maximum_entry.is_some());
+        assert_eq!(scan_result.feel_minimum_entry, None);
+        assert_eq!(scan_result.feel_maximum_entry, None);
+        assert_eq!(scan_result.feel_maximum_source, None);
 
-        let generated = generated_rated_windows_contents("2026-11-18", &[scan_result]);
+        let unavailable = ScannedWindow {
+            template,
+            model_key: "no_passing_window_test_model",
+            minimum_entry: None,
+            maximum_entry: None,
+            measured_from: None,
+            minimum_source: None,
+            maximum_source: None,
+            feel_minimum_entry: None,
+            feel_maximum_entry: None,
+            feel_maximum_source: None,
+            unavailable_reason: Some("synthetic unavailable window".into()),
+            upper_failure: None,
+            minimum_failure: None,
+            passes_again_above: None,
+            airtime: Vec::new(),
+            acceptance_failures: Vec::new(),
+        };
+        let generated = generated_rated_windows_contents("2026-11-21", &[unavailable]);
 
         assert!(generated.contains(
             "UnavailableRatedWindow { model_key: \"no_passing_window_test_model\", id: PieceId::BankLeft, entry_slope: Slope::Level, exit_slope: Slope::Level }"
@@ -1272,11 +1438,13 @@ mod tests {
 
         assert_eq!(existing.minimum_entry, baseline.minimum_entry);
         assert_eq!(existing.maximum_entry, baseline.maximum_entry);
+        assert_eq!(restrictive.minimum_entry, existing.minimum_entry);
+        assert_eq!(restrictive.maximum_entry, existing.maximum_entry);
         assert!(
-            restrictive.maximum_entry.unwrap() < existing.maximum_entry.unwrap(),
-            "restrictive model window {} should be narrower than {}",
-            restrictive.maximum_entry.unwrap(),
-            existing.maximum_entry.unwrap()
+            restrictive.feel_maximum_entry.unwrap() < existing.feel_maximum_entry.unwrap(),
+            "restrictive model feel window {} should be narrower than {}",
+            restrictive.feel_maximum_entry.unwrap(),
+            existing.feel_maximum_entry.unwrap()
         );
     }
 

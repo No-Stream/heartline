@@ -13,13 +13,28 @@ use super::*;
 use crate::physics::{
     ForcePeakValues, GRAVITY, PhysicsConfig, PreviewCache, PreviewStatus, TestSample, TrackPreview,
 };
-use crate::track::rated_speed_margin;
 use crate::track::shaped::{
     ElementIntent, ElementSpec, MAXIMUM_SHAPED_SPEED_MPS, MINIMUM_SHAPED_SPEED_MPS,
     ShapedConstructionError, SolveContext, SolveRefusal, TurnSizeHint, automatic_turn_radius_m,
     model_supports_shaped_elements, solve, turn_exit,
 };
-use crate::track::{Bank, Hand, HorizontalCurvature, Slope, VerticalCurvature};
+use crate::track::{
+    Bank, ENVELOPE_DISPLAY_LIMITS, Hand, HorizontalCurvature, RatedSpeeds, Slope,
+    VerticalCurvature, feel_rated_speeds, rated_speed_margin, rated_speeds,
+};
+
+/// Force and rated-window judge used by the finish search.
+///
+/// In-game player construction uses `Envelope` (global ASTM force envelope and hard rated
+/// windows). Design tools (`tools/design finish`) use `DesignTargets` (the model's design force
+/// targets with `FORCE_HEADROOM_G` margin, shaped-turn targets, and feel rated windows) so
+/// sample-ride finishes remain vetted against model design targets.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum FinishForceJudge {
+    #[default]
+    Envelope,
+    DesignTargets,
+}
 
 #[cfg(test)]
 #[path = "completion_tests.rs"]
@@ -230,9 +245,17 @@ impl Construction {
         Ok(updated)
     }
 
-    /// Starts a finish search, or explains why none can start. The builder's force preview of
-    /// the open track is computed (or reused from the cache) here.
+    /// Starts a finish search using the global ASTM envelope, or explains why none can start.
+    /// The builder's force preview of the open track is computed (or reused from the cache) here.
     pub fn completion_search(&self) -> Result<CompletionSearch, String> {
+        self.completion_search_with_judge(FinishForceJudge::Envelope)
+    }
+
+    /// Starts a finish search using the supplied force judge, or explains why none can start.
+    pub fn completion_search_with_judge(
+        &self,
+        judge: FinishForceJudge,
+    ) -> Result<CompletionSearch, String> {
         if self.closed {
             return Err("The coaster circuit is already closed.".into());
         }
@@ -283,13 +306,18 @@ impl Construction {
             .borrow()
             .fork_at_end(self.pieces.len())
             .expect("a preview that reached the end has a snapshot there");
-        Ok(self.search_from(end_speed_mps, preview_cache, true))
+        Ok(self.search_from(end_speed_mps, preview_cache, true, judge))
     }
 
     /// Geometry coverage for unpowered test layouts: every closing route counts, unsimulated.
     #[cfg(test)]
     pub(super) fn completion_search_ignoring_physics(&self) -> CompletionSearch {
-        self.search_from(f64::INFINITY, PreviewCache::default(), false)
+        self.search_from(
+            f64::INFINITY,
+            PreviewCache::default(),
+            false,
+            FinishForceJudge::Envelope,
+        )
     }
 
     fn search_from(
@@ -297,11 +325,13 @@ impl Construction {
         end_speed_mps: f64,
         preview_cache: PreviewCache,
         physics_checked: bool,
+        judge: FinishForceJudge,
     ) -> CompletionSearch {
         let mut construction = self.copy_for_completion_search();
         construction.set_chain(false);
         let mut search = CompletionSearch {
             physics_checked,
+            judge,
             target: self.start,
             construction_hash: self.state_hash(),
             original_length: self.pieces.len(),
@@ -335,13 +365,25 @@ impl Construction {
         search
     }
 
-    /// Runs the whole finish search; returns ranked completions or why there are none.
+    /// Runs the whole finish search with the global ASTM envelope; returns ranked completions or
+    /// why there are none.
     pub fn find_completions(
         &self,
         world: &World,
         obstacles: &[SupportObstacle],
     ) -> Result<Vec<Completion>, String> {
-        let mut search = self.completion_search()?;
+        self.find_completions_with_judge(world, obstacles, FinishForceJudge::Envelope)
+    }
+
+    /// Runs the whole finish search with the supplied force judge; returns ranked completions or
+    /// why there are none.
+    pub fn find_completions_with_judge(
+        &self,
+        world: &World,
+        obstacles: &[SupportObstacle],
+        judge: FinishForceJudge,
+    ) -> Result<Vec<Completion>, String> {
+        let mut search = self.completion_search_with_judge(judge)?;
         loop {
             if let CompletionSearchProgress::Finished(result) = search.advance(world, obstacles) {
                 return result;
@@ -433,6 +475,9 @@ enum PhysicsRejection {
 pub struct CompletionSearch {
     /// False only for test searches that cover geometry on unpowered layouts.
     physics_checked: bool,
+    /// Not saved: loading a park discards any in-flight finish search.
+    #[serde(skip)]
+    judge: FinishForceJudge,
     target: TrackState,
     construction_hash: u64,
     original_length: usize,
@@ -593,8 +638,9 @@ impl CompletionSearch {
                 let piece = node.construction.model_placeable_geometry(template).ok()?;
                 let estimated_speed = node.speed_squared_estimate.max(0.0).sqrt();
                 let outside_rated_window = self.physics_checked
-                    && rated_speeds(node.construction.model(), &piece)
-                        .is_some_and(|window| rated_speed_margin(window, estimated_speed) < 0.0);
+                    && self
+                        .rated_window_for(node.construction.model(), &piece)
+                        .is_some_and(|window| self.rated_margin_for(window, estimated_speed) < 0.0);
                 let order = heuristic(piece.exit, self.target)
                     + piece_score(&piece)
                     + if outside_rated_window {
@@ -843,6 +889,24 @@ impl CompletionSearch {
         });
     }
 
+    fn rated_window_for(&self, model: &CoasterModel, piece: &Piece) -> Option<RatedSpeeds> {
+        match self.judge {
+            FinishForceJudge::Envelope => rated_speeds(model, piece),
+            FinishForceJudge::DesignTargets => {
+                feel_rated_speeds(model, piece).or_else(|| rated_speeds(model, piece))
+            }
+        }
+    }
+
+    fn rated_margin_for(&self, window: RatedSpeeds, speed: f64) -> f64 {
+        match self.judge {
+            FinishForceJudge::Envelope => {
+                (speed - window.minimum_entry).min(window.maximum_entry - speed)
+            }
+            FinishForceJudge::DesignTargets => rated_speed_margin(window, speed),
+        }
+    }
+
     fn evaluate(&mut self, node: &SearchNode) -> Result<CompletionPhysics, PhysicsRejection> {
         let construction = &node.construction;
         let model = construction.model();
@@ -873,41 +937,82 @@ impl CompletionSearch {
             let entry_speed_mps = speed_at(samples, start_distance, arrival_speed_mps);
             let exit_speed_mps = speed_at(samples, end_distance, arrival_speed_mps);
             let worst_car_peaks = worst_car_peaks(&preview, piece_index);
-            let (force_headroom_g, axis) = force_headroom(worst_car_peaks, limits);
-            if force_headroom_g < 0.0 {
-                return Err(PhysicsRejection::OverForce {
-                    shortfall: -force_headroom_g,
-                    description: format!(
-                        "{:?} reaches {axis} force {:.2} g past the {FORCE_HEADROOM_G:.2} g headroom at {entry_speed_mps:.1} m/s",
-                        piece.id, -force_headroom_g
-                    ),
-                });
-            }
-            if piece.element_spec().is_some() {
-                for (observed_g, target_g, axis) in [
-                    (
-                        worst_car_peaks.maximum_lateral_g.abs(),
-                        MAXIMUM_SHAPED_TURN_LATERAL_G,
-                        "lateral",
-                    ),
-                    (
-                        worst_car_peaks.maximum_vertical_g,
-                        MAXIMUM_SHAPED_TURN_VERTICAL_G,
-                        "positive vertical",
-                    ),
-                ] {
-                    if observed_g > target_g {
+            let force_headroom_g = match self.judge {
+                FinishForceJudge::DesignTargets => {
+                    let (headroom_g, axis) = force_headroom(worst_car_peaks, limits);
+                    if headroom_g < 0.0 {
                         return Err(PhysicsRejection::OverForce {
-                            shortfall: observed_g - target_g,
+                            shortfall: -headroom_g,
                             description: format!(
-                                "{:?} reaches {axis} force {observed_g:.2} g, over the owner's {target_g:.1} g target, at {entry_speed_mps:.1} m/s",
+                                "{:?} reaches {axis} force {:.2} g past the {FORCE_HEADROOM_G:.2} g headroom at {entry_speed_mps:.1} m/s",
+                                piece.id, -headroom_g
+                            ),
+                        });
+                    }
+                    if piece.element_spec().is_some() {
+                        for (observed_g, target_g, axis) in [
+                            (
+                                worst_car_peaks.maximum_lateral_g.abs(),
+                                MAXIMUM_SHAPED_TURN_LATERAL_G,
+                                "lateral",
+                            ),
+                            (
+                                worst_car_peaks.maximum_vertical_g,
+                                MAXIMUM_SHAPED_TURN_VERTICAL_G,
+                                "positive vertical",
+                            ),
+                        ] {
+                            if observed_g > target_g {
+                                return Err(PhysicsRejection::OverForce {
+                                    shortfall: observed_g - target_g,
+                                    description: format!(
+                                        "{:?} reaches {axis} force {observed_g:.2} g, over the owner's {target_g:.1} g target, at {entry_speed_mps:.1} m/s",
+                                        piece.id
+                                    ),
+                                });
+                            }
+                        }
+                    }
+                    headroom_g
+                }
+                FinishForceJudge::Envelope => {
+                    if let Some((axis, value_g)) = preview
+                        .force_envelope_samples
+                        .iter()
+                        .filter(|sample| {
+                            sample.distance >= start_distance && sample.distance <= end_distance
+                        })
+                        .find_map(|sample| {
+                            if sample.force_limit_exceeded[0] {
+                                let vertical = if sample.minimum_vertical_g.abs()
+                                    > sample.maximum_vertical_g.abs()
+                                {
+                                    sample.minimum_vertical_g
+                                } else {
+                                    sample.maximum_vertical_g
+                                };
+                                Some(("vertical", vertical))
+                            } else if sample.force_limit_exceeded[1] {
+                                Some(("lateral", sample.lateral_g))
+                            } else if sample.force_limit_exceeded[2] {
+                                Some(("longitudinal", sample.longitudinal_g))
+                            } else {
+                                None
+                            }
+                        })
+                    {
+                        return Err(PhysicsRejection::OverForce {
+                            shortfall: value_g.abs(),
+                            description: format!(
+                                "{:?} reaches {axis} force {value_g:+.2} g past the comfort envelope at {entry_speed_mps:.1} m/s",
                                 piece.id
                             ),
                         });
                     }
+                    envelope_headroom(worst_car_peaks)
                 }
-            }
-            let rated_window = rated_speeds(model, piece);
+            };
+            let rated_window = self.rated_window_for(model, piece);
             let mut rated_margin_mps = None;
             if let Some(window) = rated_window {
                 for car_index in 0..model.train.cars {
@@ -916,7 +1021,7 @@ impl CompletionSearch {
                         start_distance + f64::from(car_index) * car_spacing,
                         arrival_speed_mps,
                     );
-                    let margin = rated_speed_margin(window, car_entry_speed);
+                    let margin = self.rated_margin_for(window, car_entry_speed);
                     if margin < 0.0 {
                         let centre = (window.minimum_entry + window.maximum_entry) / 2.0;
                         let description = format!(
@@ -1151,6 +1256,19 @@ fn worst_car_peaks(preview: &TrackPreview, piece_index: usize) -> ForcePeakValue
         .find(|peaks| peaks.piece_index == piece_index)
         .and_then(|peaks| peaks.worst_car)
         .expect("every piece the train crossed has worst-car peaks")
+}
+
+/// Remaining g inside the global ASTM display limits for ranking envelope-judged completions.
+fn envelope_headroom(peaks: ForcePeakValues) -> f64 {
+    let limits = ENVELOPE_DISPLAY_LIMITS;
+    [
+        limits.maximum_vertical_g - peaks.maximum_vertical_g,
+        peaks.minimum_vertical_g - limits.minimum_vertical_g,
+        limits.maximum_lateral_g - peaks.maximum_lateral_g.abs(),
+        limits.maximum_longitudinal_g - peaks.maximum_longitudinal_g.abs(),
+    ]
+    .into_iter()
+    .fold(f64::INFINITY, f64::min)
 }
 
 /// Remaining g inside `limit - FORCE_HEADROOM_G` on the tightest axis, and that axis.

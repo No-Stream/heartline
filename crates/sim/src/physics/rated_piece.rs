@@ -1,11 +1,44 @@
 use std::collections::{HashSet, VecDeque};
 use std::ops::Range;
 
-use super::{Circuit, ForceEvaluator, GForces, PhysicsConfig, TIME_STEP, Train};
+use super::{
+    Circuit, EnvelopeEvaluator, EvaluatedForce, ForceEvaluator, GForces, PhysicsConfig, TIME_STEP,
+    Train,
+};
 use crate::track::catalog::unmeasured_catalog;
 use crate::track::{
     CoasterModel, DesignForceTargets, Piece, PieceId, TrackState, TrainConfiguration,
 };
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ForceJudge {
+    Envelope,
+    DesignTargets(DesignForceTargets),
+}
+
+#[derive(Clone)]
+enum CarJudge {
+    Envelope(Box<EnvelopeEvaluator>),
+    DesignTargets(Box<ForceEvaluator>),
+}
+
+impl CarJudge {
+    fn new(judge: ForceJudge, time_step: f64) -> Self {
+        match judge {
+            ForceJudge::Envelope => Self::Envelope(Box::new(EnvelopeEvaluator::new(time_step))),
+            ForceJudge::DesignTargets(targets) => {
+                Self::DesignTargets(Box::new(ForceEvaluator::new(targets, time_step)))
+            }
+        }
+    }
+
+    fn update(&mut self, reading: GForces) -> EvaluatedForce {
+        match self {
+            Self::Envelope(evaluator) => evaluator.update(reading),
+            Self::DesignTargets(evaluator) => evaluator.update(reading),
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct ForceViolation {
@@ -686,12 +719,24 @@ pub fn rate_piece(
     target: f64,
     physics: PhysicsConfig,
 ) -> Result<PieceRating, String> {
+    rate_piece_with_judge(model, cars, piece, target, physics, ForceJudge::Envelope)
+}
+
+pub fn rate_piece_with_judge(
+    model: &CoasterModel,
+    cars: u8,
+    piece: &Piece,
+    target: f64,
+    physics: PhysicsConfig,
+    judge: ForceJudge,
+) -> Result<PieceRating, String> {
     rate_piece_on_contexts(
         model,
         cars,
         piece,
         target,
         physics,
+        judge,
         measurement_tracks(model, cars, piece, target),
     )
 }
@@ -702,6 +747,7 @@ fn rate_piece_on_contexts(
     piece: &Piece,
     target: f64,
     physics: PhysicsConfig,
+    judge: ForceJudge,
     tracks: Vec<MeasurementTrack>,
 ) -> Result<PieceRating, String> {
     assert!(target.is_finite() && target > 0.0);
@@ -714,7 +760,7 @@ fn rate_piece_on_contexts(
     assert!(model.cars_per_train.contains(&cars));
     let context_results = tracks
         .into_iter()
-        .map(|track| rate_piece_on_track(model, cars, piece, target, physics, track))
+        .map(|track| rate_piece_on_track(model, cars, piece, target, physics, judge, track))
         .collect::<Result<Vec<_>, _>>()?;
     let applicable_results: Vec<_> = context_results
         .iter()
@@ -771,6 +817,7 @@ fn rate_piece_on_track(
     piece: &Piece,
     target: f64,
     physics: PhysicsConfig,
+    judge: ForceJudge,
     track: MeasurementTrack,
 ) -> Result<PieceContextRating, String> {
     assert!(target.is_finite() && target > 0.0);
@@ -804,8 +851,7 @@ fn rate_piece_on_track(
         "{} approach does not support the full train before its starting position",
         track.context
     );
-    let mut evaluators =
-        vec![ForceEvaluator::new(model.design_force_targets, TIME_STEP); usize::from(cars)];
+    let mut evaluators = vec![CarJudge::new(judge, TIME_STEP); usize::from(cars)];
     let mut train = Train::new(
         &track.circuit,
         &config,
@@ -1049,7 +1095,7 @@ pub fn rate_sequence(
     ranges: &[Range<f64>],
     configuration: &TrainConfiguration,
     physics: PhysicsConfig,
-    limits: DesignForceTargets,
+    judge: ForceJudge,
     approach_start: f64,
     start_speed: f64,
 ) -> SequenceRating {
@@ -1058,8 +1104,7 @@ pub fn rate_sequence(
     assert!(approach_start < ranges[0].start && start_speed > 0.0);
     assert!(ranges.last().unwrap().end < circuit.length());
     let mut train = Train::new(circuit, configuration, physics, approach_start, start_speed);
-    let mut evaluators =
-        vec![ForceEvaluator::new(limits, TIME_STEP); usize::from(configuration.cars)];
+    let mut evaluators = vec![CarJudge::new(judge, TIME_STEP); usize::from(configuration.cars)];
     let mut seen = vec![vec![false; ranges.len()]; usize::from(configuration.cars)];
     let mut minimum_speeds = vec![f64::INFINITY; ranges.len()];
     let mut tail_seconds = vec![0.0; usize::from(configuration.cars)];
@@ -1462,6 +1507,7 @@ mod tests {
             piece,
             target_speed,
             unpowered(),
+            ForceJudge::Envelope,
             context.clone(),
         )
         .unwrap();
@@ -1524,6 +1570,7 @@ mod tests {
             piece,
             target_speed,
             unpowered(),
+            ForceJudge::Envelope,
             context,
         )
         .unwrap();
@@ -1592,6 +1639,7 @@ mod tests {
                 piece,
                 target_speed,
                 unpowered(),
+                ForceJudge::Envelope,
                 context,
             )
             .unwrap();
@@ -1678,7 +1726,15 @@ mod tests {
             .find(|piece| piece.id == PieceId::EjectorHill12x64)
             .unwrap();
         let speed = piece.design_speeds.unwrap().maximum_entry + 1.0;
-        let result = rate_piece(&model, 8, piece, speed, unpowered()).unwrap();
+        let result = rate_piece_with_judge(
+            &model,
+            8,
+            piece,
+            speed,
+            unpowered(),
+            ForceJudge::DesignTargets(model.design_force_targets),
+        )
+        .unwrap();
         let violation = result
             .violation
             .as_ref()
@@ -1710,9 +1766,16 @@ mod tests {
                 .into_iter()
                 .find(|context| context.context == "connected model-allowed approach")
                 .expect("the shared contexts include the connected model-allowed approach");
-            let rating =
-                rate_piece_on_track(&model, cars, piece, target, unpowered(), context.clone())
-                    .unwrap();
+            let rating = rate_piece_on_track(
+                &model,
+                cars,
+                piece,
+                target,
+                unpowered(),
+                ForceJudge::Envelope,
+                context.clone(),
+            )
+            .unwrap();
             let config = scaled_train(&model, cars);
             let approach_start = context.element_start - settling_distance(target);
             let approach_speed = solve_approach_speed(
@@ -1731,8 +1794,7 @@ mod tests {
                 approach_start,
                 approach_speed,
             );
-            let mut evaluators =
-                vec![ForceEvaluator::new(model.design_force_targets, TIME_STEP); usize::from(cars)];
+            let mut evaluators = vec![EnvelopeEvaluator::new(TIME_STEP); usize::from(cars)];
             let mut minimum_vertical = f64::INFINITY;
             let mut first_violation = None;
             let mut cleared_element = false;
@@ -1806,7 +1868,7 @@ mod tests {
                 &[track.element_start..track.element_end],
                 &train,
                 unpowered(),
-                model.design_force_targets,
+                ForceJudge::Envelope,
                 sequence_start(&track),
                 speed,
             );
@@ -1909,7 +1971,7 @@ mod tests {
             &ranges,
             &model.train,
             unpowered(),
-            model.design_force_targets,
+            ForceJudge::Envelope,
             start,
             solved,
         );
@@ -1932,7 +1994,7 @@ mod tests {
             &[track.element_start..track.element_end],
             &model.train,
             unpowered(),
-            model.design_force_targets,
+            ForceJudge::Envelope,
             sequence_start(&track),
             10.0,
         );

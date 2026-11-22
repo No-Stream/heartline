@@ -1449,7 +1449,9 @@ fn execute_command(
         }
         RideCommand::Finish => {
             let completions = session
-                .finish_options()
+                .finish_options_with_judge(
+                    theme_park_sim::track::construction::FinishForceJudge::DesignTargets,
+                )
                 .map_err(|error| error.to_string())?;
             let model = validate_model(&ride.model)?;
             let placed_pieces = placed_construction_pieces(session)?;
@@ -1465,7 +1467,9 @@ fn execute_command(
         }
         RideCommand::FinishApply(rank) => {
             let completions = session
-                .finish_options()
+                .finish_options_with_judge(
+                    theme_park_sim::track::construction::FinishForceJudge::DesignTargets,
+                )
                 .map_err(|error| error.to_string())?;
             let completion = completions.get(rank.wrapping_sub(1)).ok_or_else(|| {
                 format!(
@@ -1484,7 +1488,10 @@ fn execute_command(
             }
             let track_before = construction_track(session)?.len();
             session
-                .finish_apply(rank)
+                .finish_apply_with_judge(
+                    rank,
+                    theme_park_sim::track::construction::FinishForceJudge::DesignTargets,
+                )
                 .map_err(|error| error.to_string())?;
             let track_after = construction_track(session)?;
             let added = track_after.len().saturating_sub(track_before);
@@ -1664,7 +1671,9 @@ fn state_value_with_estimates(
     session: &mut BuilderSession,
     estimates: BuilderEstimates,
 ) -> Result<Value, String> {
-    session.search_finish();
+    session.search_finish_with_judge(
+        theme_park_sim::track::construction::FinishForceJudge::DesignTargets,
+    );
     let simulation = session.simulation();
     let construction = simulation
         .construction

@@ -1,15 +1,15 @@
 use std::collections::{HashSet, VecDeque};
 
 use theme_park_sim::physics::rated_piece::{
-    connected_measurement_track, measurement_contexts, rate_piece, rate_sequence,
-    solve_approach_speed, unpowered as rating_physics,
+    ForceJudge, connected_measurement_track, measurement_contexts, rate_piece,
+    rate_piece_with_judge, rate_sequence, solve_approach_speed, unpowered as rating_physics,
 };
-use theme_park_sim::physics::{Circuit, ForceEvaluator, PhysicsConfig, TIME_STEP, Train};
+use theme_park_sim::physics::{Circuit, EnvelopeEvaluator, PhysicsConfig, TIME_STEP, Train};
 use theme_park_sim::track::rated_windows::measured_rated_window;
 use theme_park_sim::track::{
     CoasterModel, ForceRating, ForceRatingAxis, HillFeel, Piece, PieceFamily, PieceId, RatedSpeeds,
-    TrackState, catalog, coaster_models, hybrid_model, multi_launch_model, rated_speeds,
-    wooden_twister_model,
+    TrackState, catalog, coaster_models, feel_rated_speeds, hybrid_model, multi_launch_model,
+    rated_speeds, wooden_twister_model,
 };
 
 const RETURN_PIECES: [PieceId; 9] = [
@@ -464,8 +464,7 @@ fn scan_train_element_from_start(
         start_distance,
         start_speed,
     );
-    let mut evaluators =
-        vec![ForceEvaluator::new(model.design_force_targets, TIME_STEP); usize::from(cars)];
+    let mut evaluators = vec![EnvelopeEvaluator::new(TIME_STEP); usize::from(cars)];
     // An excursion that began on an earlier piece belongs to that piece, as in the isolated rating.
     let mut excursion_began_before_element = vec![[false; 3]; usize::from(cars)];
     let mut cars_seen = vec![false; usize::from(cars)];
@@ -585,6 +584,33 @@ fn assert_train_crosses_element_after_preroll(
             )
         });
     assert_train_scan_result(model, piece_id, context, cars, entry_speed, false, scan)
+}
+
+fn assert_train_crosses_element_after_preroll_with_minimum(
+    model: &CoasterModel,
+    circuit: &Circuit,
+    piece_id: PieceId,
+    element_range: std::ops::Range<f64>,
+    cars: u8,
+    entry_speed: f64,
+    minimum_speed_required: bool,
+) -> ElementForces {
+    let scan = scan_train_element_after_preroll(model, circuit, element_range, cars, entry_speed)
+        .unwrap_or_else(|error| {
+            panic!(
+                "{piece_id:?} {} {cars} cars at {entry_speed}: cannot solve pre-roll: {error}",
+                model.name
+            )
+        });
+    assert_train_scan_result(
+        model,
+        piece_id,
+        "supplied test circuit",
+        cars,
+        entry_speed,
+        minimum_speed_required,
+        scan,
+    )
 }
 
 fn assert_train_scan_result(
@@ -867,7 +893,7 @@ fn every_level_to_level_rated_element_passes_default_trains_at_both_window_ends(
                             | PieceId::SteelLoopRight
                     );
                 if std::panic::catch_unwind(|| {
-                    assert_train_crosses_element(
+                    assert_train_crosses_element_after_preroll_with_minimum(
                         &model,
                         &circuit,
                         template.id,
@@ -926,8 +952,17 @@ fn wooden_strong_floater_is_rated_and_available_on_briar_blitz() {
             false,
         );
     }
-    let rating = rate_piece(&model, cars, piece, rated.maximum_entry, rating_physics())
-        .expect("rating must complete");
+    let feel_rated =
+        feel_rated_speeds(&model, piece).expect("wooden strong floater has a feel window");
+    let rating = rate_piece_with_judge(
+        &model,
+        cars,
+        piece,
+        feel_rated.maximum_entry,
+        rating_physics(),
+        ForceJudge::DesignTargets(model.design_force_targets),
+    )
+    .expect("rating must complete");
     assert_eq!(
         model.design_force_targets.classify_force(
             ForceRatingAxis::Airtime,
@@ -961,7 +996,8 @@ fn every_ejector_hill_reaches_great_airtime_for_each_allowed_default_train() {
             .iter()
             .filter(|model| model.allows_piece(piece))
         {
-            let rated = rated_window(model, piece);
+            let rated =
+                feel_rated_speeds(model, piece).unwrap_or_else(|| rated_window(model, piece));
             let sample_count = ((rated.maximum_entry - rated.minimum_entry) / 0.25).ceil() as usize;
             let found_great = (0..=sample_count).any(|index| {
                 let speed = (rated.minimum_entry + index as f64 * 0.25).min(rated.maximum_entry);
@@ -997,7 +1033,9 @@ fn every_floater_hill_gives_default_trains_at_most_good_airtime_at_its_maximum()
             .into_iter()
             .filter(|model| model.allows_piece(piece))
         {
-            let maximum = rated_window(&model, piece).maximum_entry;
+            let maximum = feel_rated_speeds(&model, piece)
+                .unwrap_or_else(|| rated_window(&model, piece))
+                .maximum_entry;
             let rating = rate_piece(&model, model.train.cars, piece, maximum, rating_physics())
                 .expect("rating must complete");
             let airtime = model.design_force_targets.classify_force(
@@ -1215,7 +1253,7 @@ fn banked_straights_pass_isolated_ratings_at_both_window_ends() {
 }
 
 #[test]
-fn daisy_dash_uphill_banked_straights_are_unavailable_after_a_gentle_up_bank() {
+fn daisy_dash_uphill_banked_straights_have_no_feel_window_after_a_gentle_up_bank() {
     use PieceId::{BankedStraightLeft, BankedStraightRight};
     let model = models()
         .into_iter()
@@ -1240,15 +1278,23 @@ fn daisy_dash_uphill_banked_straights_are_unavailable_after_a_gentle_up_bank() {
         assert!(model.allows_piece(piece));
         assert!(piece.design_speeds.is_some());
         assert!(is_known_unavailable_banked_straight(&model, piece));
-        assert!(rated_speeds(&model, piece).is_none());
+        assert!(
+            rated_speeds(&model, piece).is_some(),
+            "{piece_id:?} passes the global ASTM envelope"
+        );
+        assert!(
+            feel_rated_speeds(&model, piece).is_none(),
+            "{piece_id:?} has no speed inside Daisy Dash's design targets"
+        );
 
         let minimum_design_speed = piece.design_speeds.unwrap().minimum_entry;
-        let rating = rate_piece(
+        let rating = rate_piece_with_judge(
             &model,
             model.train.cars,
             piece,
             minimum_design_speed,
             rating_physics(),
+            ForceJudge::DesignTargets(model.design_force_targets),
         )
         .expect("rating must complete");
         assert!(!rating.passed, "{piece_id:?}: {rating:?}");
@@ -1305,7 +1351,7 @@ fn banked_straight_compositions_pass_with_continuous_force_history() {
                 &tested_ranges,
                 &model.train,
                 rating_physics(),
-                model.design_force_targets,
+                ForceJudge::Envelope,
                 tested_ranges[0].start - 10.0,
                 rated.minimum_entry,
             );

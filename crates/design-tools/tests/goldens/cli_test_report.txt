@@ -8,7 +8,6 @@ Score breakdown:
     positive forces (+0.0, 0.0 s)
     lateral forces (+0.0, 0.0 s)
     longitudinal forces (+0.0, 0.0 s)
-    excessive forces (-0.0, 0.0 s)
     inversions (+0.0, -0.0)
     top speed (+0.0, 0.0 m/s)
     biggest drop (+0.0, 0.0 m)
@@ -28,7 +27,6 @@ Score breakdown:
   intensity:
     peak force (+0.8, 0.2 at Station); peakVertical 1.00 g at Station (piece 0, car 0)
     sustained force (+0.0, 0.0 s)
-    excessive forces (+0.0, 0.0 s)
     top speed (+0.0, 0.0 m/s)
     biggest drop (+0.0, 0.0 m)
     launch (+0.0, 0.0 g)
@@ -41,7 +39,6 @@ Score breakdown:
     reversals (+0.0, 0.0)
     strong positive forces (+0.0, 0.0 s)
     time inverted (+0.0, -0.0 s)
-    excessive forces (+0.0, 0.0 s)
     forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
 Statistics:
   length 138.0 m; duration 118.2 s; average speed 1.2 m/s; maximum speed 2.0 m/s

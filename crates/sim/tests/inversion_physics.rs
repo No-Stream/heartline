@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-use theme_park_sim::physics::rated_piece::{rate_piece, rate_sequence};
+use theme_park_sim::physics::rated_piece::{
+    ForceJudge, rate_piece, rate_piece_with_judge, rate_sequence,
+};
 use theme_park_sim::physics::{Circuit, CoasterRun, GRAVITY, PhysicsConfig, Train};
 use theme_park_sim::track::rated_windows::measured_rated_window;
 use theme_park_sim::track::{
@@ -365,15 +367,33 @@ fn descending_fifteen_degree_pull_window_passes_with_a_held_speed_approach() {
                 model.name
             );
         }
-        let speed = 30.0;
-        let rating = rate_piece(&model, cars, piece, speed, unpowered()).unwrap();
-        vertical_violation_above_window |= rating
+        let above_envelope =
+            rate_piece(&model, cars, piece, rated.maximum_entry + 0.01, unpowered()).unwrap();
+        assert!(
+            above_envelope
+                .violation
+                .as_ref()
+                .is_some_and(|violation| violation.axis == 0),
+            "{} did not fail vertical above its hard window ({:.2} m/s): {above_envelope:?}",
+            model.name,
+            rated.maximum_entry
+        );
+        let design_rating = rate_piece_with_judge(
+            &model,
+            cars,
+            piece,
+            30.0,
+            unpowered(),
+            ForceJudge::DesignTargets(model.design_force_targets),
+        )
+        .unwrap();
+        vertical_violation_above_window |= design_rating
             .violation
             .is_some_and(|violation| violation.axis == 0);
     }
     assert!(
         vertical_violation_above_window,
-        "no vertical violation at 30 m/s"
+        "no design-target vertical violation at 30 m/s"
     );
 }
 
@@ -476,7 +496,7 @@ fn all_constructible_half_inversion_combinations_pass_at_rated_element_bands() {
                     &sequence_ranges,
                     &model.train,
                     unpowered(),
-                    model.design_force_targets,
+                    ForceJudge::Envelope,
                     sequence_ranges[0].start - 15.0,
                     speed,
                 );
@@ -658,7 +678,7 @@ fn ride_test_reports_whether_the_train_clears_the_top_hat() {
 #[test]
 fn coaster_run_reports_large_loop_overspeed_once() {
     let model = hybrid_model();
-    let circuit = circuit_with_gentle_lift_drop_and_loop(PieceId::LargeLoop, 8);
+    let circuit = circuit_with_gentle_lift_drop_and_loop(PieceId::LargeLoop, 10);
     let outcome = run_one_car_coaster(&circuit, 0.005);
 
     assert!(!outcome.recovered);
@@ -905,7 +925,7 @@ fn full_trains_cross_composed_immelmann_and_dive_loops() {
                     &ranges,
                     &config,
                     unpowered(),
-                    model.design_force_targets,
+                    ForceJudge::Envelope,
                     start - 15.0,
                     27.5,
                 );

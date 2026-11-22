@@ -391,8 +391,14 @@ impl EnvelopeTracker {
             if worst_level > 1.0 {
                 let ratio = worst_level - 1.0;
                 candidate(axis, worst_level, 1.0, ratio);
-                axis_ratio[left] = axis_ratio[left].max(ratio);
-                axis_ratio[right] = axis_ratio[right].max(ratio);
+                let left_alone = normalized[left].abs() > 1.0;
+                let right_alone = normalized[right].abs() > 1.0;
+                if left_alone || !right_alone {
+                    axis_ratio[left] = axis_ratio[left].max(ratio);
+                }
+                if right_alone || !left_alone {
+                    axis_ratio[right] = axis_ratio[right].max(ratio);
+                }
                 step_worst_ratio = step_worst_ratio.max(ratio);
             }
         }
@@ -435,20 +441,23 @@ impl EnvelopeTracker {
         }
         self.elapsed = step_end;
 
-        let axis_above_plateau = [
-            !self.axis_stacks[0].is_empty()
-                || !self.axis_stacks[1].is_empty()
-                || !self.pair_stacks[0].is_empty()
-                || !self.pair_stacks[1].is_empty(),
-            !self.axis_stacks[2].is_empty()
-                || !self.axis_stacks[3].is_empty()
-                || !self.pair_stacks[0].is_empty()
-                || !self.pair_stacks[2].is_empty(),
-            !self.axis_stacks[4].is_empty()
-                || !self.axis_stacks[5].is_empty()
-                || !self.pair_stacks[1].is_empty()
-                || !self.pair_stacks[2].is_empty(),
+        let mut axis_above_plateau = [
+            !self.axis_stacks[0].is_empty() || !self.axis_stacks[1].is_empty(),
+            !self.axis_stacks[2].is_empty() || !self.axis_stacks[3].is_empty(),
+            !self.axis_stacks[4].is_empty() || !self.axis_stacks[5].is_empty(),
         ];
+        for (pair_index, (left, right, _)) in pairs.into_iter().enumerate() {
+            if !self.pair_stacks[pair_index].is_empty() {
+                let left_alone = normalized[left].abs() > 1.0;
+                let right_alone = normalized[right].abs() > 1.0;
+                if left_alone || !right_alone {
+                    axis_above_plateau[left] = true;
+                }
+                if right_alone || !left_alone {
+                    axis_above_plateau[right] = true;
+                }
+            }
+        }
         EnvelopeStep {
             axis_exceeded: axis_ratio.map(|ratio| ratio > 0.0),
             axis_ratio,
@@ -884,6 +893,28 @@ mod envelope_tests {
         within_halved.push([1.0, -1.4, 0.0]);
         within_halved.extend(vec![[1.0, -0.8, 0.0]; 45]);
         assert_eq!(stream(&within_halved).g_seconds, 0.0);
+    }
+
+    #[test]
+    fn combined_ellipse_does_not_blame_idle_axes_for_single_axis_exceedance() {
+        // 4.8 g lateral alone exceeds both the 3.0 g single-axis limit and the 3.3 g ellipse
+        // semi-axis; vertical (1.0 g) and longitudinal (0.2 g) must not be flagged as exceeded.
+        let mut tracker = EnvelopeTracker::default();
+        let mut last_step = super::EnvelopeStep::default();
+        for _ in 0..80 {
+            last_step = tracker.record([1.0, 4.8, 0.2], TIME_STEP, true, location(0.0));
+        }
+        assert_eq!(last_step.axis_exceeded, [false, true, false]);
+        assert_eq!(last_step.axis_above_plateau, [false, true, false]);
+
+        // True combined violation (5.0 g vertical + 2.5 g lateral for 0.4 s, each legal alone
+        // for 0.4 s, hypot = 1.07 > 1.0) flags both vertical and lateral, not longitudinal.
+        let mut combined = EnvelopeTracker::default();
+        let mut combined_step = super::EnvelopeStep::default();
+        for _ in 0..80 {
+            combined_step = combined.record([5.0, 2.5, 0.0], TIME_STEP, true, location(0.0));
+        }
+        assert_eq!(combined_step.axis_exceeded, [true, true, false]);
     }
 
     #[test]

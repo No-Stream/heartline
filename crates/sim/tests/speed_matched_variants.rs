@@ -1,6 +1,6 @@
 use theme_park_sim::track::construction::select_speed_matched_variant;
 use theme_park_sim::track::{
-    Piece, PieceId, catalog, hybrid_model, predicted_hill_forces, rated_speeds,
+    Piece, PieceId, catalog, feel_rated_speeds, hybrid_model, predicted_hill_forces, rated_speeds,
     wooden_twister_model,
 };
 
@@ -20,8 +20,8 @@ fn pieces(ids: &[PieceId]) -> Vec<Piece> {
 fn selects_the_fitting_loop_with_the_largest_window_margin() {
     let model = hybrid_model();
     let candidates = pieces(&[PieceId::Loop, PieceId::LargeLoop]);
-    let loop_window = rated_speeds(&model, &candidates[0]).unwrap();
-    let large_loop_window = rated_speeds(&model, &candidates[1]).unwrap();
+    let loop_window = feel_rated_speeds(&model, &candidates[0]).unwrap();
+    let large_loop_window = feel_rated_speeds(&model, &candidates[1]).unwrap();
     let overlap_minimum = loop_window
         .minimum_entry
         .max(large_loop_window.minimum_entry);
@@ -35,7 +35,7 @@ fn selects_the_fitting_loop_with_the_largest_window_margin() {
         .iter()
         .max_by(|first, second| {
             let margin = |piece: &Piece| {
-                let window = rated_speeds(&model, piece).unwrap();
+                let window = feel_rated_speeds(&model, piece).unwrap();
                 (entry_speed - window.minimum_entry).min(window.maximum_entry - entry_speed)
             };
             margin(first).total_cmp(&margin(second))
@@ -113,7 +113,7 @@ fn hill_selection_uses_the_fitting_window_closest_to_its_force_target() {
         let fitting: Vec<_> = candidates
             .iter()
             .filter(|piece| {
-                let window = rated_speeds(&model, piece).unwrap();
+                let window = feel_rated_speeds(&model, piece).unwrap();
                 window.minimum_entry <= entry_speed && entry_speed <= window.maximum_entry
             })
             .filter_map(|piece| {
