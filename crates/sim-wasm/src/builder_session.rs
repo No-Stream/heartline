@@ -1528,7 +1528,7 @@ mod tests {
             (
                 "Horizon Hawk",
                 include_str!("../../../content/rides/horizon-hawk.ride.json"),
-                0x716afad6b2e24312,
+                0x161f57109f44a713,
             ),
             (
                 "Timber Tumbler",
