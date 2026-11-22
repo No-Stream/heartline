@@ -1,10 +1,10 @@
 ---
 id: TASK-126
 title: Evaluate rider forces with ASTM-style filtering and duration limits
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-05 16:09'
-updated_date: '2026-11-21 21:25'
+updated_date: '2026-11-22 07:45'
 labels:
   - physics
   - research
@@ -139,3 +139,9 @@ Follow-up on the concurrent focused test: corrected its `unmeasured_catalog` imp
 
 Backlog review 2026-11-21: filtered, duration-aware evaluation and per-model rated windows are on master (744b458; final focused rated_element_physics run recorded as 23/23 in the ticket). Do not close yet: master still has separate per-model score penalties and envelope judging, and production and test envelope trackers differ; the force-envelope and score/window alignment is now explicitly planned in TASK-166. The requested docs/handoffs/2026-11-18-handoff.md is absent from this checkout; I used the current 2026-11-21 plan and task evidence instead.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed on `master` (`bbb856c`) via TASK-166: filtered, duration-aware evaluation is unified in one ASTM F2291-based envelope tracker (`crates/sim/src/physics/comfort.rs`), separate per-model `ExcessiveForces` score penalties were removed, two-edge rated windows (`rated_speeds` hard ASTM edge plus `feel_rated_speeds` inner model-feel edge) were regenerated, and save format bumped to `TPSAVE\x06`.
+<!-- SECTION:FINAL_SUMMARY:END -->

@@ -1,5 +1,7 @@
 # Global force limits and shaped elements for every model (2026-11-21)
 
+> Status (2026-11-22): Both Part A (`TASK-166`) and Part B (`TASK-167`) landed on `master` (`bbb856c`), including the five-model `ShapedProfile` rollout, ASTM F2291 envelope judging with amber model-feel notes, two-edge rated windows, all-model finish search, and the Daisy Dash force-headroom redesign. Remaining follow-ups live in `TASK-168` (shaped inversions), `TASK-169` (lateral-rich turns and vertical transitions), `TASK-170` (refresh remaining showcase rides), `TASK-157` (shaped hill confirm latency), and `TASK-158` (shaped inspector layout clipping).
+
 Owner direction, 2026-11-21: player-built coasters are judged by one force-and-duration envelope that follows ASTM F2291 loosely, erring slightly generous. The per-model force limits are "vibe limits" so sample rides feel like the model they are inspired by; they must not punish a player's ride that is fine by the envelope. Shaped elements should exist for every coaster model, built as one modular system.
 
 Decisions taken by the lead on the plan's open questions (owner may override):

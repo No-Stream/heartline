@@ -1,10 +1,10 @@
 ---
 id: TASK-156
 title: 'Shaped elements: solve element shape for entry speed and feel intent'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-19 16:16'
-updated_date: '2026-11-21 21:25'
+updated_date: '2026-11-22 07:45'
 labels: []
 dependencies: []
 priority: high
@@ -478,3 +478,9 @@ Gates: workspace Rust tests passed (lead's run on `c6d9f3d`; web-only commits si
 <!-- SECTION:NOTES:BEGIN -->
 Backlog review 2026-11-21: the earlier shaped-element stages are not all closed by this review. Stage 1 output is present on master (shaped elements in f07cfd9; the one two-piece brake Horizon Hawk layout in 6661fe4). The new architecture in TASK-166/167 supersedes the remaining staged direction: global windows/force judging in TASK-166 and per-model shaped profiles and finish search in TASK-167. Keep this tracking item open as a partial annotation; the remaining old stages (turn feel/vertical transitions, named inversions with peak force, and other showcase rides) must be carried into TASK-167, not treated as completed.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Stage 1 shaped hills and fully banked turns plus the Horizon Hawk rebuild landed on `master`, and the full five-model `ShapedProfile` rollout, ASTM comfort-envelope flexibility, all-model finish search, and Daisy Dash redesign landed via TASK-167 (`bbb856c`). Remaining follow-up work is tracked in dedicated cards: TASK-168 (shaped inversions with peak-force intent), TASK-169 (lateral-rich turn feel and vertical-transition controls), TASK-170 (refresh remaining showcase rides with shaped elements), TASK-157 (shaped hill confirm latency), and TASK-158 (shaped inspector layout clipping).
+<!-- SECTION:FINAL_SUMMARY:END -->

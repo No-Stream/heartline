@@ -190,7 +190,7 @@ The `expect` block holds the ride's targets. No command writes it; add it to the
 
 Other keys are `inversionsAtLeast`, `invertedSeconds`, and under `features`: `piecePrefixGroupsAtLeast`, `heartlinedInversionsAtLeast`, `piecePrefixesAfter`, `orderedSteps` and `adjacentSteps`. Unknown keys are rejected when the file is parsed. Shaped steps count as `ShapedHill`, `ShapedTurnLeft` or `ShapedTurnRight` for the prefix features. Do not loosen `expect` to make a ride pass; if a target looks wrong, raise it with the owner.
 
-`tools/design check <file> ...` tests the ride twice. Default physics starts the train at rest with a 3 m/s lift; construction-test physics, which the builder's estimates use, starts at 2 m/s with a 5 m/s lift. For each configuration, it prints rated-window margins, force headroom and every expectation, then any agreement failures. It exits 1 when an expectation fails under either configuration or native agreement fails. Rated-window and force-headroom failures make it exit 1 only when `designMargins` is `true`; without it they are printed and ignored, so set it on every new ride. A failing check still prints its whole report on standard output; standard error gets only a short summary naming each failing ride and the checks it failed, for example `demo hyper: expectations, default physics expectations`. The Horizon Hawk check takes about 25 seconds.
+`tools/design check <file> ...` tests the ride twice. Default physics starts the train at rest with a 3 m/s lift; construction-test physics, which the builder's estimates use, starts at 2 m/s with a 5 m/s lift. For each configuration, it prints rated-window margins, force headroom and every expectation, then any native agreement failures, and finally runs a fast Node/WASM browser-path agreement replay (which also flags stale shaped geometry that the current solver would no longer produce). It exits 1 when an expectation fails under either configuration or agreement fails. Rated-window and force-headroom failures make it exit 1 only when `designMargins` is `true`; without it they are printed and ignored, so set it on every new ride. A failing check still prints its whole report on standard output; standard error gets only a short summary naming each failing ride and the checks it failed, for example `demo hyper: expectations, default physics expectations`. The Horizon Hawk check takes about 25 seconds.
 
 ```console
 $ tools/design check content/rides/horizon-hawk.ride.json
@@ -345,13 +345,9 @@ The ending is where the earlier attempts failed. After the last banked turn, the
 
 The check passes under both physics configurations. In the construction test and under default physics respectively, excitement is 7.42 and 6.71, sustained maximum vertical force is 3.31 and 3.28 g, sustained airtime is -0.94 and -0.91 g, and peak lateral force is 0.44 and 0.14 g, with 7 airtime moments in both. The tightest margins are construction-test forward force (0.08 g of headroom, on the first drop) and the `WideSixtyDownToLevel` rated window (+0.99 m/s). The focused browser agreement test passed for this ride before it merged (TASK-156 notes); I did not rerun it for this guide.
 
-## Coming soon
-
-Two changes are on other branches and not on master yet. `ride <file> finish` will list several ways to close the circuit back to the station, each with its forces, speeds and a full check, and `finish apply <n>` will apply one; the current `finish` applies the first route it finds. `tools/design check` will also run a fast browser-agreement replay that takes seconds per ride, and it will fail on shaped geometry that the current solver would no longer produce. Until those land, use the commands documented above and the full browser agreement test.
-
 ## Where to look next
 
 - Command code: `crates/design-tools/src/commands.rs` (parsing, `check`), `report.rs` (margins and headroom), `brake_report.rs`.
-- Shaped elements: `crates/sim/src/track/shaped.rs`, the plan `docs/superpowers/plans/2026-11-19-shaped-elements.md` and TASK-156.
+- Shaped elements: `crates/sim/src/track/shaped.rs`, `crates/sim/src/track/models.rs` (`ShapedProfile`), the plans `docs/superpowers/plans/2026-11-19-shaped-elements.md` and `docs/superpowers/plans/2026-11-21-global-limits-and-shaped-elements.md`, and TASK-156 / TASK-167.
 - Design tool plan and friction notes: `docs/superpowers/plans/2026-11-18-agent-design-tools.md` and TASK-149.
 - Browser agreement test: `web/e2e/rides/ride-agreement.ride.spec.ts`, which replays ride files through `web/e2e/player/place-circuit.ts`.
