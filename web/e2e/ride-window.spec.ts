@@ -29,7 +29,7 @@ async function findStarterCoaster(page: Page): Promise<CoasterPick> {
 
 test("clicking the starter coaster opens a ride window with its scores, statistics and g-force graph @fast", async ({ page }) => {
   test.setTimeout(90_000);
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=demo");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await selectUnits(page, "metric");
   await clickCanvas(page, await findStarterCoaster(page));
@@ -86,7 +86,7 @@ test("clicking the starter coaster opens a ride window with its scores, statisti
 
 test("the ride window shows distances and speeds in the chosen units @fast", async ({ page }) => {
   test.setTimeout(90_000);
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=demo");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await selectUnits(page, "imperial");
   await clickCanvas(page, await findStarterCoaster(page));

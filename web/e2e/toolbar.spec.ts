@@ -11,7 +11,7 @@ const barHeight = 44;
 const dockWidth = 400;
 
 async function startGame(page: Page): Promise<void> {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
 }
 

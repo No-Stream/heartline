@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { canvasSize, clickCanvas, clickTile, moveOverCanvas, selectUnits } from "./game-page";
 import { openCoasterBuilder } from "./coaster-ui";
 test("station placement targets ground directly beneath a coaster support", async ({ page }) => {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openCoasterBuilder(page);
   await selectUnits(page, "metric");
@@ -42,7 +42,7 @@ test("station placement targets ground directly beneath a coaster support", asyn
 });
 
 test("closes a compact circuit with short straights and full-tile offsets @fast", async ({ page }) => {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openCoasterBuilder(page);
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
@@ -95,7 +95,7 @@ test("closes a compact circuit with short straights and full-tile offsets @fast"
 
 test("previews and confirms a lift-powered circuit finish, then completes a ride test @fast", async ({ page }) => {
   test.setTimeout(240_000);
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openCoasterBuilder(page);
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
@@ -194,7 +194,7 @@ test("previews and confirms a lift-powered circuit finish, then completes a ride
 });
 
 test("places a 60-degree climb and complete banked turn with lift markers @fast", async ({ page }) => {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openCoasterBuilder(page);
   await selectUnits(page, "metric");
@@ -320,7 +320,7 @@ test("offers direct level-to-60-degree lift and drop transitions on both eligibl
 });
 
 test("offers and places a twisted drop directly from a banked track @fast", async ({ page }) => {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openCoasterBuilder(page);
   await selectUnits(page, "metric");
@@ -359,7 +359,7 @@ test("offers and places a twisted drop directly from a banked track @fast", asyn
 });
 
 test("sizes an airtime hill for the entry speed, steps it, and repeats it into a camelback run @fast", async ({ page }) => {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openCoasterBuilder(page);
   await selectUnits(page, "metric");
@@ -419,7 +419,7 @@ test("sizes an airtime hill for the entry speed, steps it, and repeats it into a
 });
 
 test("shows and places a shaped floater hill and fully banked turn on a hyper coaster @fast", async ({ page }) => {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openCoasterBuilder(page);
   await selectUnits(page, "metric");
@@ -516,7 +516,7 @@ for (const modelCase of [
   },
 ] as const) {
   test(`places shaped hill and turn on ${modelCase.label} @fast`, async ({ page }) => {
-    await page.goto("/?test=1");
+    await page.goto("/?test=1&park=new");
     await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
     await openCoasterBuilder(page);
     await selectUnits(page, "metric");
@@ -564,7 +564,7 @@ for (const modelCase of [
 }
 
 test("turns after a drop default to the bank for the predicted speed, and the bank stepper overrides it @fast", async ({ page }) => {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openCoasterBuilder(page);
   await selectUnits(page, "metric");

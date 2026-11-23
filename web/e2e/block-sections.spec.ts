@@ -170,7 +170,7 @@ async function buildBlockCircuit(
   page.on("pageerror", (error) => pageErrors.push(error.message));
   page.on("response", (response) => { if (response.status() >= 400) failedResources.push(`${response.status()} ${response.url()}`); });
   page.on("requestfailed", (request) => failedResources.push(`${request.failure()?.errorText ?? "request failed"} ${request.url()}`));
-  await page.goto(agentCount === 12 ? "/?test=1&manualBlockAnalysis=1" : `/?test=1&manualBlockAnalysis=1&agents=${agentCount}`);
+  await page.goto(agentCount === 12 ? "/?test=1&park=new&manualBlockAnalysis=1" : `/?test=1&park=new&manualBlockAnalysis=1&agents=${agentCount}`);
   try {
     await page.waitForFunction(() => window.gameTest?.ready ?? false, null, { timeout: 30_000 });
   } catch (error) {

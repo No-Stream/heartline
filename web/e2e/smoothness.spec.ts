@@ -123,7 +123,7 @@ test("builder test coaster render progress stays smooth on the production build 
     };
   });
 
-  await page.goto("/?frameLog=1");
+  await page.goto("/?park=horizon-hawk&frameLog=1");
   await page.waitForFunction(() => window.smoothnessRails !== undefined && window.gameTest.frameLog().length > 0);
   await startCoasterTestLap(page);
   await page.setViewportSize({ width: 160, height: 90 });

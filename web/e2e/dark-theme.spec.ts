@@ -7,7 +7,7 @@ type Rgb = [number, number, number];
 const luminance = ([red, green, blue]: Rgb): number => (0.299 * red + 0.587 * green + 0.114 * blue) / 255;
 
 async function startGame(page: Page): Promise<void> {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
 }
 
@@ -22,7 +22,7 @@ async function cssColor(page: Page, selector: string, property: "color" | "backg
   return channels.slice(0, 3).map(Number) as Rgb;
 }
 
-/** Shows a corner of the 512-tile demo park at noon: the north corner has sky above it, the south one empty page around it. */
+/** Shows a corner of the 512-tile park at noon: the north corner has sky above it, the south one empty page around it. */
 async function showParkCornerAtNoon(page: Page, corner: "north" | "south"): Promise<void> {
   await page.evaluate((tile) => {
     window.gameTest.setCamera({ centerX: tile, centerY: tile, zoom: 0.5, rotation: 0 });
@@ -63,7 +63,7 @@ test.describe("dark interface", () => {
       await atlasReleased;
       await route.continue();
     });
-    await page.goto("/?test=1", { waitUntil: "domcontentloaded" });
+    await page.goto("/?test=1&park=new", { waitUntil: "domcontentloaded" });
     await themeToggle(page).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     releaseAtlas();

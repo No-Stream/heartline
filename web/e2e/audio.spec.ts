@@ -12,7 +12,7 @@ async function renderOffline(page: Page, script: OfflineScript) {
 test("audio unlocks on a gesture and mute suspends it @fast", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto("/");
+  await page.goto("/?park=horizon-hawk");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   expect(await page.evaluate(() => window.gameTest.audio.state())).toBe("locked");
   await page.locator("canvas").click();
@@ -28,7 +28,7 @@ test("audio unlocks on a gesture and mute suspends it @fast", async ({ page }) =
 });
 
 test("frozen mode stays locked and offline empty frames are silent @fast", async ({ page }) => {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await page.locator("canvas").click();
   expect(await page.evaluate(() => window.gameTest.audio.state())).toBe("locked");
@@ -46,7 +46,7 @@ test("frozen mode stays locked and offline empty frames are silent @fast", async
 });
 
 test("pausing silences an interface sound already playing @fast", async ({ page }) => {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   const result = await renderOffline(page, { duration: 1, volume: 1, includeSamples: true, frames: [
     { time: 0, frame: quietFrame([{ sound: "finish" }]) },
@@ -58,7 +58,7 @@ test("pausing silences an interface sound already playing @fast", async ({ page 
 });
 
 test("each build and interface sound peaks within 50 ms of its event, the error stays low, and a fast run stays below clipping @fast", async ({ page }) => {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   const events: UiEvent[] = [{ sound: "place", material: "steel" }, { sound: "place", material: "wood" }, { sound: "place", material: "hybrid" }, { sound: "build" }, { sound: "undo" }, { sound: "error" }, { sound: "finish" }];
   for (const event of events) {

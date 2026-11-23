@@ -5,7 +5,7 @@ import { browserLaunchOptions } from "./fixtures/browser-launch-options";
 test.use({ deviceScaleFactor: 1, launchOptions: browserLaunchOptions(["--use-gl=angle", "--use-angle=swiftshader"]) });
 
 test("places and removes scenery from both theme sets @slow", async ({ page }) => {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Scenery");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 150.5, centerY: 150.5, zoom: 1, rotation: 0 }));

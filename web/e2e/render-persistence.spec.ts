@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 test("a frozen world remains available after the browser presents it", async ({ page }) => {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   const pixel = await page.evaluate(async () => {
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
@@ -15,7 +15,7 @@ test("a frozen world remains available after the browser presents it", async ({ 
 });
 
 test("a frozen world redraws after WebGL context restoration", async ({ page }) => {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await waitForCanvasPresentation(page);
   const beforePath = await visiblePathPixel(page);

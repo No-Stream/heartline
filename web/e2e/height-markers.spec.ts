@@ -18,7 +18,7 @@ async function readHeight(locator: Locator, unit: "ft" | "m"): Promise<number> {
 test("shows coaster height markers in the selected units and saves the preference", async ({ page }) => {
   test.setTimeout(90_000);
   await page.emulateMedia({ colorScheme: "light" });
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   const units = page.getByRole("button", { name: "Units", exact: true });
   await expect(units).toHaveAttribute("data-units", "imperial");
@@ -96,7 +96,7 @@ test("keeps the units setting usable when browser storage is unavailable", async
   });
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   const units = page.getByRole("button", { name: "Units", exact: true });
   await expect(units).toHaveAttribute("data-units", "imperial");

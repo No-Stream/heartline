@@ -8,7 +8,7 @@ test.use({ launchOptions: browserLaunchOptions(["--use-gl=angle", "--use-angle=s
 
 test("raises a slow Velocity Viper launch through the builder and completes the test @slow @journey", async ({ page }) => {
   test.setTimeout(240_000);
-  await gotoGame(page, "/?test=1");
+  await gotoGame(page, "/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openCoasterBuilder(page);
   await selectUnits(page, "metric");

@@ -44,7 +44,7 @@ for (const rotation of [0, 1, 2, 3] as const) {
     await page.goto(fixtureUrl);
     const trackPoints = await page.evaluate(() => window.starterTrackPoints());
     expect(trackPoints.length).toBeGreaterThan(0);
-    await page.goto("/?test=1");
+    await page.goto("/?test=1&park=demo");
     await page.waitForFunction(() => window.gameTest?.ready);
     await page.evaluate((viewRotation) => {
       window.gameTest.setCamera({ centerX: 225, centerY: 253, zoom: 0.6, rotation: viewRotation });

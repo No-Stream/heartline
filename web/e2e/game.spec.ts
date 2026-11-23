@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test("built game draws agents and advances simulation ticks @fast", async ({ page }) => {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   const canvas = page.locator("canvas");
   await expect(canvas).toBeVisible();
   await expect.poll(async () => canvas.getAttribute("data-agent-count")).toBe("12");
@@ -31,7 +31,7 @@ test("built game draws agents and advances simulation ticks @fast", async ({ pag
 
 
 test("walking guests change their rendered positions as simulation ticks advance", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/?park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.guests().length ?? 0), { timeout: 30_000 }).toBeGreaterThan(0);
   const initial = await page.evaluate(() => window.gameTest.guests().map(({ id, x, y }) => ({ id, x, y })));
   await expect.poll(() => page.evaluate((before) => {
