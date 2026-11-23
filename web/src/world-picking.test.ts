@@ -1,6 +1,6 @@
 import { projectWorld, type Camera, type Viewport } from "./camera";
 import { describe, expect, it } from "vitest";
-import { blockBoundaryIndexFromPick, entityIdFromPick, facilityIdFromPick, facilityTileFromPicks, landscapingTileFromPick, sceneryTileFromPick, stationTileFromSurfacePick } from "./world-picking";
+import { blockBoundaryIndexFromPick, entityIdFromPick, facilityIdFromPick, facilityTileFromPicks, guestSelectionActionFromPick, landscapingTileFromPick, sceneryTileFromPick, stationTileFromSurfacePick } from "./world-picking";
 import type { Pick, WorldView } from "./render/scene";
 
 const camera: Camera = { centerX: 1, centerY: 1, zoom: 1, rotation: 0 };
@@ -81,5 +81,14 @@ describe("world picking helpers", () => {
     expect(facilityIdFromPick({ kind: "facility", id: "facility-invalid", x: 0, y: 0, height: 0 })).toBeUndefined();
     expect(blockBoundaryIndexFromPick({ kind: "block-boundary", id: "block-boundary-4", x: 0, y: 0, height: 0 })).toBe(4);
     expect(blockBoundaryIndexFromPick(surfacePick("terrain"))).toBeNull();
+  });
+
+  it("routes world guest picks through the guest-selection action", () => {
+    expect(guestSelectionActionFromPick({ kind: "guest", id: "guest-42", x: 0, y: 0, height: 0 })).toEqual({
+      type: "guest-select",
+      guestId: "guest-42",
+    });
+    expect(guestSelectionActionFromPick({ kind: "track", id: "track-2-8", x: 0, y: 0, height: 0 })).toBeNull();
+    expect(guestSelectionActionFromPick({ kind: "guest", id: "guest-invalid", x: 0, y: 0, height: 0 })).toBeNull();
   });
 });

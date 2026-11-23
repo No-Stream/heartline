@@ -1,12 +1,13 @@
 import { expect, test } from "@playwright/test";
-import { clickCanvas, moveOverCanvas, openTool, selectUnits } from "../game-page";
+import { clickCanvas, moveOverCanvas, selectUnits } from "../game-page";
+import { openCoasterBuilder } from "../coaster-ui";
 import { gotoGame } from "../player/driver";
 
 test("selects a loop sized for the estimated launch speed and previews its forces @journey", async ({ page }) => {
   test.setTimeout(120_000);
   await gotoGame(page, "/?park=new&seed=2026&test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
-  await openTool(page, "Coaster");
+  await openCoasterBuilder(page);
   await selectUnits(page, "metric");
   await page.getByRole("combobox", { name: "Coaster model" }).selectOption("model:velocity_viper");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));

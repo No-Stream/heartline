@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { appendGeometry, buildScene, clipGeometryAboveLevel, pickScene, type Atlas, type GeometryQuad, type WorldView } from "./scene";
+import { appendGeometry, buildScene, clipGeometryAboveLevel, pickScene, type Atlas, type GeometryQuad, type Triangle, type WorldView } from "./scene";
 import { projectWorld, type Camera } from "../camera";
 import { buildPathGhostQuads } from "./path-ghost";
 import { facilitySprites, type Facility } from "../facilities";
@@ -370,6 +370,19 @@ describe("world scene", () => {
     const x = floor!.vertices.reduce((sum, vertex) => sum + vertex.x, 0) / 3;
     const y = floor!.vertices.reduce((sum, vertex) => sum + vertex.y, 0) / 3;
     expect(pickScene(scene, x, y)).toMatchObject({ kind: "carved-floor", height: 4 });
+
+    let pickedPoints = 0;
+    const xValues = floor!.vertices.map(({ x }) => x);
+    const yValues = floor!.vertices.map(({ y }) => y);
+    for (let xStep = 1; xStep < 20; xStep += 1) for (let yStep = 1; yStep < 20; yStep += 1) {
+      const x = Math.min(...xValues) + (Math.max(...xValues) - Math.min(...xValues)) * xStep / 20;
+      const y = Math.min(...yValues) + (Math.max(...yValues) - Math.min(...yValues)) * yStep / 20;
+      const pick = pickScene({ triangles: [floor!] }, Math.floor(x) + 0.5, Math.floor(y) + 0.5, 0.125);
+      if (!pick) continue;
+      pickedPoints += 1;
+      expect(pick).toEqual({ kind: "carved-floor", x: 1, y: 0, height: 4 });
+    }
+    expect(pickedPoints).toBeGreaterThan(0);
   });
   test("prioritizes a one-tile tunnel floor over neighboring underground cut faces", () => {
     const surfaces = new Int32Array(3 * 3 * 6);
@@ -384,6 +397,42 @@ describe("world scene", () => {
     expect(pickScene(scene, floorPoint.x, floorPoint.y)).toMatchObject({ kind: "carved-floor", x: 1, y: 1, height: 4 });
     const pathScene = buildScene({ ...underground, paths: new Int32Array([1, 1, 4, 0]) }, camera, viewport, atlas);
     expect(pickScene(pathScene, floorPoint.x, floorPoint.y)).toMatchObject({ kind: "path", x: 1, y: 1, height: 4 });
+  });
+  test("returns the exact height of a flat tunnel floor at the cutaway pixel center", () => {
+    const dimensions = 80;
+    const floorCamera: Camera = { centerX: 57, centerY: 63, zoom: 1.5, rotation: 0 };
+    const floorViewport = { width: 880, height: 676 };
+    const floorScene = buildScene({
+      dimensions: new Uint16Array([dimensions, dimensions]),
+      surfaces: new Int32Array(dimensions * dimensions * 6),
+      paths: new Int32Array(),
+      carved: new Int32Array([60, 66, 4, 12]),
+      undergroundLevel: 8,
+    }, floorCamera, floorViewport, atlas);
+    const floor = floorScene.triangles.find((triangle) => triangle.kind === "carved-floor" && triangle.tileX === 60 && triangle.tileY === 66);
+    expect(floor).toBeDefined();
+    const projectedFloorCenter = projectWorld(floorCamera, floorViewport, { x: 60.5, y: 66.5, z: 1 });
+
+    expect(pickScene({ triangles: [floor!] }, Math.floor(projectedFloorCenter.x) + 0.5, Math.floor(projectedFloorCenter.y) + 0.5, 0.125))
+      .toEqual({ kind: "carved-floor", x: 60, y: 66, height: 4 });
+  });
+  test("preserves the exact height when a raster pick interpolates a flat triangle", () => {
+    const flatFloor: Triangle = {
+      vertices: [
+        { x: 0, y: 0, depth: 0, height: 4, u: 0, v: 0 },
+        { x: 1 / 7, y: 0, depth: 0, height: 4, u: 0, v: 0 },
+        { x: 0, y: 5 / 7, depth: 0, height: 4, u: 0, v: 0 },
+      ],
+      page: -1,
+      color: [0, 0, 0, 1],
+      kind: "carved-floor",
+      tileX: 60,
+      tileY: 66,
+      height: 4,
+    };
+
+    expect(pickScene({ triangles: [flatFloor] }, 0.1, 0.1))
+      .toEqual({ kind: "carved-floor", x: 60, y: 66, height: 4 });
   });
   test("draws cavern walls where carved spans meet solid columns", () => {
     const surfaces = new Int32Array([16, 16, 16, 16, 0, 0, 16, 16, 16, 16, 0, 0]);

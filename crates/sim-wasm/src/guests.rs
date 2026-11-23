@@ -18,6 +18,15 @@ fn track_revision(track_hash: u64, world_revision: u64, facility_hash: u64) -> S
 
 #[wasm_bindgen]
 impl WasmSimulation {
+    pub fn test_begin_queue_entry_capture(&mut self) {
+        self.park.simulation.test_begin_queue_entry_capture();
+    }
+
+    pub fn test_take_queue_entry_places_json(&mut self) -> String {
+        serde_json::to_string(&self.park.simulation.test_take_queue_entry_places())
+            .expect("test queue entry places serialize")
+    }
+
     pub fn tick(&mut self) {
         self.park.tick();
     }

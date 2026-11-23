@@ -152,6 +152,14 @@ impl ParkGuests {
         self.behaviors.queue_length(place_id)
     }
 
+    pub fn test_begin_queue_entry_capture(&mut self) {
+        self.behaviors.test_begin_queue_entry_capture();
+    }
+
+    pub fn test_take_queue_entry_places(&mut self) -> Vec<u32> {
+        self.behaviors.test_take_queue_entry_places()
+    }
+
     pub fn board_coaster(&mut self, facility: &Facility) -> Vec<GuestId> {
         self.board_coaster_train(facility, 0)
     }

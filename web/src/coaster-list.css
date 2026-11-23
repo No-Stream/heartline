@@ -1,0 +1,20 @@
+/* The park coaster list uses the same paper controls as the builder and ride panels. */
+.coaster-list__section { display: grid; gap: 0.55rem; }
+.coaster-list__items { display: grid; gap: 0.25rem; margin: 0; padding: 0; list-style: none; }
+.tool-panel button.coaster-list__ride {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.4rem 0.5rem;
+  text-align: left;
+  border: var(--hairline);
+}
+.tool-panel button.coaster-list__ride:hover { border-color: var(--ink); }
+.coaster-list__details { display: grid; gap: 0.1rem; min-width: 0; }
+.coaster-list__name { overflow: hidden; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.coaster-list__model { color: var(--ink-soft); font-size: 0.76rem; }
+.coaster-list__status { max-width: 8rem; color: var(--teal); font: 600 0.78rem/1.2 var(--heading-font); text-align: right; }
+.coaster-list__status--closed { color: var(--coral); }
+.coaster-list__new { justify-content: center; }

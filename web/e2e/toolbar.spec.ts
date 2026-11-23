@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { canvasSize, canvasToPage, moveOverCanvas, openTool } from "./game-page";
 
 const panels = {
-  Coaster: "Coaster construction",
+  Coaster: "Park coasters",
   Paths: "Paths",
   Landscape: "Landscaping",
   Facilities: "Park facilities",
@@ -37,6 +37,11 @@ test.describe("tool switching", () => {
       const panelBounds = await page.getByRole("region", { name: panel, exact: true }).boundingBox();
       expect(panelBounds?.x).toBeGreaterThanOrEqual(1280 - dockWidth);
       expect((panelBounds?.x ?? 0) + (panelBounds?.width ?? 0)).toBeLessThanOrEqual(1280);
+      if (tool === "Coaster") {
+        await expect(page.getByRole("region", { name: "Coaster construction", exact: true })).toBeHidden();
+        await page.getByRole("button", { name: "New coaster", exact: true }).click();
+        await expect(page.getByRole("region", { name: "Coaster construction", exact: true })).toBeVisible();
+      }
     }
 
     await page.getByRole("toolbar", { name: "Tools" }).getByRole("button", { name: "Facilities", exact: true }).click();
@@ -81,6 +86,7 @@ test.describe("tool switching", () => {
     await openTool(page, "Paths");
 
     await openTool(page, "Coaster");
+    await page.getByRole("button", { name: "New coaster", exact: true }).click();
     await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
     await page.getByRole("button", { name: "Place station" }).click();
     await moveOverCanvas(page, await page.evaluate(() => window.gameTest.project({ x: 50.5, y: 50.5, z: 2 })));
@@ -139,6 +145,7 @@ test.describe("tool switching", () => {
     await page.locator("canvas").focus();
     await page.keyboard.press("Delete");
     await openTool(page, "Coaster");
+    await page.getByRole("button", { name: "New coaster", exact: true }).click();
     // The checkbox shows once a station is placed, but it already holds the delete mode.
     const deleteMode = page.locator("[data-delete-mode]");
     await expect(deleteMode).not.toBeChecked();

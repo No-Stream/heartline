@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
-import { clickCanvas, moveOverCanvas, openTool, selectUnits } from "../game-page";
+import { clickCanvas, moveOverCanvas, selectUnits } from "../game-page";
+import { openCoasterBuilder } from "../coaster-ui";
 import { browserLaunchOptions } from "../fixtures/browser-launch-options";
 import { gotoGame } from "../player/driver";
 
@@ -9,7 +10,7 @@ test("raises a slow Velocity Viper launch through the builder and completes the 
   test.setTimeout(240_000);
   await gotoGame(page, "/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
-  await openTool(page, "Coaster");
+  await openCoasterBuilder(page);
   await selectUnits(page, "metric");
   await page.getByRole("combobox", { name: "Coaster model" }).selectOption("model:velocity_viper");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));

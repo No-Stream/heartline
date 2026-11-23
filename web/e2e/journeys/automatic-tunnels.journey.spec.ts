@@ -75,6 +75,9 @@ test("a coaster tunnels through a hill and completes a test ride @journey", asyn
 
   await setGameSpeed(page, 16);
   await openTool(page, "Coaster");
+  await page.locator('[data-coaster-id="0"]').click();
+  await page.getByTestId("ride-edit").click();
+  await expect.poll(() => page.evaluate(() => window.gameTest.editingCoasterId())).toBe(0);
   await testRide(page);
   await waitForState(page, async () => (await page.evaluate(() => window.gameTest.testingReport()?.rating)) != null, { ticks: 30_000 });
   await expect(page.locator("[data-construction] [data-testing] [data-rating]")).toContainText(/Excitement: .*Intensity: .*Nausea:/);

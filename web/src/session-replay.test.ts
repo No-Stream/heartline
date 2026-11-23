@@ -69,6 +69,28 @@ describe("session replay helpers", () => {
     expect(prepareReplayCommand(session.commands[0]!.command)).toEqual(command);
   });
 
+  it("validates and preserves stable coaster IDs in recorded ride commands", () => {
+    const commands = [
+      { type: "ride-edit", ride: 7 },
+      { type: "ride-set-open", ride: 7, open: true },
+      { type: "ride-set-price", ride: 7, price: 25 },
+      { type: "ride-rename", ride: 7, name: "Daisy Dash" },
+      { type: "ride-stop-editing" },
+      { type: "ride-demolish", ride: 7 },
+    ];
+    const session = parseReplaySession({ ...validSession, commands: commands.map((command) => ({ tick: 20, command })), checkpoints: [], finalTick: 20 });
+
+    expect(session.commands.map(({ command }) => prepareReplayCommand(command))).toEqual(commands);
+    for (const invalidCommand of [
+      { type: "ride-edit", ride: -1 },
+      { type: "ride-set-open", ride: 1, open: "true" },
+      { type: "ride-set-price", ride: 1, price: 65_536 },
+      { type: "ride-rename", ride: 1, name: " " },
+    ]) {
+      expect(() => parseReplaySession({ ...validSession, commands: [{ tick: 0, command: invalidCommand }], checkpoints: [], finalTick: 0 })).toThrow();
+    }
+  });
+
   it("finds the earliest checkpoint difference, including missing checkpoints", () => {
     expect(firstCheckpointMismatch(
       [{ tick: 300, hash: "11" }, { tick: 600, hash: "22" }],

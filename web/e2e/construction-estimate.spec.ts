@@ -1,11 +1,12 @@
 import { expect, test } from "@playwright/test";
-import { clickCanvas, moveOverCanvas, openTool, selectUnits } from "./game-page";
+import { clickCanvas, moveOverCanvas, selectUnits } from "./game-page";
+import { openCoasterBuilder } from "./coaster-ui";
 
 test("shows a changing speed and force estimate on an unfinished coaster @fast", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto("/?park=new&seed=2026&test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
-  await openTool(page, "Coaster");
+  await openCoasterBuilder(page);
   await selectUnits(page, "metric");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
@@ -88,7 +89,7 @@ test("previews forces for a selected drop before placing it @fast", async ({ pag
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto("/?park=new&seed=2026&test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
-  await openTool(page, "Coaster");
+  await openCoasterBuilder(page);
   await selectUnits(page, "metric");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
@@ -121,7 +122,7 @@ test("marks forces past the comfort envelope on a harsh drop @fast", async ({ pa
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto("/?park=new&seed=2026&test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
-  await openTool(page, "Coaster");
+  await openCoasterBuilder(page);
   await selectUnits(page, "metric");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);

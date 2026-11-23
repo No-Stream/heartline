@@ -65,6 +65,8 @@ pub struct BehaviorSimulation {
     scenery_scores: Vec<u8>,
     queue_scenery: Vec<u64>,
     tick: u64,
+    #[serde(skip)]
+    test_queue_entry_places: Option<BTreeSet<u32>>,
     /// Report-only totals are rebuilt by a report and reset after save/load.
     #[serde(skip)]
     outcomes: ParkOutcomes,
@@ -187,6 +189,7 @@ impl BehaviorSimulation {
             scenery_scores: vec![0; guest_count],
             queue_scenery: vec![0; guest_count],
             tick: 0,
+            test_queue_entry_places: None,
             outcomes: ParkOutcomes::default(),
         }
     }
@@ -204,6 +207,18 @@ impl BehaviorSimulation {
 
     pub fn queue_length(&self, place_id: u32) -> usize {
         self.queues.get(&place_id).map_or(0, Vec::len)
+    }
+
+    pub fn test_begin_queue_entry_capture(&mut self) {
+        self.test_queue_entry_places = Some(BTreeSet::new());
+    }
+
+    pub fn test_take_queue_entry_places(&mut self) -> Vec<u32> {
+        self.test_queue_entry_places
+            .take()
+            .unwrap_or_default()
+            .into_iter()
+            .collect()
     }
 
     /// Admit one train in queue order and charge each rider at boarding.
@@ -698,6 +713,11 @@ impl BehaviorSimulation {
                         self.activities[index] = None;
                     } else {
                         queue.push(id);
+                        if let (PlaceKind::Ride, Some(places)) =
+                            (facility.place.kind, &mut self.test_queue_entry_places)
+                        {
+                            places.insert(place_id);
+                        }
                         self.queue_scenery[index] = 0;
                         self.activities[index] = Some(Activity::Queuing(place_id, self.tick));
                     }
@@ -1357,6 +1377,43 @@ mod tests {
             simulation.activity_detail(GuestId(0)).kind,
             ActivityKind::Walking
         );
+    }
+
+    #[test]
+    fn test_queue_capture_records_coaster_enqueue_before_same_tick_boarding() {
+        let mut guests = generate_guests(31, 1);
+        let mut simulation = BehaviorSimulation::new(1);
+        let ride = place(1, PlaceKind::Ride);
+        let facility = Facility {
+            place: ride,
+            capacity: 1,
+            duration_ticks: 3,
+            exit_position: Some(ride.position),
+        };
+        simulation.set_external_rides(&[ride.id]);
+        simulation.guests[0].observe(ride);
+        simulation.activities[0] = Some(Activity::Walking(ride.id));
+        simulation.test_begin_queue_entry_capture();
+
+        simulation.tick(
+            &mut guests,
+            &[Some(ride.position)],
+            &[facility],
+            &[Some(0)],
+            &[Some(0)],
+        );
+        assert_eq!(simulation.queue_length(ride.id), 1);
+        assert_eq!(
+            simulation.board_coaster(&facility, &guests),
+            vec![GuestId(0)]
+        );
+        assert_eq!(simulation.queue_length(ride.id), 0);
+        assert_eq!(
+            simulation.activity_detail(GuestId(0)).kind,
+            ActivityKind::Riding
+        );
+        assert_eq!(simulation.test_take_queue_entry_places(), vec![ride.id]);
+        assert!(simulation.test_take_queue_entry_places().is_empty());
     }
 
     #[test]

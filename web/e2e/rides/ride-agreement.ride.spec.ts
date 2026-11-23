@@ -13,6 +13,7 @@ import { placeCircuit, selectionFromRideIntent } from "../player/place-circuit";
 import { expectRideReportExplained } from "../player/ride-report";
 import { readRide, type RideFeatureStep, type RideFile, type RideStep } from "../player/rides";
 import { runDesignJson } from "./design-json";
+import { openCoasterBuilder } from "../coaster-ui";
 import { browserPathCommands, decisiveConstructionCommands } from "./fast-agreement";
 import { browserAgreementResults, firstMismatch, type ForcePeaks, type NativeRideCheck, type NativeRideCheckWithSamples } from "./agreement-comparison";
 
@@ -335,7 +336,7 @@ function expectNoPageErrors(pageErrors: readonly string[], checkpoint: string): 
 
 async function prepareStationTerrain(page: Page, ride: Pick<RideFile, "model" | "name" | "station">): Promise<number> {
   await selectUnits(page, "metric");
-  await openTool(page, "Coaster");
+  await openCoasterBuilder(page);
   const coasterModel = page.getByRole("combobox", { name: "Coaster model" });
   await coasterModel.selectOption(`model:${ride.model}`);
 

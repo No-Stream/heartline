@@ -1000,21 +1000,16 @@ struct CoasterRideInfo<'a> {
 #[wasm_bindgen]
 impl WasmSimulation {
     pub fn construction_start(&mut self, x: i32, y: i32, z: i32, heading: u8) {
-        self.start_coaster(x, y, z, heading, true);
+        self.start_coaster(x, y, z, heading);
     }
 
-    /// Adds a coaster without replacing the coaster currently being edited.
+    /// Adds a coaster and makes it the coaster being edited.
     pub fn coaster_start(&mut self, x: i32, y: i32, z: i32, heading: u8) {
-        self.start_coaster(x, y, z, heading, false);
+        self.start_coaster(x, y, z, heading);
     }
 
-    fn start_coaster(&mut self, x: i32, y: i32, z: i32, heading: u8, replace_editing: bool) {
+    fn start_coaster(&mut self, x: i32, y: i32, z: i32, heading: u8) {
         self.construction_finish_invalidate();
-        let replaced_id = if replace_editing {
-            self.editing_coaster_id()
-        } else {
-            None
-        };
         let heading = match heading {
             0 => Heading::East,
             1 => Heading::NorthEast,
@@ -1039,17 +1034,16 @@ impl WasmSimulation {
             },
             coaster_model(&self.construction_model),
         );
-        let obstacles = self.facility_obstacles_excluding(replaced_id);
+        let obstacles = self.facility_obstacles_excluding(None);
         let station_id = construction.next_piece_id();
         let coaster_id = CoasterId(self.park.next_coaster_id);
         let station_piece = construction
             .candidate_piece(PieceId::Station)
             .expect("station piece is in the coaster catalog");
-        if let Err(error) = self.park.validate_track_clearance(
-            &construction.model().train,
-            &station_piece,
-            replaced_id,
-        ) {
+        if let Err(error) =
+            self.park
+                .validate_track_clearance(&construction.model().train, &station_piece, None)
+        {
             self.construction_message = construction_error(error);
             return;
         }
@@ -1079,9 +1073,6 @@ impl WasmSimulation {
             added_id, coaster_id,
             "coaster ids are assigned monotonically"
         );
-        if let Some(replaced_id) = replaced_id {
-            self.park.demolish_coaster(replaced_id);
-        }
         self.editing = Some(added_id);
         self.selected = None;
         self.selected_shape = None;
