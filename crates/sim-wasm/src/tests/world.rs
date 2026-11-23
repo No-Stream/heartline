@@ -2017,8 +2017,7 @@ fn save_round_trip_preserves_a_live_park_with_riders_and_a_queue() {
     let has_queued_guest = |simulation: &WasmSimulation| {
         simulation.simulation.walking().traits().ids().any(|guest| {
             let activity = simulation.simulation.behaviors().activity_detail(guest);
-            activity.kind == ActivityKind::Queuing
-                && activity.place_id == Some(ride_place_id)
+            activity.kind == ActivityKind::Queuing && activity.place_id == Some(ride_place_id)
         })
     };
     for _ in 0..10_000 {

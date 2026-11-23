@@ -271,9 +271,7 @@ fn default_construction_piece_from_choices(
 #[cfg(test)]
 use theme_park_sim::park::block_analysis::block_physics_config;
 #[cfg(test)]
-use theme_park_sim::park::tick::{
-    block_boundary_fingerprint, block_layout_fingerprint,
-};
+use theme_park_sim::park::tick::{block_boundary_fingerprint, block_layout_fingerprint};
 
 impl WasmSimulation {
     fn block_reasons(&self) -> Vec<String> {
