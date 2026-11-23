@@ -4,7 +4,7 @@ title: Add shaped inversions with peak-force intent
 status: In Progress
 assignee: []
 created_date: '2026-11-22 04:58'
-updated_date: '2026-11-23 05:23'
+updated_date: '2026-11-23 05:24'
 labels:
   - shaped-elements
 dependencies: []
@@ -31,6 +31,8 @@ Follow-up from TASK-156 / TASK-167: add named shaped inversions (vertical loops,
 
 <!-- SECTION:NOTES:BEGIN -->
 Initial reassessment at 09740d4: the branch contains broad solver, UI, design-tool, save-test, and test changes, but its prior completion claims require independent verification. Master has since added save versions 7–8, multi-coaster state, a new PieceId, and declared-piece inversion counting; integration and final gates remain outstanding. Baseline build and test assessment is in progress.
+
+Assessment: solver, wire, UI, design-tool and save changes are present. The visible acceptance matrix covers loop models and defaults broadly, but zero-g-roll peak steps, Raven peak/top-feel and hand combinations, speed perturbations, and a Hybrid browser route are not evidently covered to the full extent described by the plan. Build and test results remain pending.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
