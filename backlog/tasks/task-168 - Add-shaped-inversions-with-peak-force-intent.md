@@ -4,7 +4,7 @@ title: Add shaped inversions with peak-force intent
 status: In Progress
 assignee: []
 created_date: '2026-11-22 04:58'
-updated_date: '2026-11-23 05:26'
+updated_date: '2026-11-23 05:46'
 labels:
   - shaped-elements
 dependencies: []
@@ -20,11 +20,11 @@ Follow-up from TASK-156 / TASK-167: add named shaped inversions (vertical loops,
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 Shaped vertical loops, zero-g rolls, and Raven turns solve for entry speed, train length, and peak vertical g (3.5-4.5 g) via ShapedProfile
+- [ ] #1 Shaped vertical loops, zero-g rolls, and Raven turns solve for entry speed, train length, and peak vertical g (3.5-4.5 g) via ShapedProfile
 - [x] #2 Steel-structure shaped vertical loops work on wooden_twister; zero-g rolls and Raven turns work on velocity_viper and hybrid; non-inverting models return UnsupportedScope
-- [x] #3 Vertical loops and Raven turns support Floaty/Neutral/PressedIn top feel; height scales monotonically with entry speed; peak roll rate <= 200 deg/s
-- [x] #4 Wire types, builder palette/inspector, design-tools CLI, and ride/save round-trips support all three shaped inversions
-- [x] #5 Native vs WASM parity, acceptance matrices under both physics configs, and Playwright E2E tests pass with classic digests unchanged
+- [ ] #3 Vertical loops and Raven turns support Floaty/Neutral/PressedIn top feel; height scales monotonically with entry speed; peak roll rate <= 200 deg/s
+- [ ] #4 Wire types, builder palette/inspector, design-tools CLI, and ride/save round-trips support all three shaped inversions
+- [ ] #5 Native vs WASM parity, acceptance matrices under both physics configs, and Playwright E2E tests pass with classic digests unchanged
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -37,10 +37,8 @@ Assessment: solver, wire, UI, design-tool and save changes are present. The visi
 Correction: assert_inversion_envelope does test ±0.5 m/s under both physics configurations. The remaining visible matrix gaps are the zero-g-roll and Raven force/top-feel combinations and Hybrid browser coverage; save tests also need placed-piece coverage against current master versions.
 
 Baseline at 09740d4: tools/run-in-budget.sh cargo test -p theme-park-sim --test shaped_elements passed all 28 tests in 127.37 seconds; the integration test target compiled. Full build and broader suites were not yet assessed.
+
+After merging master at 32f63a5: direct train simulation at the Raven zero-curvature inverted join measured 1.000 g for every car and all requested top feels. Floaty (0.300 g) misses by 0.700 g and PressedIn (1.500 g) by 0.500 g, beyond the 0.35 g goal; Neutral meets it. A Velocity Viper four-car zero-g roll at 30 m/s and 4.5 g is refused despite a 4.49996 g delivered peak because longitudinal headroom is 0.2417 g versus the required 0.25 g. Investigation continues; no limits were relaxed.
+
+Zero-g correction: increasing the design crest traversal target from 2.40 to 2.60 seconds lets the 4.5 g case meet the existing headroom requirement; the 12-case force-step test passes with both physics configurations and ±0.5 m/s checks. Wider regression verification remains pending.
 <!-- SECTION:NOTES:END -->
-
-## Final Summary
-
-<!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Implemented shaped vertical loops, zero-g rolls, and Raven turns with peak-force intent (3.5-4.5 g) and loop/Raven top feel (Floaty/Neutral/PressedIn) across velocity_viper, hybrid, and steel-loop wooden_twister on top of ShapedProfile, including solver, wire/TS types, builder palette/inspector/readouts, design-tools CLI, v6 save round-trips, 17-case native-vs-WASM parity, and full Rust/Vitest/Playwright E2E/ride-agreement verification.
-<!-- SECTION:FINAL_SUMMARY:END -->

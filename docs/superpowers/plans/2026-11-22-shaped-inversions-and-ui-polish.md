@@ -1,6 +1,6 @@
 # Shaped UI Polish, Confirm Latency, and Shaped Inversions (2026-11-22)
 
-**Status:** Completed and verified (2026-11-22). `TASK-158`, `TASK-157`, and `TASK-168` are all closed in backlog.
+**Status:** Integration and verification in progress. The prior completion claim is superseded by the reassessment recorded in `TASK-168`.
 
 Plan for executing three related shaped-elements cards in one clean arc:
 1. **Warm-up A — `TASK-158`:** Fix shaped inspector layout clipping.
