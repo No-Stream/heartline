@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { OfflineScript } from "../src/audio/engine";
 import type { SoundFrame, UiEvent } from "../src/audio/mapping";
-import { placePiece, placeStation, startPark } from "./player/driver";
+import { placePiece, placeStation, setGameSpeed, startPark } from "./player/driver";
 
 const quietFrame = (ui: UiEvent[] = []): SoundFrame => ({ trains: [], screams: [], crowd: { level: 0, pan: 0 }, ambience: { day: 0, night: 0, distance: 0 }, ui, eventsMuted: false });
 
@@ -17,7 +17,9 @@ test("audio unlocks on a gesture and mute suspends it @fast", async ({ page }) =
   expect(await page.evaluate(() => window.gameTest.audio.state())).toBe("locked");
   await page.locator("canvas").click();
   await expect.poll(() => page.evaluate(() => window.gameTest.audio.state())).toBe("running");
+  await setGameSpeed(page, 16);
   await expect.poll(() => page.evaluate(() => window.gameTest.audio.activeVoices().trains), { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
+  await page.locator("canvas").focus();
   await page.keyboard.press("Space");
   await expect.poll(() => page.evaluate(() => window.gameTest.audio.activeVoices().trains)).toBe(0);
   await page.keyboard.press("Space");

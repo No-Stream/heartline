@@ -15,7 +15,7 @@ test("a frozen world remains available after the browser presents it", async ({ 
 });
 
 test("a frozen world redraws after WebGL context restoration", async ({ page }) => {
-  await page.goto("/?test=1&park=new");
+  await page.goto("/?test=1&park=horizon-hawk");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await waitForCanvasPresentation(page);
   const beforePath = await visiblePathPixel(page);
