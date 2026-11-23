@@ -14,6 +14,17 @@ import type { WorkerRecording } from "./session-recording";
 export type { PathPosition };
 export const DEMO_COASTER_ID = 0xffff_ffff;
 export type PathAction = PathToolCommand;
+export interface CoasterListEntry {
+  readonly id: number;
+  readonly name: string;
+  readonly model: string;
+  readonly open: boolean;
+  readonly price: number;
+  readonly income: number;
+  readonly queueLength: number;
+  readonly complete: boolean;
+}
+
 export type WorkerAction =
   | { type: "init"; seed: bigint; park: "new" | "demo"; guestCount: number; frozen: boolean; manualBlockAnalysis: boolean }
   | { type: "init"; seed: bigint; park: "description"; descriptionJson: string; guestCount: number; frozen: boolean; manualBlockAnalysis: boolean }
@@ -27,6 +38,12 @@ export type WorkerAction =
   | SceneryCommand | SetSurfaceMessage | TerrainEditCommand | PathAction | ConstructionAction | FacilityAction
   | { type: "guest-detail-request"; guestId: string }
   | { type: "ride-info-request"; ride: RideKey } | { type: "ride-info-close" } | { type: "ride-test"; ride: RideKey }
+  | { type: "ride-set-open"; ride: number; open: boolean }
+  | { type: "ride-set-price"; ride: number; price: number }
+  | { type: "ride-edit"; ride: number }
+  | { type: "ride-stop-editing" }
+  | { type: "ride-rename"; ride: number; name: string }
+  | { type: "ride-demolish"; ride: number }
   | { type: "facility-access-preview"; requestId: number; kind: Facility["kind"]; x: number; y: number; height: number; rotation: number }
   | { type: "facility-remove"; id: number }
   | { type: "test-advance"; count: number }
@@ -75,11 +92,13 @@ export type WorkerMessage =
   | { type: "initialization-error"; error: string }
   | { type: "park-restoring" }
   | CoasterWorldMessage | ConstructionState | ConstructionFinishStatus | BlockAnalysisProgress | ({ type: "snapshot"; sentAt: number } & CoasterSnapshot)
-  | { type: "ready" } | { type: "test-advanced" } | { type: "test-block-analysis-advanced" } | { type: "test-resumed" } | { type: "construction-finish-ready" }
+  | { type: "ready" } | { type: "test-advanced"; queueEntryPlaceIds: readonly number[] } | { type: "test-block-analysis-advanced" } | { type: "test-resumed" } | { type: "construction-finish-ready" }
   | { type: "surface-edited"; changed: boolean }
   | { type: "facility-access-preview"; requestId: number; rotation: number | undefined }
   | { type: "facilities"; facilities: Facility[]; message: string; revenue: string; placed: boolean; forced: boolean; outcome: PlacementOutcome | null }
   | { type: "guest-detail"; guestId: string; detail: GuestDetail | null }
+  | { type: "coasters"; coasters: CoasterListEntry[] }
+  | { type: "coaster-action-result"; action: "open" | "price" | "edit" | "stop-editing" | "rename" | "demolish"; coasterId: number | null; success: boolean; message: string }
   /** The selected ride's latest test report; `testMessage` is why a requested test was refused, empty otherwise. */
   | { type: "ride-info"; info: RideInfo; testMessage: string }
   | PieceShapesMessage | PathToolMessage | TerrainEditResult | { type: "scenery"; scenery: Scenery[]; message: string; outcome: PlacementOutcome | null };

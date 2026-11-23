@@ -101,8 +101,12 @@ test("two requested block trains move visibly without overlapping @slow", async 
   await buildAccessPaths(page);
   await openTool(page, "Coaster");
   await showBuilderTab(page, "Build");
-  await page.getByRole("button", { name: "Open coaster" }).click();
-  await expect(page.getByRole("button", { name: "Close coaster" })).toBeVisible();
+  await page.getByRole("button", { name: "Ride info", exact: true }).click();
+  const rideWindow = page.getByTestId("ride-window");
+  await expect(rideWindow).toBeVisible();
+  await rideWindow.getByTestId("ride-open-toggle").click();
+  await expect(rideWindow.getByTestId("ride-open-toggle")).toHaveText("Close coaster");
+  await rideWindow.getByTestId("ride-window-close").click();
 
   let movingTrains: TrainGroup[] | undefined;
   for (let attempt = 0; attempt < 300 && !movingTrains; attempt += 1) {

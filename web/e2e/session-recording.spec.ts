@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import { canvasToPage, clickCanvas, moveOverCanvas, openTool, selectUnits } from "./game-page";
+import { openCoasterBuilder } from "./coaster-ui";
 
 interface ExportedSession {
   format: string;
@@ -78,7 +79,7 @@ test("exports the UI-built command count and final simulation tick", async ({ pa
   await page.goto("/?test=1&manualBlockAnalysis=1&park=new&seed=2026");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
 
-  await openTool(page, "Coaster");
+  await openCoasterBuilder(page);
   await selectUnits(page, "metric");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);

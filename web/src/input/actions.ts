@@ -54,6 +54,11 @@ export type InputAction =
   | { readonly type: "guest-select"; readonly guestId: string }
   | { readonly type: "guest-close" }
   | { readonly type: "ride-select" | "ride-test"; readonly ride: RideKey }
+  | { readonly type: "ride-set-open"; readonly ride: RideKey; readonly open: boolean }
+  | { readonly type: "ride-set-price"; readonly ride: RideKey; readonly price: number }
+  | { readonly type: "ride-edit"; readonly ride: RideKey }
+  | { readonly type: "ride-demolish"; readonly ride: RideKey }
+  | { readonly type: "ride-rename"; readonly ride: RideKey; readonly name: string }
   | { readonly type: "ride-close" }
   | { readonly type: "landscaping-activate"; readonly selection: LandscapingSelection }
   | { readonly type: "landscaping-cancel" }

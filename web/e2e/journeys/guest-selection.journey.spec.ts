@@ -112,10 +112,11 @@ test("selects each visible queued guest with the guest panel open and closed @jo
   await layQueue(page, { x: 243, y: 250, z: 3 }, { x: 244, y: 256, z: 2 });
   await layPath(page, { x: 239, y: 250, z: 3 }, { x: 238, y: 256, z: 2 });
   await setCoasterTicketPrice(page, 8);
+  const rideWindow = page.getByTestId("ride-window");
   await page.getByRole("button", { name: "Raise the coaster ticket price" }).click();
-  await expect(page.getByRole("spinbutton", { name: "Coaster ticket price" })).toHaveValue("9");
+  await expect(rideWindow.getByTestId("ride-price")).toHaveValue("9");
   await openRide(page);
-  await expect(page.getByRole("button", { name: "Close coaster" })).toBeVisible();
+  await expect(rideWindow.getByTestId("ride-open-toggle")).toHaveText("Close coaster");
 
   await openTool(page, "Watch");
   await setGameSpeed(page, 16);

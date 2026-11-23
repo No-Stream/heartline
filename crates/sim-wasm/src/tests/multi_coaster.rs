@@ -329,11 +329,13 @@ fn coaster_selection_rename_price_and_demolition_use_stable_ids() {
     assert!(simulation.coaster_edit(1));
     simulation.construction_start(400, 400, 40, 0);
     assert_eq!(simulation.editing_coaster_id().unwrap().0, 2);
-    let after_replace = coaster_list(&simulation);
-    assert_eq!(after_replace.as_array().unwrap().len(), 2);
-    assert_eq!(after_replace[0]["id"], 0);
-    assert_eq!(after_replace[1]["id"], 2);
-    assert_eq!(after_replace[1]["price"], 6);
+    let after_start = coaster_list(&simulation);
+    assert_eq!(after_start.as_array().unwrap().len(), 3);
+    assert_eq!(after_start[0]["id"], 0);
+    assert_eq!(after_start[1]["id"], 1);
+    assert_eq!(after_start[1]["price"], 11);
+    assert_eq!(after_start[2]["id"], 2);
+    assert_eq!(after_start[2]["price"], 6);
 
     assert!(simulation.coaster_edit(0));
     assert_eq!(simulation.editing_coaster_id().unwrap().0, 0);
@@ -342,10 +344,12 @@ fn coaster_selection_rename_price_and_demolition_use_stable_ids() {
 
     assert!(simulation.coaster_demolish(2));
     let remaining = coaster_list(&simulation);
-    assert_eq!(remaining.as_array().unwrap().len(), 1);
+    assert_eq!(remaining.as_array().unwrap().len(), 2);
     assert_eq!(remaining[0]["id"], 0);
     assert_eq!(remaining[0]["name"], "North Loop");
     assert_eq!(remaining[0]["price"], 9);
+    assert_eq!(remaining[1]["id"], 1);
+    assert_eq!(remaining[1]["price"], 11);
 }
 
 #[test]

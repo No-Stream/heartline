@@ -6,7 +6,7 @@ import { createFacilityTool } from "./facility-tool";
 import { stationToolAdapter, facilityToolAdapter, pathToolAdapter, landscapingToolAdapter, sceneryToolAdapter, coasterToolAdapter } from "./tool-adapters";
 import { createRenderRevision, shouldSkipRenderFrame } from "./render-revision";
 import { composeScene } from "./compose-scene";
-import { sendWorkerAction as postWorkerAction, assertNever, type WorkerAction, type WorkerMessage, type CoasterSnapshot, type CoasterRenderData } from "./protocol";
+import { sendWorkerAction as postWorkerAction, assertNever, DEMO_COASTER_ID, type WorkerAction, type WorkerMessage, type CoasterListEntry, type CoasterSnapshot, type CoasterRenderData } from "./protocol";
 import { createAutosaveScheduler, getAutosaveSettings, type AutosaveScheduler } from "./autosave";
 import "./print-modern.css";
 import "./app.css";
@@ -29,6 +29,7 @@ import { steppedTrainCount } from "./block-panel-state";
 import { createStaticTrackCache } from "./render/track/cache";
 import { RenderClock } from "./render-clock";
 import { createConstructionPanel } from "./construction";
+import { createCoasterList } from "./coaster-list";
 import { createConstructionInputQueue } from "./construction-input-queue";
 import type { BlockAnalysisProgress, ConstructionState, PieceShapesMessage } from "./construction-protocol";
 import { followTrackEnd, railPoints } from "./construction-camera";
@@ -111,6 +112,11 @@ function isParkMutationIntent(action: WorkerAction): boolean {
     case "construction-remove-block":
     case "construction-add-block":
     case "construction-set-block-sections":
+    case "ride-edit":
+    case "ride-set-open":
+    case "ride-set-price":
+    case "ride-rename":
+    case "ride-demolish":
       return true;
     default:
       return false;
@@ -149,6 +155,7 @@ type CoasterWorld = WorldView & { pathMetadata: Int32Array; editingCoasterId: nu
 let world: CoasterWorld | undefined;
 let previous: CoasterSnapshot | undefined;
 let current: CoasterSnapshot | undefined;
+let coasterQueueLengths: readonly Pick<CoasterListEntry, "id" | "queueLength">[] = [];
 const renderClock = new RenderClock<CoasterSnapshot>(30);
 const testMode = new URLSearchParams(location.search).has("test");
 const livePauseRender = new URLSearchParams(location.search).get("livePauseRender") === "1";
@@ -184,6 +191,17 @@ const stationTool = createStationTool((command) => sendWorkerAction(worker, comm
 const stationAdapter = stationToolAdapter(stationTool);
 const panelContainer = document.querySelector<HTMLElement>("[data-construction]");
 if (!panelContainer) throw new Error("Construction panel is missing");
+const coasterToolContainer = document.querySelector<HTMLElement>("[data-coaster-tool]");
+const coasterListContainer = document.querySelector<HTMLElement>("[data-coaster-list]");
+if (!coasterToolContainer || !coasterListContainer) throw new Error("Coaster tool is missing");
+const coasterList = createCoasterList(coasterListContainer, {
+  onSelect(id) { dispatch({ type: "ride-select", ride: id }); },
+  onNewCoaster() { sendWorkerAction(worker, { type: "ride-stop-editing" }); showCoasterBuilder(); },
+});
+function showCoasterBuilder(): void {
+  coasterListContainer!.hidden = true;
+  panelContainer!.hidden = false;
+}
 const panel = createConstructionPanel(panelContainer, dispatch, () => {
   const id = world?.editingCoasterId;
   if (id !== null && id !== undefined) dispatch({ type: "ride-select", ride: id });
@@ -221,7 +239,9 @@ const facilityTool = createFacilityTool((command) => sendWorkerAction(worker, co
   if (message) facilityPanel.message(message);
 });
 const facilityAdapter = facilityToolAdapter(facilityTool);
-let advanceTicksComplete: (() => void) | undefined;
+let advanceTicksComplete: ((result: {
+  readonly queueEntryPlaceIds: readonly number[];
+}) => void) | undefined;
 let advanceBlockAnalysisComplete: (() => void) | undefined;
 const facilityContainer = document.querySelector<HTMLElement>("[data-facilities]");
 if (!facilityContainer) throw new Error("Facility panel is missing");
@@ -279,7 +299,7 @@ const toolbarContainer = document.querySelector<HTMLElement>("[data-toolbar]");
 if (!dock || !toolbarContainer) throw new Error("Tool dock or toolbar is missing");
 const toolDock = dock;
 const tunnelPreview = document.querySelector<HTMLElement>("[data-tunnel-preview]")!;
-const toolPanels: Record<Exclude<Tool, "none">, HTMLElement> = { coaster: panelContainer, paths: pathContainer, landscape: landscapingContainer, facilities: facilityContainer, scenery: sceneryContainer };
+const toolPanels: Record<Exclude<Tool, "none">, HTMLElement> = { coaster: coasterToolContainer, paths: pathContainer, landscape: landscapingContainer, facilities: facilityContainer, scenery: sceneryContainer };
 const toolbar = createToolbar(toolbarContainer, (tool) => dispatch({ type: "tool-select", tool }));
 let activeTool: Tool = "none";
 /** The time of day follows simulation ticks, so it pauses with the game. Test mode holds it at noon unless a test sets it. */
@@ -338,7 +358,10 @@ function endInputModes(): void {
 /** Every input mode belongs to one tool, so opening another tool ends it and only the open tool's mode can be active. */
 function openTool(tool: Tool, activatePanel = true): void {
   if (tool === activeTool) return;
-  if (activeTool === "coaster") constructionInputQueue.cancel();
+  if (activeTool === "coaster") {
+    constructionInputQueue.cancel();
+    sendWorkerAction(worker, { type: "ride-stop-editing" });
+  }
   endInputModes();
   activeTool = tool;
   renderRevision.invalidate();
@@ -347,6 +370,7 @@ function openTool(tool: Tool, activatePanel = true): void {
   dayClock.setControlsVisible(tool === "none");
   toolDock.hidden = tool === "none";
   for (const [owner, element] of Object.entries(toolPanels)) element.hidden = owner !== tool;
+  if (tool === "coaster") { coasterListContainer!.hidden = false; panelContainer!.hidden = true; }
   tunnelPreview.hidden = tool !== "coaster" || tunnelPreview.textContent === "";
   toolDock.scrollTop = 0;
   // Resize now rather than on the next observer callback, so the world is projected onto the new canvas size at once.
@@ -401,6 +425,7 @@ const gameTest: GameTest = {
   constructionEstimates() { return readConstructionEstimates(construction); },
   constructionForcePreview() { return construction?.constructionForcePreview ?? null; },
   constructionTrainPoses() { return Array.from(current?.coasters.find(({ id }) => id === world?.editingCoasterId)?.trainPoses ?? []); },
+  coasterQueueLengths() { return coasterQueueLengths; },
   coasters() { return current?.coasters ?? []; },
   editingCoasterId() { return world?.editingCoasterId ?? null; },
   trainStates() {
@@ -412,7 +437,10 @@ const gameTest: GameTest = {
   replaySession: replayLiveSession,
   advanceTicks(count) {
     if ((!frozen && !(testMode && gamePause.isPaused())) || advanceTicksComplete || !Number.isInteger(count) || count < 0 || count > 100000) throw new Error("Invalid test tick advance");
-    return new Promise<void>((resolve) => { advanceTicksComplete = resolve; sendWorkerAction(worker, { type: "test-advance", count }); });
+    return new Promise((resolve) => {
+      advanceTicksComplete = resolve;
+      sendWorkerAction(worker, { type: "test-advance", count });
+    });
   },
   advanceBlockAnalysis(budget) {
     if (!manualBlockAnalysis || advanceBlockAnalysisComplete) throw new Error("Invalid test block analysis advance");
@@ -599,6 +627,10 @@ function dispatch(action: InputAction): void {
     sendWorkerAction(worker, { type: "ride-info-request", ride: action.ride });
   } else if (action.type === "ride-test") {
     sendWorkerAction(worker, { type: "ride-test", ride: action.ride });
+  } else if (action.type === "ride-edit") {
+    sendWorkerAction(worker, action);
+  } else if (action.type === "ride-set-open" || action.type === "ride-set-price" || action.type === "ride-rename" || action.type === "ride-demolish") {
+    sendWorkerAction(worker, action);
   } else if (action.type === "ride-close") {
     selectedRide = undefined;
     latestRideInfo = null;
@@ -758,7 +790,7 @@ function dispatch(action: InputAction): void {
       selectedGuestId = selection.id;
       sendWorkerAction(worker, { type: "guest-detail-request", guestId: selection.id });
       renderRevision.invalidate();
-    } else if (activeTool === "none" && rideFromPick(selection) !== null) {
+    } else if ((activeTool === "none" || (activeTool === "coaster" && panelContainer!.hidden)) && rideFromPick(selection) !== null) {
       dispatch({ type: "ride-select", ride: rideFromPick(selection)! });
     }
   } else if (action.type === "builder-cancel") {
@@ -911,7 +943,7 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     landscapingTool.setDimensions(world.dimensions[0], world.dimensions[1]);
     renderRevision.invalidate();
   } else if (message.type === "test-advanced") {
-    advanceTicksComplete?.();
+    advanceTicksComplete?.({ queueEntryPlaceIds: message.queueEntryPlaceIds });
     advanceTicksComplete = undefined;
   } else if (message.type === "test-block-analysis-advanced") {
     advanceBlockAnalysisComplete?.();
@@ -929,6 +961,19 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     if (message.placed) facilityTool.placed();
     if (message.message) facilityPanel.message(message.message);
     renderRevision.invalidate();
+  } else if (message.type === "coasters") {
+    coasterQueueLengths = message.coasters.filter(({ id }) => id !== DEMO_COASTER_ID).map(({ id, queueLength }) => ({ id, queueLength }));
+    coasterList.update(message.coasters);
+  } else if (message.type === "coaster-action-result") {
+    if (message.success && message.action === "edit") {
+      openTool("coaster", false);
+      showCoasterBuilder();
+      dispatch({ type: "ride-close" });
+    } else if (message.success && message.action === "demolish" && selectedRide === message.coasterId) {
+      dispatch({ type: "ride-close" });
+    } else if (!message.success && latestRideInfo && selectedRide === message.coasterId) {
+      rideWindow.update(latestRideInfo, message.message);
+    }
   } else if (message.type === "piece-shapes") {
     panel.setShapes(message.shapes);
   } else if (message.type === "construction-finish-status") {

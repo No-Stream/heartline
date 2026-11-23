@@ -1,5 +1,6 @@
 import { expect, test, type Locator } from "@playwright/test";
-import { clickCanvas, moveOverCanvas, openTool } from "./game-page";
+import { clickCanvas, moveOverCanvas } from "./game-page";
+import { openCoasterBuilder } from "./coaster-ui";
 
 function heightValue(text: string, unit: "ft" | "m"): number {
   const match = text.match(/(-?\d+(?:\.\d+)?)\s*(ft|m)\b/);
@@ -22,7 +23,7 @@ test("shows coaster height markers in the selected units and saves the preferenc
   const units = page.getByRole("button", { name: "Units", exact: true });
   await expect(units).toHaveAttribute("data-units", "imperial");
 
-  await openTool(page, "Coaster");
+  await openCoasterBuilder(page);
   const stationHeight = page.getByLabel("Station height above ground (feet)");
   await expect(stationHeight).toHaveValue("39");
   await expect(stationHeight).toHaveAttribute("step", "7");

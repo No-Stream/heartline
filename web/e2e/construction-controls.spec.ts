@@ -203,17 +203,13 @@ test("offers generated coaster models in the model chooser @fast", async ({ page
   }
 });
 
-test("opens and closes a completed coaster", async ({ page }) => {
+test("the builder leaves coaster opening and closing to the ride window", async ({ page }) => {
   await page.goto(fixtureUrl);
   await expect(page.locator("[data-station-access]")).toContainText("queue at (227, 251)");
   await expect(page.locator("[data-station-access]")).toContainText("exit path at (227, 253)");
-  const open = page.getByRole("button", { name: "Open coaster" });
-  await expect(open).toBeDisabled();
-  await page.evaluate(() => (window as unknown as Window).setConstructionState({ canTest: true }));
-  await open.click();
-  await page.evaluate(() => (window as unknown as Window).setConstructionState({ isOpen: true }));
-  await page.getByRole("button", { name: "Close coaster" }).click();
-  expect(await recorded(page)).toEqual([{ type: "construction-open-toggle" }, { type: "construction-open-toggle" }]);
+  await expect(page.getByRole("button", { name: "Open coaster" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Close coaster" })).toHaveCount(0);
+  await expect(page.getByRole("spinbutton", { name: "Coaster ticket price" })).toHaveCount(0);
 });
 
 test("construction controls dispatch actions with the keyboard and reflect worker validity", async ({ page }) => {
@@ -440,12 +436,11 @@ test("the builder keeps every piece choice on the Build tab and settings on Colo
     choices.getByRole("radiogroup", { name: "Next piece" }),
     build.getByRole("button", { name: "Close circuit" }),
     build.getByRole("button", { name: "Test coaster" }),
-    build.getByRole("button", { name: "Open coaster" }),
   ]) await expect(control).toBeVisible();
   // The named track elements share the piece choices region; the fixture model has none to list.
   await expect(choices.locator("[data-elements]")).toBeAttached();
   await expect(page.getByRole("radiogroup", { name: "Track colour" })).toBeHidden();
-  await expect(page.getByRole("spinbutton", { name: "Coaster ticket price" })).toBeHidden();
+  await expect(page.getByRole("spinbutton", { name: "Coaster ticket price" })).toHaveCount(0);
 
   // Arrow keys move between tabs and stay out of the game's pan shortcuts.
   await tab("Build").focus();
@@ -455,7 +450,7 @@ test("the builder keeps every piece choice on the Build tab and settings on Colo
   await expect(page.getByRole("button", { name: "Place piece" })).toBeHidden();
   await page.keyboard.press("ArrowRight");
   await expect(tab("Operate")).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("spinbutton", { name: "Coaster ticket price" })).toBeVisible();
+  await expect(page.getByRole("spinbutton", { name: "Coaster ticket price" })).toHaveCount(0);
   await expect(page.locator("[data-block-panel-hint]")).toBeVisible();
   await page.keyboard.press("ArrowRight");
   await expect(tab("Build")).toBeFocused();

@@ -49,6 +49,8 @@ test("the cutaway window shows coaster track and tunnels being built underground
   await expect.poll(() => page.evaluate(() => window.gameTest.cutaway())).toBeNull();
   await openTool(page, "Landscape");
   await openTool(page, "Coaster");
+  await page.locator('[data-coaster-id="0"]').click();
+  await page.getByRole("button", { name: "Edit coaster", exact: true }).click();
   await expect(builder.getByLabel("Underground cutaway")).toHaveValue("off");
   await expect.poll(() => page.evaluate(() => window.gameTest.cutaway())).toBeNull();
 

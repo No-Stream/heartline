@@ -108,7 +108,7 @@ test("the builder's Ride info button and a click on the built coaster open the s
   await page.evaluate((recordedSession) => window.gameTest.replaySession(recordedSession), session);
 
   await openTool(page, "Coaster");
-  await page.getByRole("button", { name: "Ride info", exact: true }).click();
+  await page.locator('[data-coaster-id="0"]').click();
   const rideWindow = page.getByTestId("ride-window");
   await expect(rideWindow).toHaveAttribute("data-ride", "0");
   await expect(rideWindow.getByTestId("ride-name")).toHaveText("Timber Tumbler");
@@ -119,6 +119,15 @@ test("the builder's Ride info button and a click on the built coaster open the s
   await expect(rideWindow.locator('[data-score="excitement"] .testing-score__value')).toHaveText(report.rating.excitement.toFixed(1));
   await rideWindow.getByTestId("ride-window-close").click();
   await expect(rideWindow).toBeHidden();
+
+  await openTool(page, "Coaster");
+  await page.locator('[data-coaster-id="0"]').click();
+  await rideWindow.getByTestId("ride-edit").click();
+  await expect.poll(() => page.evaluate(() => window.gameTest.editingCoasterId())).toBe(0);
+  await page.getByRole("button", { name: "Ride info", exact: true }).click();
+  await expect(rideWindow).toHaveAttribute("data-ride", "0");
+  await expect(rideWindow.getByTestId("ride-report")).toBeVisible();
+  await rideWindow.getByTestId("ride-window-close").click();
 
   await openTool(page, "Watch");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 236, centerY: 246, zoom: 1.1, rotation: 0 }));

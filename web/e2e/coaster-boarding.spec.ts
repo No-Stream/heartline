@@ -38,7 +38,10 @@ test("guests ride a player-built coaster and can be selected @slow", async ({ pa
   await page.getByRole("button", { name: "Finish coaster" }).click();
   await expect(page.locator("[data-construction]")).toHaveAttribute("data-finish-preview", "true");
   await page.getByRole("button", { name: "Confirm coaster finish" }).click();
-  await expect(page.getByRole("button", { name: "Open coaster" })).toBeEnabled();
+  const rideWindow = page.getByTestId("ride-window");
+  await page.getByRole("button", { name: "Ride info", exact: true }).click();
+  await expect(rideWindow.getByTestId("ride-open-toggle")).toBeEnabled();
+  await rideWindow.getByTestId("ride-window-close").click();
 
   await openTool(page, "Landscape");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 241, centerY: 253, zoom: 2, rotation: 0 }));
@@ -80,14 +83,15 @@ test("guests ride a player-built coaster and can be selected @slow", async ({ pa
   await entrancePrice.press("Tab");
   await expect.poll(() => page.evaluate((id) => window.gameTest.facilities().find(({ id: currentId }) => currentId === id)?.price, entrance.id)).toBe(8);
   await openTool(page, "Coaster");
-  await showBuilderTab(page, "Operate");
-  const coasterPrice = page.getByRole("spinbutton", { name: "Coaster ticket price" });
+  await showBuilderTab(page, "Build");
+  await page.getByRole("button", { name: "Ride info", exact: true }).click();
+  const coasterPrice = rideWindow.getByTestId("ride-price");
   await coasterPrice.fill("9");
   await coasterPrice.press("Tab");
   await expect(coasterPrice).toHaveValue("9");
-  await showBuilderTab(page, "Build");
-  await page.getByRole("button", { name: "Open coaster" }).click();
-  await expect(page.getByRole("button", { name: "Close coaster" })).toBeVisible();
+  const openToggle = rideWindow.getByTestId("ride-open-toggle");
+  await openToggle.click();
+  await expect(openToggle).toHaveText("Close coaster");
   let riderId = "";
   const queuedIds = new Set<string>();
   const queueCamera: Camera = { centerX: 241, centerY: 253, zoom: 1, rotation: 0 };
@@ -103,7 +107,8 @@ test("guests ride a player-built coaster and can be selected @slow", async ({ pa
   }
   expect(queuedIds.size, "a guest should enter the queue").toBeGreaterThan(0);
   expect(riderId, "a queued guest should board the coaster").not.toBe("");
-  await expect.poll(async () => Number(await page.locator("[data-coaster-income]").textContent())).toBeGreaterThan(0);
+  await expect.poll(async () => Number(await rideWindow.getByTestId("ride-income").textContent())).toBeGreaterThan(0);
+  await rideWindow.getByTestId("ride-window-close").click();
   const riderCamera = await page.evaluate((id): Camera => {
     const rider = window.gameTest.riders().find((entry) => entry.id === id);
     if (!rider) throw new Error("Rider disappeared before selection");

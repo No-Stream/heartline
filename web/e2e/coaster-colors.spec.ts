@@ -40,6 +40,8 @@ test("the construction panel repaints a built coaster's track, supports and trai
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await page.evaluate((recordedSession) => window.gameTest.replaySession(recordedSession), session);
   await openTool(page, "Coaster");
+  await page.locator('[data-coaster-id="0"]').click();
+  await page.getByRole("button", { name: "Edit coaster", exact: true }).click();
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 236, centerY: 246, zoom: 1.1, rotation: 0 }));
   await showBuilderTab(page, "Colours");
 
@@ -69,5 +71,7 @@ test("the construction panel repaints a built coaster's track, supports and trai
   // The colours belong to the simulation's coaster, so they come back after leaving the coaster tool.
   await openTool(page, "Watch");
   await openTool(page, "Coaster");
+  await page.locator('[data-coaster-id="0"]').click();
+  await page.getByRole("button", { name: "Edit coaster", exact: true }).click();
   await expect(swatch("Track", "Teal")).toHaveAttribute("aria-checked", "true");
 });

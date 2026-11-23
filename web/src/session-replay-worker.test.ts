@@ -63,3 +63,38 @@ it("waits for exact shaped geometry placement before replaying the next command"
   await replay;
   expect(worker.sent).toEqual([command, { type: "finish" }]);
 });
+
+it("waits for coaster interface commands before replaying the next command", async () => {
+  class FakeWorker extends EventTarget {
+    readonly sent: object[] = [];
+    postMessage(action: { type: string }): void {
+      this.sent.push(action);
+      if (action.type === "finish") this.dispatchEvent(new MessageEvent("message", { data: { type: "finished" } }));
+    }
+  }
+  const worker = new FakeWorker();
+  const session: ReplaySession = {
+    format: "theme-park-session",
+    version: 1,
+    seed: "1",
+    park: "new",
+    guestCount: 0,
+    commands: [
+      { tick: 0, command: { type: "ride-edit", ride: 7 } },
+      { tick: 0, command: { type: "ride-stop-editing" } },
+    ],
+    checkpoints: [],
+    finalTick: 0,
+  };
+  const replay = replaySessionIntoWorker(worker as unknown as Worker, session, { action: { type: "finish" }, replyType: "finished" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(worker.sent).toEqual([{ type: "ride-edit", ride: 7 }]);
+
+  worker.dispatchEvent(new MessageEvent("message", { data: { type: "coaster-action-result", action: "edit", coasterId: 7, success: true, message: "Editing coaster." } }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(worker.sent).toEqual([{ type: "ride-edit", ride: 7 }, { type: "ride-stop-editing" }]);
+
+  worker.dispatchEvent(new MessageEvent("message", { data: { type: "coaster-action-result", action: "stop-editing", coasterId: 7, success: true, message: "Stopped editing the coaster." } }));
+  await replay;
+  expect(worker.sent.at(-1)).toEqual({ type: "finish" });
+});

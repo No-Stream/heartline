@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { openTool } from "./game-page";
+import { openCoasterBuilder } from "./coaster-ui";
 
 test.use({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
 
@@ -125,7 +125,7 @@ test.describe("dark interface", () => {
 
     test("the coaster workshop beside the park", async ({ page }) => {
       await startGame(page);
-      await openTool(page, "Coaster");
+      await openCoasterBuilder(page);
       await page.addStyleTag({ content: "[data-testid='tick-count'] { visibility: hidden; }" });
       await page.mouse.move(0, 0);
       await expect(page.locator("main")).toHaveScreenshot("dark-coaster-workshop.png", { animations: "disabled" });
