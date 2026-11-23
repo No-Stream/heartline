@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { DEMO_COASTER_ID } from "../src/protocol";
 import type { FrameLogEntry, SnapshotArrivalEntry } from "../src/game-test";
 
 test.use({ viewport: { width: 160, height: 90 } });
@@ -115,8 +116,9 @@ test("demo coaster render progress stays smooth on the production build @slow", 
     window.Worker = class extends NativeWorker {
       constructor(scriptURL: string | URL, options?: WorkerOptions) {
         super(scriptURL, options);
-        this.addEventListener("message", (event: MessageEvent<{ type?: string; coasterRails?: Float32Array }>) => {
-          if (event.data.type === "world" && event.data.coasterRails) scope.smoothnessRails = Array.from(event.data.coasterRails);
+        this.addEventListener("message", (event: MessageEvent<{ type?: string; coasters?: { id: number; rails?: Float32Array }[] }>) => {
+          const rails = event.data.coasters?.find(({ id }) => id === DEMO_COASTER_ID)?.rails;
+          if (event.data.type === "world" && rails) scope.smoothnessRails = Array.from(rails);
         });
       }
     };

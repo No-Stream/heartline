@@ -284,14 +284,18 @@ mod tests {
 
     #[test]
     fn block_command_errors_reach_both_player_messages() {
-        let mut simulation = crate::WasmSimulation::new(42, 0, String::from("demo"));
+        let mut simulation = crate::WasmSimulation::new(42, 0, String::from("new"));
+        simulation.construction_start(200, 200, 20, 0);
         assert!(!simulation.construction_auto_blocks());
         assert_eq!(
             simulation.construction_message(),
             "A closed circuit is required to place block sections."
         );
         assert_eq!(
-            simulation.park.block_message,
+            simulation
+                .editing_coaster()
+                .expect("construction started")
+                .block_message,
             "A closed circuit is required to place block sections."
         );
         assert!(!simulation.construction_set_train_count(0));

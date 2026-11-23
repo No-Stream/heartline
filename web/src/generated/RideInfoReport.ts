@@ -5,4 +5,4 @@ import type { TestingReport } from "./TestingReport";
 /**
  * What the ride info window shows for one coaster: its model, its force limits and its latest test report.
  */
-export type RideInfoReport = { ride: "demo" | "player", modelName: string, manufacturer: string, limits: ConstructionForceLimitsWire, report: TestingReport | null, };
+export type RideInfoReport = { ride: number, modelName: string, manufacturer: string, limits: ConstructionForceLimitsWire, report: TestingReport | null, };

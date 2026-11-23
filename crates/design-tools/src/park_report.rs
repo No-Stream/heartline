@@ -4,7 +4,7 @@ use std::fs;
 use std::path::Path;
 
 use serde_json::{Value, json};
-use theme_park_sim::park::tick::COASTER_PLACE_ID;
+use theme_park_sim::park::CoasterId;
 use theme_park_sim::physics::TestRun;
 use theme_park_sim::track::ride_file::RideFile;
 use theme_park_sim::world::PathKind;
@@ -40,6 +40,18 @@ struct ShowcaseTargets {
     maximum_lateral: f64,
 }
 
+#[derive(Clone)]
+struct ReportedCoaster {
+    id: CoasterId,
+    name: String,
+}
+
+impl ReportedCoaster {
+    fn facility_id(&self) -> u32 {
+        u32::MAX - self.id.0
+    }
+}
+
 pub(crate) fn run_park_report(arguments: &[String], json_mode: bool) -> Result<String, String> {
     if arguments.len() < 2 {
         return Err("usage: tools/design park report <park file> [--guests 2000] [--minutes 20] [--seed 42]".into());
@@ -58,63 +70,64 @@ pub(crate) fn run_park_report(arguments: &[String], json_mode: bool) -> Result<S
         .get("coasters")
         .and_then(Value::as_array)
         .ok_or_else(|| "park description field `coasters` must be an array".to_owned())?;
-    if coaster_descriptions.len() > 1 {
-        return Err("this build supports one player coaster per park".into());
-    }
-
     let runtime_description = inline_park_ride_files(park_path, &park_source)?;
     let mut simulation =
         WasmSimulation::from_park_description(options.seed, options.guests, &runtime_description)
             .map_err(|error| error.to_string())?;
 
-    let mut coaster_json = Vec::new();
-    let mut coaster_text = String::new();
-    let mut coaster_name = None;
+    let mut coaster_json = Vec::with_capacity(coaster_descriptions.len());
+    let mut coaster_sections = Vec::with_capacity(coaster_descriptions.len());
+    let mut reported_coasters = Vec::with_capacity(coaster_descriptions.len());
     let ticks = options
         .minutes
         .checked_mul(60 * 30)
         .ok_or_else(|| "park report duration exceeds the supported tick count".to_owned())?;
-    if let Some(coaster_description) = coaster_descriptions.first() {
+    for (index, coaster_description) in coaster_descriptions.iter().enumerate() {
+        let coaster_id =
+            CoasterId(u32::try_from(index).map_err(|_| {
+                format!("park coaster index {index} exceeds the supported ID range")
+            })?);
         let ride_reference = coaster_description
             .get("ride")
             .and_then(Value::as_str)
-            .ok_or_else(|| "park coaster field `ride` must be a ride file path".to_owned())?;
-        let ride_path = resolve_park_ride_path(0, ride_reference)?;
+            .ok_or_else(|| format!("park coaster {index} field `ride` must be a ride file path"))?;
+        let ride_path = resolve_park_ride_path(index, ride_reference)?;
         let ride_source = fs::read_to_string(&ride_path)
             .map_err(|error| format!("read park coaster ride {}: {error}", ride_path.display()))?;
         let mut ride: RideFile = RideFile::from_json_str(&ride_source)
             .map_err(|error| format!("parse park coaster ride {}: {error}", ride_path.display()))?;
-        coaster_name = Some(ride.name.clone());
+        let coaster_name = ride.name.clone();
         ride.station = serde_json::from_value(
             coaster_description
                 .get("station")
                 .cloned()
-                .ok_or_else(|| "park coaster field `station` is required".to_owned())?,
+                .ok_or_else(|| format!("park coaster {index} field `station` is required"))?,
         )
-        .map_err(|error| format!("parse park coaster station: {error}"))?;
+        .map_err(|error| format!("parse park coaster {index} station: {error}"))?;
 
+        if !simulation.coaster_edit(coaster_id.0) {
+            return Err(format!(
+                "park coaster {index} could not be selected for testing"
+            ));
+        }
         let error = simulation.ride_test("player");
         if !error.is_empty() {
             return Err(format!("park coaster {} test failed: {error}", ride.name));
         }
         let test_run = simulation
-            .construction_report
-            .as_ref()
+            .editing_coaster()
+            .and_then(|coaster| coaster.construction_report.as_ref())
             .cloned()
             .ok_or_else(|| "park coaster test completed without a native report".to_owned())?;
+        let edited_coaster_id = simulation
+            .editing_coaster_id()
+            .ok_or_else(|| "park coaster test completed without an edited coaster".to_owned())?;
         let (circuit, _) = simulation
-            .construction_circuit_and_train()
+            .construction_circuit_and_train(edited_coaster_id)
             .ok_or_else(|| "park coaster test completed without a circuit".to_owned())?;
         let (_, estimates, _) = replay_with_estimates(&ride, false)?;
         let agreement = compare_estimates(&ride, &test_run, &estimates)?;
         let expectation_failures = check_expectations(&ride, &test_run, &circuit)?;
-        if !simulation.construction_is_open() && !simulation.construction_set_open(true) {
-            return Err(format!(
-                "park coaster {} could not open: {}",
-                ride.name,
-                simulation.construction_message()
-            ));
-        }
         let throughput_report = finish_throughput_analysis(&mut simulation)?;
 
         let targets = showcase_targets(&ride.model)?;
@@ -132,8 +145,7 @@ pub(crate) fn run_park_report(arguments: &[String], json_mode: bool) -> Result<S
         let train_count = simulation.construction_train_count();
         let sustained = test_run.sustained_force_peaks();
         let construction = simulation
-            .construction
-            .as_ref()
+            .editing_construction()
             .ok_or_else(|| "park coaster test completed without a construction".to_owned())?;
         let piece_names: Vec<_> = construction
             .pieces()
@@ -149,6 +161,7 @@ pub(crate) fn run_park_report(arguments: &[String], json_mode: bool) -> Result<S
             "fail"
         };
 
+        let mut coaster_text = String::new();
         writeln!(coaster_text, "Coaster: {} ({})", ride.name, ride.model).unwrap();
         writeln!(
             coaster_text,
@@ -198,7 +211,13 @@ pub(crate) fn run_park_report(arguments: &[String], json_mode: bool) -> Result<S
             test_run.statistics.max_lateral_g,
             test_run.excitement,
         );
+        reported_coasters.push(ReportedCoaster {
+            id: coaster_id,
+            name: coaster_name,
+        });
         coaster_json.push(json!({
+            "facilityId": u32::MAX - coaster_id.0,
+            "open": true,
             "name": ride.name,
             "model": ride.model,
             "scores": {
@@ -223,7 +242,22 @@ pub(crate) fn run_park_report(arguments: &[String], json_mode: bool) -> Result<S
             "ridersPerHour": 0.0,
             "throughputEstimatePerHour": throughput_estimate,
             "throughputStatus": throughput_status,
+            "revenue": 0,
+            "queueLength": 0,
+            "unreachableGuestsAtStart": 0,
+            "unreachableGuestsAtEnd": 0,
         }));
+        coaster_sections.push(coaster_text);
+    }
+
+    for reported_coaster in &reported_coasters {
+        if !simulation.coaster_set_open(reported_coaster.id.0, true) {
+            return Err(format!(
+                "park coaster {} could not open: {}",
+                reported_coaster.name,
+                simulation.construction_message()
+            ));
+        }
     }
 
     let initial_unreachable_destinations = simulation.park_outcomes().unreachable_destinations;
@@ -233,8 +267,13 @@ pub(crate) fn run_park_report(arguments: &[String], json_mode: bool) -> Result<S
 
     let guest_details = load_guest_details(&simulation, options.guests)?;
     let outcomes = simulation.park_outcomes();
-    if let Some(coaster_report) = coaster_json.first_mut() {
-        let ride_outcome = outcomes.rides.get(&COASTER_PLACE_ID);
+    for ((coaster_report, coaster_section), reported_coaster) in coaster_json
+        .iter_mut()
+        .zip(&mut coaster_sections)
+        .zip(&reported_coasters)
+    {
+        let facility_id = reported_coaster.facility_id();
+        let ride_outcome = outcomes.rides.get(&facility_id);
         let rides_taken = ride_outcome.map_or(0, |outcome| outcome.rides_taken);
         let unique_riders = ride_outcome.map_or(0, |outcome| outcome.unique_riders.len());
         let average_guest_rating = ride_outcome.and_then(|outcome| {
@@ -247,22 +286,37 @@ pub(crate) fn run_park_report(arguments: &[String], json_mode: bool) -> Result<S
             .as_u64()
             .expect("seats per train") as usize;
         let throughput_estimate = coaster_report["throughputEstimatePerHour"].as_f64();
+        let queue_length = simulation.simulation.queue_length(facility_id);
+        let revenue = simulation.coaster_income(reported_coaster.id);
+        let unreachable_guests_at_start = initial_unreachable_destinations
+            .iter()
+            .filter(|destination| destination.facility_id == facility_id)
+            .map(|destination| destination.guest_id)
+            .collect::<BTreeSet<_>>()
+            .len();
+        let unreachable_guests_at_end = outcomes
+            .unreachable_destinations
+            .iter()
+            .filter(|destination| destination.facility_id == facility_id)
+            .map(|destination| destination.guest_id)
+            .collect::<BTreeSet<_>>()
+            .len();
 
         writeln!(
-            coaster_text,
+            coaster_section,
             "Trains: {train_count}; seats per train: {seats_per_train}; completed guest rides: {rides_taken}; unique riders: {unique_riders} ({:.1}% of guests)",
             unique_riders as f64 * 100.0 / options.guests as f64
         )
         .unwrap();
         writeln!(
-            coaster_text,
+            coaster_section,
             "Riders/hour: {riders_per_hour:.1} / {}",
             throughput_estimate
                 .map_or_else(|| "unavailable".to_owned(), |value| format!("{value:.1}"))
         )
         .unwrap();
         writeln!(
-            coaster_text,
+            coaster_section,
             "Average guest rating: {}",
             average_guest_rating.map_or_else(
                 || "no completed rides".to_owned(),
@@ -275,14 +329,26 @@ pub(crate) fn run_park_report(arguments: &[String], json_mode: bool) -> Result<S
         coaster_report["shareOfGuestsRode"] = json!(unique_riders as f64 / options.guests as f64);
         coaster_report["averageGuestRating"] = json!(average_guest_rating);
         coaster_report["ridersPerHour"] = json!(riders_per_hour);
+        coaster_report["revenue"] = json!(revenue);
+        coaster_report["queueLength"] = json!(queue_length);
+        coaster_report["unreachableGuestsAtStart"] = json!(unreachable_guests_at_start);
+        coaster_report["unreachableGuestsAtEnd"] = json!(unreachable_guests_at_end);
+        if reported_coasters.len() > 1 {
+            writeln!(
+                coaster_section,
+                "Revenue: {revenue}; queue length: {queue_length}; unreachable guests: {unreachable_guests_at_start} at start, {unreachable_guests_at_end} at end"
+            )
+            .unwrap();
+        }
     }
+    let mut coaster_text = coaster_sections.concat();
     let guest_outcomes = build_guest_outcomes(
         &simulation,
         &guest_details,
         &outcomes,
         &initial_unreachable_destinations,
         options.guests,
-        coaster_name.as_deref(),
+        &reported_coasters,
     )?;
     let park_facts = build_park_facts(&simulation)?;
     writeln!(
@@ -714,7 +780,7 @@ fn build_guest_outcomes(
     outcomes: &theme_park_sim::guests::ParkOutcomes,
     initial_unreachable_destinations: &BTreeSet<theme_park_sim::guests::GuestDestination>,
     guest_count: usize,
-    coaster_name: Option<&str>,
+    coasters: &[ReportedCoaster],
 ) -> Result<Value, String> {
     let active_guest_ids: BTreeMap<_, _> = simulation
         .guest_ids()
@@ -773,20 +839,26 @@ fn build_guest_outcomes(
             }),
         );
     }
-    if let Some(coaster_name) = coaster_name {
-        destination_names_by_id.insert(COASTER_PLACE_ID, coaster_name.to_owned());
+    for coaster in coasters {
+        let facility_id = coaster.facility_id();
+        destination_names_by_id.insert(facility_id, coaster.name.clone());
+        let park_coaster = simulation
+            .coaster(coaster.id)
+            .ok_or_else(|| format!("reported coaster {} disappeared", coaster.id.0))?;
+        if park_coaster.coaster_open {
+            *facilities_by_kind.entry("coaster".into()).or_default() += 1;
+            revenue_by_facility.insert(
+                facility_id,
+                json!({
+                    "facilityId": facility_id,
+                    "kind": "coaster",
+                    "revenue": simulation.coaster_income(coaster.id),
+                }),
+            );
+        }
     }
-    if simulation.construction_is_open() {
-        facilities_by_kind.insert("coaster".into(), 1);
-        revenue_by_facility.insert(
-            COASTER_PLACE_ID,
-            json!({
-                "facilityId": COASTER_PLACE_ID,
-                "kind": "coaster",
-                "revenue": simulation.construction_coaster_income(),
-            }),
-        );
-    }
+    let coaster_place_ids: BTreeSet<_> =
+        coasters.iter().map(ReportedCoaster::facility_id).collect();
     let facility_ids: BTreeMap<_, _> = revenue_by_facility.keys().map(|id| (*id, ())).collect();
     let queue_lengths: Vec<_> = facility_ids
         .keys()
@@ -829,7 +901,7 @@ fn build_guest_outcomes(
     };
     for destination in &outcomes.unreachable_destinations {
         let (guest_id, guest_name, destination_name, record) = destination_json(destination)?;
-        if destination.facility_id == COASTER_PLACE_ID {
+        if coaster_place_ids.contains(&destination.facility_id) {
             unreachable_ride_guests.insert(
                 guest_id,
                 json!({
@@ -845,7 +917,7 @@ fn build_guest_outcomes(
     let mut initial_unreachable_ride_guests = BTreeMap::<u32, Value>::new();
     for destination in initial_unreachable_destinations {
         let (guest_id, guest_name, destination_name, record) = destination_json(destination)?;
-        if destination.facility_id == COASTER_PLACE_ID {
+        if coaster_place_ids.contains(&destination.facility_id) {
             initial_unreachable_ride_guests.insert(
                 guest_id,
                 json!({
@@ -860,7 +932,7 @@ fn build_guest_outcomes(
     let mut failed_ride_routes = Vec::new();
     for destination in &outcomes.failed_routes {
         let (_, _, _, record) = destination_json(destination)?;
-        if destination.facility_id == COASTER_PLACE_ID {
+        if coaster_place_ids.contains(&destination.facility_id) {
             failed_ride_routes.push(record.clone());
         }
         failed_routes.push(record);
@@ -879,29 +951,49 @@ fn build_guest_outcomes(
             Ok(json!({"guestId": guest_id, "name": guest_name}))
         })
         .collect::<Result<_, String>>()?;
-    let ride_outcome = outcomes.rides.get(&COASTER_PLACE_ID);
-    let rides_taken = ride_outcome.map_or(0, |outcome| outcome.rides_taken);
-    let unique_riders = ride_outcome.map_or(0, |outcome| outcome.unique_riders.len());
-    let average_guest_rating = ride_outcome.and_then(|outcome| {
-        (outcome.guest_rating_count > 0)
-            .then_some(outcome.guest_rating_total as f64 / outcome.guest_rating_count as f64)
-    });
-    let completed_rides_by_coaster = coaster_name.map_or_else(Vec::new, |_| {
-        vec![json!({"facilityId": COASTER_PLACE_ID, "ridesTaken": rides_taken})]
-    });
-    let unique_riders_by_coaster = coaster_name.map_or_else(Vec::new, |_| {
-        vec![json!({
-            "facilityId": COASTER_PLACE_ID,
-            "uniqueRiders": unique_riders,
-            "shareOfGuests": unique_riders as f64 / guest_count as f64,
-        })]
-    });
-    let guest_ratings_by_coaster = coaster_name.map_or_else(Vec::new, |_| {
-        vec![json!({
-            "facilityId": COASTER_PLACE_ID,
-            "averageEnjoyment": average_guest_rating,
-        })]
-    });
+    let completed_rides_by_coaster: Vec<_> = coasters
+        .iter()
+        .map(|coaster| {
+            let ride_outcome = outcomes.rides.get(&coaster.facility_id());
+            json!({
+                "facilityId": coaster.facility_id(),
+                "ridesTaken": ride_outcome.map_or(0, |outcome| outcome.rides_taken),
+            })
+        })
+        .collect();
+    let unique_riders_by_coaster: Vec<_> = coasters
+        .iter()
+        .map(|coaster| {
+            let unique_riders = outcomes
+                .rides
+                .get(&coaster.facility_id())
+                .map_or(0, |outcome| outcome.unique_riders.len());
+            json!({
+                "facilityId": coaster.facility_id(),
+                "uniqueRiders": unique_riders,
+                "shareOfGuests": unique_riders as f64 / guest_count as f64,
+            })
+        })
+        .collect();
+    let guest_ratings_by_coaster: Vec<_> = coasters
+        .iter()
+        .map(|coaster| {
+            let average_guest_rating =
+                outcomes
+                    .rides
+                    .get(&coaster.facility_id())
+                    .and_then(|ride_outcome| {
+                        (ride_outcome.guest_rating_count > 0).then_some(
+                            ride_outcome.guest_rating_total as f64
+                                / ride_outcome.guest_rating_count as f64,
+                        )
+                    });
+            json!({
+                "facilityId": coaster.facility_id(),
+                "averageEnjoyment": average_guest_rating,
+            })
+        })
+        .collect();
 
     Ok(json!({
         "completedRidesByCoaster": completed_rides_by_coaster,
@@ -949,8 +1041,12 @@ fn build_park_facts(simulation: &WasmSimulation) -> Result<Value, String> {
             .ok_or_else(|| "facility report omitted kind".to_owned())?;
         *facilities_by_kind.entry(kind.to_owned()).or_default() += 1;
     }
-    if simulation.construction_is_open() {
-        facilities_by_kind.insert("coaster".into(), 1);
+    let open_coaster_count = simulation
+        .coasters()
+        .filter(|(_, coaster)| coaster.coaster_open)
+        .count();
+    if open_coaster_count > 0 {
+        *facilities_by_kind.entry("coaster".into()).or_default() += open_coaster_count;
     }
     Ok(json!({
         "pathTiles": path_tiles,

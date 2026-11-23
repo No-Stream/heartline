@@ -1,15 +1,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Display, Formatter};
 
-use super::Park;
 use super::tick::{generate_supports, render_cached_supports};
+use super::{CoasterId, Park};
 use crate::facilities::{
     FacilityKind, PathOpening, PlacementError, coaster_access_openings,
     validate_facility_path_access,
 };
 use crate::physics::Circuit;
-use crate::track::clearance::{ClearanceBox, ClearanceCollision, TunnelPlan, check_clearance};
-use crate::track::construction::{Construction, track_support_obstacles};
+use crate::track::clearance::{
+    ClearanceBox, ClearanceCollision, TunnelPlan, check_clearance, check_track_clearance,
+};
+use crate::track::construction::{Construction, ConstructionError, track_support_obstacles};
 use crate::track::supports::SupportObstacle;
 use crate::track::{Piece, PieceId, TrainConfiguration, hybrid_model};
 use crate::world::{
@@ -67,6 +69,32 @@ impl Display for TunnelCarveError {
 impl std::error::Error for TunnelCarveError {}
 
 impl Park {
+    pub fn validate_track_clearance(
+        &self,
+        train: &TrainConfiguration,
+        candidate: &Piece,
+        excluded_coaster: Option<CoasterId>,
+    ) -> Result<(), ConstructionError> {
+        let mut other_tracks = self
+            .demo_coaster
+            .as_ref()
+            .map_or_else(Vec::new, |coaster| coaster.circuit.pieces().to_vec());
+        for (&id, coaster) in &self.coasters {
+            if Some(id) == excluded_coaster {
+                continue;
+            }
+            other_tracks.extend_from_slice(coaster.construction.pieces());
+            other_tracks.extend(
+                coaster
+                    .construction
+                    .disconnected_segments()
+                    .iter()
+                    .flat_map(|segment| segment.pieces.iter().cloned()),
+            );
+        }
+        check_track_clearance(candidate, train, &other_tracks).map_err(ConstructionError::Clearance)
+    }
+
     pub fn place_facility(
         &mut self,
         kind: FacilityKind,
@@ -81,16 +109,27 @@ impl Park {
                 coaster.circuit.pieces(),
                 &coaster.train_configuration,
             )
-        }) || self.construction.as_ref().is_some_and(|construction| {
-            construction_intersects_facility(kind, position, direction, construction)
+        }) || self.coasters.values().any(|coaster| {
+            construction_intersects_facility(kind, position, direction, &coaster.construction)
         }) {
             return Err(ParkCommandError::FacilityIntersectsTrack);
         }
+        let coasters: Vec<_> = self
+            .coasters
+            .values()
+            .map(|coaster| &coaster.construction)
+            .collect();
         let id = self
             .facilities
-            .place(&self.world, kind, position, direction)
+            .place_with_coasters(&self.world, kind, position, direction, &coasters)
             .map_err(ParkCommandError::Facility)?;
-        self.support_render_cache.clear();
+        assert!(
+            self.coasters
+                .keys()
+                .all(|&coaster_id| super::tick::coaster_place_id(coaster_id) != id),
+            "coaster and building guest place ids collided"
+        );
+        self.clear_all_support_render_caches();
         Ok(id)
     }
 
@@ -98,7 +137,7 @@ impl Park {
         if !self.facilities.remove(id) {
             return Err(ParkCommandError::Facility(PlacementError::UnknownBuilding));
         }
-        self.support_render_cache.clear();
+        self.clear_all_support_render_caches();
         Ok(())
     }
 
@@ -110,9 +149,10 @@ impl Park {
 
     pub fn facility_openings(&self) -> Vec<PathOpening> {
         let mut openings = self.facilities.access_openings(&self.world);
-        if let Some(coaster_openings) = self.construction.as_ref().and_then(coaster_access_openings)
-        {
-            openings.extend(coaster_openings);
+        for coaster in self.coasters.values() {
+            if let Some(coaster_openings) = coaster_access_openings(&coaster.construction) {
+                openings.extend(coaster_openings);
+            }
         }
         openings
     }
@@ -142,13 +182,12 @@ impl Park {
                 .world
                 .preview_path_world(start, end, kind)
                 .map_err(ParkCommandError::Path)?;
-            if validate_facility_path_access(
-                &proposed,
-                &self.facilities,
-                self.construction.as_ref(),
-            )
-            .is_err()
-            {
+            let coasters: Vec<_> = self
+                .coasters
+                .values()
+                .map(|coaster| &coaster.construction)
+                .collect();
+            if validate_facility_path_access(&proposed, &self.facilities, &coasters).is_err() {
                 for tile in &mut preview {
                     tile.refusal = Some(PathBuildError::FacilityAccess);
                 }
@@ -212,18 +251,17 @@ impl Park {
                 .pieces()
                 .iter()
                 .any(|piece| scenery_intersects_track(bounds, piece, &coaster.train_configuration))
-        }) || self.construction.as_ref().is_some_and(|construction| {
-            construction
-                .pieces()
+        }) || self.coasters.values().any(|coaster| {
+            coaster.construction.pieces().iter().any(|piece| {
+                scenery_intersects_track(bounds, piece, &coaster.construction.model().train)
+            }) || coaster
+                .construction
+                .disconnected_segments()
                 .iter()
-                .any(|piece| scenery_intersects_track(bounds, piece, &construction.model().train))
-                || construction
-                    .disconnected_segments()
-                    .iter()
-                    .flat_map(|segment| &segment.pieces)
-                    .any(|piece| {
-                        scenery_intersects_track(bounds, piece, &construction.model().train)
-                    })
+                .flat_map(|segment| &segment.pieces)
+                .any(|piece| {
+                    scenery_intersects_track(bounds, piece, &coaster.construction.model().train)
+                })
         }) {
             return Err(ParkCommandError::SceneryIntersectsTrack);
         }
@@ -238,7 +276,7 @@ impl Park {
         self.world
             .place_scenery(scenery)
             .expect("validated scenery placement remains valid");
-        self.support_render_cache.clear();
+        self.clear_all_support_render_caches();
         Ok(())
     }
 
@@ -250,14 +288,14 @@ impl Park {
         if !self.world.remove_scenery(position, quarter) {
             return Err(ParkCommandError::SceneryMissing);
         }
-        self.support_render_cache.clear();
+        self.clear_all_support_render_caches();
         Ok(())
     }
 
     pub fn apply_terrain(
         &mut self,
         command: TerrainCommand,
-        selected_piece: Option<PieceId>,
+        selected_piece: Option<(CoasterId, PieceId)>,
     ) -> Result<TerrainEditResult, ParkCommandError> {
         let mut candidate = self.world.clone();
         let candidate_result = candidate
@@ -278,30 +316,13 @@ impl Park {
             .expect("validated terrain command remains valid");
         assert_eq!(result, candidate_result, "terrain preflight result changed");
         self.note_manual_tunnel_edit(command);
-        self.support_render_cache.clear();
+        self.clear_all_support_render_caches();
         Ok(result)
     }
 
-    pub fn construction_tunnel_generation(&self) -> u64 {
-        self.construction_tunnel_generation
-    }
-
-    pub fn next_construction_tunnel_generation(&self) -> u64 {
-        self.construction_tunnel_generation
-            .checked_add(1)
-            .expect("construction tunnel generation overflow")
-    }
-
-    pub fn carve_for_construction(
+    pub fn carve_for_coaster(
         &mut self,
-        plans: &[(usize, TunnelPlan)],
-    ) -> Result<(), TunnelCarveError> {
-        self.carve_for_construction_at(self.construction_tunnel_generation, plans)
-    }
-
-    pub fn carve_for_construction_at(
-        &mut self,
-        generation: u64,
+        coaster_id: CoasterId,
         plans: &[(usize, TunnelPlan)],
     ) -> Result<(), TunnelCarveError> {
         let carve_cells: std::collections::BTreeSet<_> = plans
@@ -327,7 +348,7 @@ impl Park {
         }
         for (piece_id, plan) in plans {
             let owner = super::TunnelOwner {
-                generation,
+                coaster_id,
                 piece_id: *piece_id,
             };
             for cell in &plan.swept_cells {
@@ -339,30 +360,18 @@ impl Park {
                 }
             }
         }
-        self.support_render_cache.clear();
+        self.clear_all_support_render_caches();
         Ok(())
     }
 
-    pub fn activate_construction_tunnel_generation(&mut self, generation: u64) {
-        assert!(
-            generation >= self.construction_tunnel_generation,
-            "construction tunnel generations must increase"
-        );
-        self.construction_tunnel_generation = generation;
-        self.restore_tunnel_owners(|owner| owner.generation < generation);
-    }
-
-    pub fn restore_tunnel_piece(&mut self, piece_id: usize) {
-        let generation = self.construction_tunnel_generation;
+    pub fn restore_tunnel_piece_for_coaster(&mut self, coaster_id: CoasterId, piece_id: usize) {
         self.restore_tunnel_owners(|owner| {
-            owner.generation == generation && owner.piece_id == piece_id
+            owner.coaster_id == coaster_id && owner.piece_id == piece_id
         });
     }
 
-    pub fn restore_tunnel_piece_at(&mut self, generation: u64, piece_id: usize) {
-        self.restore_tunnel_owners(|owner| {
-            owner.generation == generation && owner.piece_id == piece_id
-        });
+    pub(super) fn restore_coaster_tunnels(&mut self, coaster_id: CoasterId) {
+        self.restore_tunnel_owners(|owner| owner.coaster_id == coaster_id);
     }
 
     fn restore_tunnel_owners(&mut self, mut remove_owner: impl FnMut(super::TunnelOwner) -> bool) {
@@ -400,7 +409,7 @@ impl Park {
                 }
             }
         }
-        self.support_render_cache.clear();
+        self.clear_all_support_render_caches();
     }
 
     fn note_manual_tunnel_edit(&mut self, command: TerrainCommand) {
@@ -438,7 +447,7 @@ impl Park {
     fn reject_terrain_that_blocks_track(
         &self,
         candidate: &World,
-        selected_piece: Option<PieceId>,
+        selected_piece: Option<(CoasterId, PieceId)>,
     ) -> Result<(), ParkCommandError> {
         let clearance_worsened = |piece: &Piece, train: &TrainConfiguration| {
             !matches!(
@@ -467,68 +476,74 @@ impl Park {
             return Err(ParkCommandError::TerrainSupportRoute);
         }
 
-        let Some(construction) = &self.construction else {
-            return Ok(());
-        };
-        let construction_train = &construction.model().train;
-        let construction_pieces = construction
-            .pieces()
-            .iter()
-            .chain(
-                construction
-                    .disconnected_segments()
-                    .iter()
-                    .flat_map(|segment| &segment.pieces),
-            )
-            .collect::<Vec<_>>();
-        if construction_pieces
-            .iter()
-            .any(|piece| clearance_worsened(piece, construction_train))
-        {
-            return Err(ParkCommandError::TerrainTrackClearance);
-        }
-
-        let entries = construction
-            .piece_ids()
-            .iter()
-            .zip(construction.pieces())
-            .chain(
-                construction
-                    .disconnected_segments()
-                    .iter()
-                    .flat_map(|segment| segment.ids.iter().zip(&segment.pieces)),
-            )
-            .collect::<Vec<_>>();
-        let facility_obstacles = self.facility_obstacles();
-        let original_supports =
-            render_construction_supports(&entries, &self.world, construction, &facility_obstacles);
-        let candidate_supports =
-            render_construction_supports(&entries, candidate, construction, &facility_obstacles);
-        if original_supports.is_ok() && candidate_supports.is_err() {
-            return Err(ParkCommandError::TerrainSupportRoute);
-        }
-
-        let preview_piece = selected_piece.and_then(|selected| {
-            construction
-                .available_choices(&self.world, &facility_obstacles)
-                .into_iter()
-                .find_map(|(piece, choice)| {
-                    (choice.id == selected && choice.result.is_ok()).then_some(piece)
-                })
-        });
-        if let Some(piece) = preview_piece {
-            if clearance_worsened(&piece, construction_train) {
+        for (&coaster_id, coaster) in &self.coasters {
+            let construction = &coaster.construction;
+            let construction_train = &construction.model().train;
+            let support_obstacles = self.construction_support_obstacles(coaster_id);
+            let construction_pieces = construction
+                .pieces()
+                .iter()
+                .chain(
+                    construction
+                        .disconnected_segments()
+                        .iter()
+                        .flat_map(|segment| &segment.pieces),
+                )
+                .collect::<Vec<_>>();
+            if construction_pieces
+                .iter()
+                .any(|piece| clearance_worsened(piece, construction_train))
+            {
                 return Err(ParkCommandError::TerrainTrackClearance);
             }
-            let mut obstacles = facility_obstacles;
-            obstacles.extend(entries.iter().flat_map(|(_, placed)| {
-                track_support_obstacles(std::slice::from_ref(*placed), construction_train)
-            }));
-            let style = construction.model().support_style.for_piece(&piece);
-            if generate_supports(&piece, &self.world, &obstacles, style).is_ok()
-                && generate_supports(&piece, candidate, &obstacles, style).is_err()
-            {
+
+            let entries = construction
+                .piece_ids()
+                .iter()
+                .zip(construction.pieces())
+                .chain(
+                    construction
+                        .disconnected_segments()
+                        .iter()
+                        .flat_map(|segment| segment.ids.iter().zip(&segment.pieces)),
+                )
+                .collect::<Vec<_>>();
+            let original_supports = render_construction_supports(
+                &entries,
+                &self.world,
+                construction,
+                &support_obstacles,
+            );
+            let candidate_supports =
+                render_construction_supports(&entries, candidate, construction, &support_obstacles);
+            if original_supports.is_ok() && candidate_supports.is_err() {
                 return Err(ParkCommandError::TerrainSupportRoute);
+            }
+
+            let preview_piece = selected_piece
+                .filter(|(selected_coaster, _)| *selected_coaster == coaster_id)
+                .and_then(|(_, selected)| {
+                    construction
+                        .available_choices(&self.world, &support_obstacles)
+                        .into_iter()
+                        .find_map(|(piece, choice)| {
+                            (choice.id == selected && choice.result.is_ok()).then_some(piece)
+                        })
+                });
+            if let Some(piece) = preview_piece {
+                if clearance_worsened(&piece, construction_train) {
+                    return Err(ParkCommandError::TerrainTrackClearance);
+                }
+                let mut obstacles = support_obstacles.clone();
+                obstacles.extend(entries.iter().flat_map(|(_, placed)| {
+                    track_support_obstacles(std::slice::from_ref(*placed), construction_train)
+                }));
+                let style = construction.model().support_style.for_piece(&piece);
+                if generate_supports(&piece, &self.world, &obstacles, style).is_ok()
+                    && generate_supports(&piece, candidate, &obstacles, style).is_err()
+                {
+                    return Err(ParkCommandError::TerrainSupportRoute);
+                }
             }
         }
         Ok(())
@@ -543,25 +558,36 @@ impl Park {
         }) {
             return true;
         }
-        let Some(construction) = &self.construction else {
-            return false;
-        };
-        let entries = construction
-            .piece_ids()
-            .iter()
-            .zip(construction.pieces())
-            .chain(
-                construction
-                    .disconnected_segments()
-                    .iter()
-                    .flat_map(|segment| segment.ids.iter().zip(&segment.pieces)),
-            )
-            .collect::<Vec<_>>();
-        let facility_obstacles = self.facility_obstacles();
-        render_construction_supports(&entries, &self.world, construction, &facility_obstacles)
-            .is_ok()
-            && render_construction_supports(&entries, candidate, construction, &facility_obstacles)
+        self.coasters.iter().any(|(&id, coaster)| {
+            let construction = &coaster.construction;
+            let support_obstacles = self.construction_support_obstacles(id);
+            let entries = construction
+                .piece_ids()
+                .iter()
+                .zip(construction.pieces())
+                .chain(
+                    construction
+                        .disconnected_segments()
+                        .iter()
+                        .flat_map(|segment| segment.ids.iter().zip(&segment.pieces)),
+                )
+                .collect::<Vec<_>>();
+            render_construction_supports(&entries, &self.world, construction, &support_obstacles)
+                .is_ok()
+                && render_construction_supports(
+                    &entries,
+                    candidate,
+                    construction,
+                    &support_obstacles,
+                )
                 .is_err()
+        })
+    }
+
+    fn clear_all_support_render_caches(&mut self) {
+        for coaster in self.coasters.values_mut() {
+            coaster.support_render_cache.clear();
+        }
     }
 }
 

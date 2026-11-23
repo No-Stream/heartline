@@ -48,8 +48,8 @@ window.replayWorkerSession = async (session) => {
       }
       constructionCanClose = message.canClose as boolean;
     } else if (message.type === "snapshot") {
-      const riders = message.constructionRiders as Uint32Array;
-      observation.riders = riders.length / 3;
+      const coasters = message.coasters as { readonly riders: Uint32Array }[];
+      observation.riders = coasters.reduce((count, coaster) => count + coaster.riders.length, 0) / 3;
     } else if (message.type === "facilities") {
       const facilities = message.facilities as { readonly kind: string }[];
       observation.foodStalls = facilities.filter(({ kind }) => kind === "food_stall").length;

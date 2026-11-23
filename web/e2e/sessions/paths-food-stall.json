@@ -43,7 +43,7 @@
   "checkpoints": [
     {
       "tick": 300,
-      "hash": "13648173989714572348"
+      "hash": "14794913338119088977"
     }
   ],
   "finalTick": 300,
@@ -537,5 +537,6 @@
   "expect": {
     "pathTilesAtLeast": 6,
     "foodStallsAtLeast": 1
-  }
+  },
+  "strict": true
 }

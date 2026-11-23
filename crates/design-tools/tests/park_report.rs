@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -54,6 +55,26 @@ fn report(park_path: &str) -> String {
         "",
     )
     .unwrap()
+}
+
+fn json_report(park_path: &str) -> serde_json::Value {
+    let output = run_cli(
+        &[
+            "park".into(),
+            "report".into(),
+            park_path.into(),
+            "--guests".into(),
+            "16".into(),
+            "--minutes".into(),
+            "1".into(),
+            "--seed".into(),
+            "42".into(),
+            "--json".into(),
+        ],
+        "",
+    )
+    .unwrap();
+    serde_json::from_str(&output).unwrap()
 }
 
 fn riders_per_hour(output: &str) -> (f64, f64) {
@@ -135,4 +156,151 @@ fn park_report_names_guests_who_cannot_reach_the_coaster() {
             "{guest}"
         );
     }
+}
+
+#[test]
+fn park_report_has_a_guest_and_revenue_section_for_every_coaster() {
+    let source_path = repository_root().join("content/parks/horizon-hawk.park.json");
+    let mut description: serde_json::Value =
+        serde_json::from_slice(&fs::read(source_path).unwrap()).unwrap();
+    description["coasters"] = serde_json::json!([
+        {
+            "ride": "content/rides/horizon-hawk.ride.json",
+            "station": { "x": 241, "y": 249, "z": 10, "heading": "north" },
+            "open": true,
+            "price": 6
+        },
+        {
+            "ride": "content/rides/horizon-hawk.ride.json",
+            "station": { "x": 340, "y": 300, "z": 10, "heading": "north" },
+            "open": false,
+            "price": 8
+        }
+    ]);
+    for x in 337..=344 {
+        for y in 300..=302 {
+            description["terrain"]["edits"]
+                .as_array_mut()
+                .unwrap()
+                .push(serde_json::json!({
+                    "command": "flatten",
+                    "parameters": [x, y, 1, 0, 0, 10, 0, 0]
+                }));
+        }
+    }
+    for x in [338, 342] {
+        for corner in [2, 3] {
+            description["terrain"]["edits"]
+                .as_array_mut()
+                .unwrap()
+                .push(serde_json::json!({
+                    "command": "lower_corner",
+                    "parameters": [x, 302, 1, corner, 1, 0, 0, 0]
+                }));
+        }
+    }
+    description["paths"].as_array_mut().unwrap().extend([
+        serde_json::json!({
+            "kind": "normal",
+            "style": 0,
+            "route": [[239, 260, 8], [239, 320, 8], [338, 320, 8]]
+        }),
+        serde_json::json!({
+            "kind": "normal",
+            "style": 0,
+            "route": [[338, 301, 10], [338, 320, 8], [343, 320, 8]]
+        }),
+        serde_json::json!({
+            "kind": "queue",
+            "style": 0,
+            "route": [[342, 301, 10], [342, 320, 8]]
+        }),
+    ]);
+    let park = write_park_fixture(&description, "two-coaster-report.park.json");
+
+    let output = json_report(park.path());
+    let coasters = output["coasters"].as_array().unwrap();
+
+    assert_eq!(coasters.len(), 2, "{output}");
+    assert_eq!(coasters[0]["facilityId"], serde_json::json!(u32::MAX));
+    assert_eq!(coasters[1]["facilityId"], serde_json::json!(u32::MAX - 1));
+    let guest_report = &output["guests"];
+    for coaster in coasters {
+        assert_eq!(coaster["name"], "Horizon Hawk");
+        assert_eq!(coaster["open"], true);
+        assert!(coaster["ridesTaken"].is_number(), "{coaster}");
+        assert!(coaster["ridersPerHour"].is_number(), "{coaster}");
+        assert!(coaster["queueLength"].is_number(), "{coaster}");
+        assert!(coaster["revenue"].is_number(), "{coaster}");
+        assert!(coaster["unreachableGuestsAtStart"].is_number(), "{coaster}");
+        assert!(coaster["unreachableGuestsAtEnd"].is_number(), "{coaster}");
+        let facility_id = coaster["facilityId"].as_u64().unwrap();
+        let rides_taken = coaster["ridesTaken"].as_u64().unwrap();
+        let completed_rides = guest_report["completedRidesByCoaster"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["facilityId"] == facility_id)
+            .unwrap();
+        assert_eq!(completed_rides["ridesTaken"], rides_taken);
+        assert!(
+            (coaster["ridersPerHour"].as_f64().unwrap() - rides_taken as f64 * 60.0).abs() < 0.001
+        );
+        let revenue = guest_report["revenueByFacility"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["facilityId"] == facility_id)
+            .unwrap();
+        assert_eq!(coaster["revenue"], revenue["revenue"]);
+        let queue = guest_report["queueLengths"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["facilityId"] == facility_id)
+            .unwrap();
+        assert_eq!(coaster["queueLength"], queue["guests"]);
+        for (property, outcome_property) in [
+            ("unreachableGuestsAtStart", "initialUnreachableDestinations"),
+            ("unreachableGuestsAtEnd", "unreachableDestinations"),
+        ] {
+            let unreachable_guests: BTreeSet<_> = guest_report[outcome_property]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|destination| destination["facilityId"] == facility_id)
+                .map(|destination| destination["guestId"].as_u64().unwrap())
+                .collect();
+            assert_eq!(
+                coaster[property].as_u64().unwrap() as usize,
+                unreachable_guests.len()
+            );
+        }
+    }
+    assert_eq!(output["parkFacts"]["facilitiesByKind"]["coaster"], 2);
+    for property in [
+        "completedRidesByCoaster",
+        "uniqueRidersByCoaster",
+        "guestRatingsByCoaster",
+    ] {
+        assert_eq!(output["guests"][property].as_array().unwrap().len(), 2);
+    }
+}
+
+#[test]
+fn park_report_rejects_zero_guests_before_loading_the_park() {
+    let park_path = repository_root().join("content/parks/horizon-hawk.park.json");
+    let error = run_cli(
+        &[
+            "park".into(),
+            "report".into(),
+            park_path.to_string_lossy().into_owned(),
+            "--guests".into(),
+            "0".into(),
+        ],
+        "",
+    )
+    .unwrap_err();
+
+    assert_eq!(error, "--guests must be greater than zero");
 }

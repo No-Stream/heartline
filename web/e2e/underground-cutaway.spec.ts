@@ -107,6 +107,11 @@ async function buildRouteIntoTheGround(page: Page): Promise<void> {
 }
 
 async function constructionPicksAt(page: Page, center: { x: number; y: number }): Promise<number> {
-  return page.evaluate(({ x, y }) => window.gameTest.pickRegion(Math.round(x) - 40, Math.round(y) - 40, 80, 80)
-    .filter((pick) => pick && "id" in pick && pick.id.startsWith("construction-")).length, center);
+  return page.evaluate(({ x, y }) => {
+    const coasterId = window.gameTest.editingCoasterId();
+    if (coasterId === null) throw new Error("No coaster is being edited");
+    const coasterTrackPart = new RegExp(`^(?:track|support|footer)-${coasterId}-\\d+$`);
+    return window.gameTest.pickRegion(Math.round(x) - 40, Math.round(y) - 40, 80, 80)
+      .filter((pick) => pick && (pick.kind === "track" || pick.kind === "support") && "id" in pick && coasterTrackPart.test(pick.id)).length;
+  }, center);
 }

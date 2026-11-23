@@ -9,6 +9,16 @@ const workerMock = vi.hoisted(() => ({
   builderStart: vi.fn(),
   builderSelect: vi.fn(),
   builderEstimate: vi.fn(),
+  coasterRenderList: vi.fn(() => JSON.stringify([{ id: 4294967295, trackRevision: "demo:1", colors: { track: "coral", supports: "timber", trains: "sage" }, trainLayout: { model: "hybrid", trackMaterial: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 } }])),
+  coasterIds: vi.fn(() => Uint32Array.of(4294967295)),
+  editingCoasterId: vi.fn(() => null as number | null),
+  coasterGeometry: vi.fn((_id: number) => new Float32Array()),
+  coasterRails: vi.fn((_id: number) => new Float32Array([1, 2])),
+  coasterTies: vi.fn((_id: number) => new Float32Array([3])),
+  coasterSupports: vi.fn((_id: number) => new Float32Array()),
+  coasterTrainPoses: vi.fn((_id: number) => new Float32Array()),
+  coasterTrainStates: vi.fn((_id: number) => new Float32Array([0, 4, 0, 1.1, 0.2, 1])),
+  coasterRiders: vi.fn((_id: number) => new Uint32Array()),
 }));
 
 vi.mock("./wasm/theme_park_sim_wasm.js", () => ({
@@ -44,17 +54,16 @@ vi.mock("./wasm/theme_park_sim_wasm.js", () => ({
     guest_ids() { return new Uint32Array([7]); }
     snapshot() { return new Float32Array([1, 2, 3, 1, 0, 4, 1]); }
     guest_appearances() { return new Uint8Array([1, 2, 3, 4, 0]); }
-    coaster_geometry() { return new Float32Array(); }
-    coaster_rails() { return new Float32Array([1, 2]); }
-    coaster_ties() { return new Float32Array([3]); }
-    coaster_supports() { return new Float32Array(); }
-    coaster_colors() { return JSON.stringify({ track: "coral", supports: "timber", trains: "sage" }); }
-    coaster_train_layout() { return JSON.stringify({ model: "hybrid", trackMaterial: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 }); }
-    coaster_train_poses() { return new Float32Array(); }
-    construction_train_poses() { return new Float32Array(); }
-    coaster_train_states() { return new Float32Array([0, 4, 0, 1.1, 0.2, 1]); }
-    construction_train_states() { return new Float32Array(); }
-    construction_riders() { return new Uint32Array(); }
+    coaster_render_list_json() { return workerMock.coasterRenderList(); }
+    coaster_ids() { return workerMock.coasterIds(); }
+    editing_coaster_id_value() { return workerMock.editingCoasterId(); }
+    coaster_geometry(id: number) { workerMock.coasterGeometry(id); return new Float32Array(); }
+    coaster_rails(id: number) { workerMock.coasterRails(id); return new Float32Array([1, 2]); }
+    coaster_ties(id: number) { workerMock.coasterTies(id); return new Float32Array([3]); }
+    coaster_supports(id: number) { workerMock.coasterSupports(id); return new Float32Array(); }
+    coaster_train_poses(id: number) { workerMock.coasterTrainPoses(id); return new Float32Array(); }
+    coaster_train_states(id: number) { return workerMock.coasterTrainStates(id); }
+    coaster_riders(id: number) { return workerMock.coasterRiders(id); }
     construction_message() { return ""; }
     construction_coaster_price() { return 0; }
     construction_coaster_income() { return 0; }
@@ -85,6 +94,16 @@ afterEach(() => {
   workerMock.builderStart.mockReset();
   workerMock.builderSelect.mockReset();
   workerMock.builderEstimate.mockReset();
+  workerMock.coasterRenderList.mockReset().mockReturnValue(JSON.stringify([{ id: 4294967295, trackRevision: "demo:1", colors: { track: "coral", supports: "timber", trains: "sage" }, trainLayout: { model: "hybrid", trackMaterial: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 } }]));
+  workerMock.coasterIds.mockReset().mockReturnValue(Uint32Array.of(4294967295));
+  workerMock.editingCoasterId.mockReset().mockReturnValue(null);
+  workerMock.coasterGeometry.mockReset();
+  workerMock.coasterRails.mockReset();
+  workerMock.coasterTies.mockReset();
+  workerMock.coasterSupports.mockReset();
+  workerMock.coasterTrainPoses.mockReset();
+  workerMock.coasterTrainStates.mockReset().mockReturnValue(new Float32Array([0, 4, 0, 1.1, 0.2, 1]));
+  workerMock.coasterRiders.mockReset();
 });
 
 describe("world snapshot transfer", () => {
@@ -135,11 +154,11 @@ it("starts simulation time after WebAssembly initialization completes", async ()
 
   expect(postMessage).toHaveBeenCalledTimes(6);
   const [world, worldTransfer] = postMessage.mock.calls[0];
-  expect(world.coasterRails).toEqual(new Float32Array([1, 2]));
-  expect(world.coasterTies).toEqual(new Float32Array([3]));
-  expect(world.coasterTrain).toEqual({ model: "hybrid", trackMaterial: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 });
-  expect(worldTransfer).toContain(world.coasterRails.buffer);
-  expect(worldTransfer).toContain(world.coasterTies.buffer);
+  expect(world.coasters[0].rails).toEqual(new Float32Array([1, 2]));
+  expect(world.coasters[0].ties).toEqual(new Float32Array([3]));
+  expect(world.coasters[0].trainLayout).toEqual({ model: "hybrid", trackMaterial: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 });
+  expect(worldTransfer).toContain(world.coasters[0].rails.buffer);
+  expect(worldTransfer).toContain(world.coasters[0].ties.buffer);
   expect(workerMock.tick).not.toHaveBeenCalled();
   expect(postMessage.mock.calls[2][0]).toEqual({ type: "scenery", scenery: [], message: "", outcome: null });
   expect(postMessage.mock.calls[3][0]).toEqual({ type: "piece-shapes", shapes: [] });
@@ -149,9 +168,11 @@ it("starts simulation time after WebAssembly initialization completes", async ()
   expect(snapshot.guestIds).toEqual(new Uint32Array([7]));
   expect(snapshot.guests).toEqual(new Float32Array([1, 2, 3, 1, 0, 4, 1]));
   expect(snapshot.appearances).toEqual(new Uint8Array([1, 2, 3, 4, 0]));
-  expect(snapshot.trainStates).toEqual(new Float32Array([0, 4, 0, 1.1, 0.2, 1]));
-  expect(snapshot.constructionTrainStates).toEqual(new Float32Array());
-  expect(transfer).toEqual([snapshot.guestIds.buffer, snapshot.guests.buffer, snapshot.appearances.buffer, snapshot.trainPoses.buffer, snapshot.constructionTrainPoses.buffer, snapshot.trainStates.buffer, snapshot.constructionTrainStates.buffer, snapshot.constructionRiders.buffer]);
+  expect(snapshot.coasters[0].trainStates).toEqual(new Float32Array([0, 4, 0, 1.1, 0.2, 1]));
+  expect(transfer).toEqual([
+    snapshot.guestIds.buffer, snapshot.guests.buffer, snapshot.appearances.buffer,
+    snapshot.coasters[0].trainPoses.buffer, snapshot.coasters[0].trainStates.buffer, snapshot.coasters[0].riders.buffer,
+  ]);
   vi.advanceTimersByTime(34);
   expect(workerMock.tick).toHaveBeenCalledTimes(1);
 });

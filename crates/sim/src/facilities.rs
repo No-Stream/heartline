@@ -201,6 +201,17 @@ impl ParkFacilities {
         position: Position,
         direction: Direction,
     ) -> Result<u32, PlacementError> {
+        self.place_with_coasters(world, kind, position, direction, &[])
+    }
+
+    pub fn place_with_coasters(
+        &mut self,
+        world: &World,
+        kind: FacilityKind,
+        position: Position,
+        direction: Direction,
+        coasters: &[&crate::track::construction::Construction],
+    ) -> Result<u32, PlacementError> {
         let (width, height) = world.dimensions();
         let (building_width, building_height) = kind.footprint(direction);
         let end_x = u32::from(position.x) + u32::from(building_width);
@@ -269,7 +280,7 @@ impl ParkFacilities {
             next_id: self.next_id,
         };
         proposed.buildings.push(candidate);
-        validate_facility_path_access(world, &proposed, None).map_err(PlacementError::from)?;
+        validate_facility_path_access(world, &proposed, coasters).map_err(PlacementError::from)?;
         let id = self.next_id;
         self.next_id = self.next_id.checked_add(1).expect("facility ID exhausted");
         let price = match kind {
@@ -396,7 +407,7 @@ impl From<FacilityAccessError> for PlacementError {
 pub fn validate_facility_path_access(
     world: &World,
     facilities: &ParkFacilities,
-    coaster: Option<&crate::track::construction::Construction>,
+    coasters: &[&crate::track::construction::Construction],
 ) -> Result<(), FacilityAccessError> {
     let mut topology = QueueTopology::default();
     let mut owners = BTreeMap::<Position, usize>::new();
@@ -413,11 +424,11 @@ pub fn validate_facility_path_access(
             *owners.entry(component).or_default() += 1;
         }
     }
-    if let Some(station) = coaster.and_then(|construction| {
+    for station in coasters.iter().flat_map(|construction| {
         construction
             .pieces()
             .iter()
-            .find(|piece| piece.id == crate::track::PieceId::Station)
+            .filter(|piece| piece.id == crate::track::PieceId::Station)
     }) {
         let (queue, exit) =
             station_positions(station).ok_or(FacilityAccessError::QueueMustEndAtFacility)?;
@@ -1154,6 +1165,53 @@ mod tests {
     }
 
     #[test]
+    fn queue_access_counts_every_coaster_station_as_an_owner() {
+        use crate::track::construction::Construction;
+        use crate::track::{PieceId, TrackState, hybrid_model};
+        use crate::world::PathKind;
+
+        let mut world = World::new(
+            12,
+            12,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        let mut first = Construction::new(
+            TrackState {
+                x: 4,
+                y: 4,
+                ..TrackState::origin()
+            },
+            hybrid_model(),
+        );
+        first.append(PieceId::Station, &world, &[]).unwrap();
+        let mut second = Construction::new(
+            TrackState {
+                x: 4,
+                y: 4,
+                ..TrackState::origin()
+            },
+            hybrid_model(),
+        );
+        second.append(PieceId::Station, &world, &[]).unwrap();
+        let station = &first.pieces()[0];
+        let (queue, exit) = station_positions(station).unwrap();
+        world
+            .build_path_route(queue, queue, PathKind::Queue, 0)
+            .unwrap();
+        world
+            .build_path_route(exit, exit, PathKind::Normal, 0)
+            .unwrap();
+
+        assert_eq!(
+            validate_facility_path_access(&world, &ParkFacilities::new(), &[&first, &second]),
+            Err(FacilityAccessError::QueueAlreadyOwned)
+        );
+    }
+
+    #[test]
     fn queue_access_is_exclusive_and_flat_ride_exit_must_be_normal() {
         use crate::world::PathKind;
         let mut world = World::new(
@@ -1302,14 +1360,14 @@ mod tests {
             .preview_path_world(exit, queue_entrance, PathKind::Normal)
             .unwrap();
         assert_eq!(
-            validate_facility_path_access(&proposed, &park, None),
+            validate_facility_path_access(&proposed, &park, &[]),
             Err(FacilityAccessError::QueueConnectedToExit)
         );
         world
             .build_path_route(exit, queue_entrance, PathKind::Normal, 0)
             .unwrap();
         assert_eq!(
-            validate_facility_path_access(&world, &park, None),
+            validate_facility_path_access(&world, &park, &[]),
             Err(FacilityAccessError::QueueConnectedToExit)
         );
         assert_eq!(

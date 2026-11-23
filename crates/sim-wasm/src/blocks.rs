@@ -3,53 +3,130 @@ use super::*;
 #[wasm_bindgen]
 impl WasmSimulation {
     pub fn construction_advance_block_placement_for_test(&mut self, work_steps: u32) {
-        self.park
-            .construction_advance_block_placement_for_test(work_steps);
+        if let Some(id) = self.editing_coaster_id() {
+            self.park
+                .construction_advance_block_placement_for_test(id, work_steps);
+        }
     }
 
     /// Advance pending block analysis by at most the requested number of physics steps.
     /// Returns true once analysis has finished. Large requests are capped per call.
     pub fn construction_advance_block_analysis(&mut self, work_steps: u32) -> bool {
-        let (complete, error) = self.park.construction_advance_block_analysis(work_steps);
-        if let Some(error) = error {
-            self.record_block_error(error);
+        let budget = work_steps.min(1_000);
+        let editing_id = self.editing_coaster_id();
+        let mut coaster_ids = Vec::new();
+        if let Some(id) = editing_id {
+            coaster_ids.push(id);
         }
-        complete
+        coaster_ids.extend(
+            self.park
+                .coasters()
+                .map(|(id, _)| id)
+                .filter(|id| Some(*id) != editing_id),
+        );
+
+        let mut remaining_budget = budget;
+        for id in coaster_ids {
+            if remaining_budget == 0 {
+                if self.coaster_has_pending_block_analysis(id) {
+                    let (_, error, work_used) = self
+                        .park
+                        .construction_advance_block_analysis_with_budget(id, 0);
+                    assert_eq!(work_used, 0, "zero-budget block analysis used work");
+                    if let Some(error) = error {
+                        self.record_block_error_for_coaster(Some(id), error);
+                        return self.park.coasters().all(|(coaster_id, _)| {
+                            !self.coaster_has_pending_block_analysis(coaster_id)
+                        });
+                    }
+                }
+                continue;
+            }
+            while remaining_budget > 0 && self.coaster_has_pending_block_analysis(id) {
+                let (complete, error, work_used) = self
+                    .park
+                    .construction_advance_block_analysis_with_budget(id, remaining_budget);
+                assert!(
+                    work_used <= remaining_budget,
+                    "block analysis exceeded its budget"
+                );
+                remaining_budget -= work_used;
+                if let Some(error) = error {
+                    self.record_block_error_for_coaster(Some(id), error);
+                    return self.park.coasters().all(|(coaster_id, _)| {
+                        !self.coaster_has_pending_block_analysis(coaster_id)
+                    });
+                }
+                if complete || work_used == 0 {
+                    break;
+                }
+            }
+        }
+        self.park
+            .coasters()
+            .all(|(id, _)| !self.coaster_has_pending_block_analysis(id))
     }
 
     pub fn construction_auto_blocks(&mut self) -> bool {
-        let result = self.park.construction_auto_blocks();
+        let result = self
+            .editing_coaster_id()
+            .ok_or(
+                theme_park_sim::park::block_analysis::BlockCommandError::ClosedCircuitRequiredForPlacement,
+            )
+            .and_then(|id| self.park.construction_auto_blocks(id));
         self.record_block_result(result)
     }
 
     pub fn construction_apply_best_block_sections(&mut self) -> bool {
-        let result = self.park.construction_apply_best_block_sections();
+        let result = self
+            .editing_coaster_id()
+            .ok_or(theme_park_sim::park::block_analysis::BlockCommandError::NoAutomaticSearch)
+            .and_then(|id| self.park.construction_apply_best_block_sections(id));
         self.record_block_result(result)
     }
 
     pub fn construction_add_block_section(&mut self, boundary_metres: f64) -> bool {
-        let result = self.park.construction_add_block_section(boundary_metres);
+        let result = self
+            .editing_coaster_id()
+            .ok_or(theme_park_sim::park::block_analysis::BlockCommandError::NoBlockLayout)
+            .and_then(|id| {
+                self.park
+                    .construction_add_block_section(id, boundary_metres)
+            });
         self.record_block_result(result)
     }
 
     pub fn construction_move_block_section(&mut self, index: usize, boundary_metres: f64) -> bool {
         let result = self
-            .park
-            .construction_move_block_section(index, boundary_metres);
+            .editing_coaster_id()
+            .ok_or(theme_park_sim::park::block_analysis::BlockCommandError::NoBlockLayout)
+            .and_then(|id| {
+                self.park
+                    .construction_move_block_section(id, index, boundary_metres)
+            });
         self.record_block_result(result)
     }
 
     pub fn construction_remove_block_section(&mut self, index: usize) -> bool {
-        let result = self.park.construction_remove_block_section(index);
+        let result = self
+            .editing_coaster_id()
+            .ok_or(theme_park_sim::park::block_analysis::BlockCommandError::NoBlockLayout)
+            .and_then(|id| self.park.construction_remove_block_section(id, index));
         self.record_block_result(result)
     }
 
     pub fn construction_block_candidates(&self) -> Vec<f64> {
-        self.park.construction_block_candidates()
+        self.editing_coaster_id()
+            .map_or_else(Vec::new, |id| self.park.construction_block_candidates(id))
     }
 
     pub fn construction_set_block_sections(&mut self, boundaries: Vec<f64>) -> bool {
-        let result = self.park.construction_set_block_sections(boundaries);
+        let result = self
+            .editing_coaster_id()
+            .ok_or(
+                theme_park_sim::park::block_analysis::BlockCommandError::ClosedCircuitRequiredForEditing,
+            )
+            .and_then(|id| self.park.construction_set_block_sections(id, boundaries));
         self.record_block_result(result)
     }
 
@@ -74,17 +151,26 @@ impl WasmSimulation {
                 return false;
             }
         };
-        let result = self.park.construction_install_block_layout(
-            sections,
-            capacity,
-            capacity_search_complete,
-            placement_search_complete,
-        );
+        let result = self
+            .editing_coaster_id()
+            .ok_or(
+                theme_park_sim::park::block_analysis::BlockCommandError::ClosedCircuitRequiredForEditing,
+            )
+            .and_then(|id| {
+                self.park.construction_install_block_layout(
+                    id,
+                    sections,
+                    capacity,
+                    capacity_search_complete,
+                    placement_search_complete,
+                )
+            });
         self.record_block_result(result)
     }
 
     pub fn construction_block_report_json(&self) -> String {
-        let Some(layout) = &self.block_layout else {
+        let coaster = self.editing_coaster();
+        let Some(layout) = coaster.and_then(|coaster| coaster.block_layout.as_ref()) else {
             return serde_json::to_string(&crate::reports::BlockReport {
                 sections: vec![],
                 source: None,
@@ -102,6 +188,7 @@ impl WasmSimulation {
             })
             .expect("serialize block report");
         };
+        let coaster = coaster.expect("block layout has an owning coaster");
         let sections = layout
             .boundaries()
             .iter()
@@ -148,7 +235,7 @@ impl WasmSimulation {
             })
             .collect();
         let reasons = self.block_reasons();
-        let source = if self.block_layout_is_automatic {
+        let source = if coaster.block_layout_is_automatic {
             "automatic"
         } else {
             "manual"
@@ -159,23 +246,26 @@ impl WasmSimulation {
             "Lift and launch controls can hold a train at the start of powered track.",
             "Fixed station and powered-hardware boundaries cannot be moved or removed.",
         ];
-        if self.block_placement_search.is_some() {
+        if coaster.block_placement_search.is_some() {
             notes.push(
                 "Automatic placement is still searching; the installed layout remains in use.",
             );
-        } else if self.block_manual_search.is_some() {
-            if self.block_baseline_validation {
+        } else if coaster.block_manual_search.is_some() {
+            if coaster.block_baseline_validation {
                 notes.push("The one-train circuit is being checked while the coaster operates.");
             } else {
                 notes.push("The requested block edit is being validated; the installed layout remains in use.");
             }
         }
-        if self.block_layout_change_pending() {
+        if self
+            .editing_coaster_id()
+            .is_some_and(|id| self.park.block_layout_change_pending(id))
+        {
             notes.push("New dispatches are paused until the updated block layout is installed.");
         }
-        if self.block_placement_search.is_none()
-            && self.block_manual_search.is_none()
-            && self.block_layout_is_automatic
+        if coaster.block_placement_search.is_none()
+            && coaster.block_manual_search.is_none()
+            && coaster.block_layout_is_automatic
             && !layout.placement_search_complete()
         {
             notes.push("Automatic placement is incomplete. The current layout may not support the maximum number of trains.");
@@ -191,19 +281,19 @@ impl WasmSimulation {
         }
         let notes = notes.into_iter().map(str::to_owned).collect();
         let suggestions = block_layout_suggestions(layout);
-        let throughput_status = if self.block_throughput_estimator.is_some() {
+        let throughput_status = if coaster.block_throughput_estimator.is_some() {
             "pending"
-        } else if self.block_throughput_reason.is_empty() {
+        } else if coaster.block_throughput_reason.is_empty() {
             "ready"
         } else {
             "unavailable"
         };
-        let throughput = (throughput_status == "ready").then_some(self.block_hourly_throughput);
-        let placement_status = if self.block_placement_search.is_some() {
+        let throughput = (throughput_status == "ready").then_some(coaster.block_hourly_throughput);
+        let placement_status = if coaster.block_placement_search.is_some() {
             "searching"
-        } else if self.block_manual_search.is_some() {
+        } else if coaster.block_manual_search.is_some() {
             "validating"
-        } else if !self.block_layout_is_automatic {
+        } else if !coaster.block_layout_is_automatic {
             "manual"
         } else if layout.placement_search_complete() {
             "complete"
@@ -215,22 +305,24 @@ impl WasmSimulation {
             "complete" => Some(true),
             _ => Some(false),
         };
-        let placement_work_completed = self
+        let placement_work_completed = coaster
             .block_placement_search
             .as_ref()
             .map(BlockPlacementSearch::work_completed)
             .or_else(|| {
-                self.block_manual_search
+                coaster
+                    .block_manual_search
                     .as_ref()
                     .map(BlockManualSearch::work_completed)
             })
             .or_else(|| {
-                self.block_placement_cache
+                coaster
+                    .block_placement_cache
                     .as_ref()
                     .map(BlockPlacementSearch::work_completed)
             })
             .unwrap_or(0);
-        let best_capacity = self
+        let best_capacity = coaster
             .block_placement_search
             .as_ref()
             .map_or(layout.capacity(), |search| search.best().capacity());
@@ -258,9 +350,27 @@ impl WasmSimulation {
         &mut self,
         error: theme_park_sim::park::block_analysis::BlockCommandError,
     ) {
+        self.record_block_error_for_coaster(self.editing_coaster_id(), error);
+    }
+
+    fn record_block_error_for_coaster(
+        &mut self,
+        id: Option<CoasterId>,
+        error: theme_park_sim::park::block_analysis::BlockCommandError,
+    ) {
         let message = crate::command_errors::command_error_message(CommandError::Block(error));
-        self.park.block_message = message.to_owned();
+        if let Some(coaster) = id.and_then(|id| self.park.coaster_mut(id)) {
+            coaster.block_message = message.to_owned();
+        }
         self.park.construction_message = message.to_owned();
+    }
+
+    fn coaster_has_pending_block_analysis(&self, id: CoasterId) -> bool {
+        self.park.coaster(id).is_some_and(|coaster| {
+            coaster.block_manual_search.is_some()
+                || coaster.block_placement_search.is_some()
+                || coaster.block_throughput_estimator.is_some()
+        })
     }
 
     fn record_block_result(

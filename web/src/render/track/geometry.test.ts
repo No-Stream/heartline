@@ -145,6 +145,41 @@ describe("coaster geometry", () => {
     expect(tall.y).toBeCloseTo(short.y, 8);
     expect(tall.depth).toBeCloseTo(short.depth, 8);
   });
+  test("includes the coaster ID in otherwise local track and support piece IDs", () => {
+    const rail = [1, 1, 2, 1, 0, 1, 0, 0, 0, 1, 3, 2, 1, 0, 1, 0, 0, 0, 1];
+    const support = [4, 1, 2, 0, 1, 3, 0];
+    const camera = { centerX: 2, centerY: 2, zoom: 1, rotation: 0 as const };
+    const quads = buildTrackQuads(
+      new Float32Array(rail),
+      new Float32Array(),
+      new Float32Array(support),
+      camera,
+      { width: 400, height: 300 },
+      { track: "#ff0000", supports: "#aa6600", trains: "#00ff00", ink: "#221133", lineWeight: 1 },
+      undefined,
+      undefined,
+      42,
+    );
+
+    expect(new Set(quads.map((quad) => quad.id))).toEqual(new Set(["track-42-1", "support-42-4"]));
+  });
+  test("includes the coaster ID in support footer pick IDs", () => {
+    const supports = new Float32Array([1, 2, 2, 0, 2, 2, 3]);
+    const camera = { centerX: 2, centerY: 2, zoom: 1, rotation: 0 as const };
+    const quads = buildTrackQuads(
+      new Float32Array(),
+      new Float32Array(),
+      supports,
+      camera,
+      { width: 400, height: 300 },
+      { track: "#ff0000", supports: "#aa6600", trains: "#00ff00", ink: "#221133", lineWeight: 1 },
+      undefined,
+      undefined,
+      42,
+    );
+
+    expect(new Set(quads.map((quad) => quad.id))).toEqual(new Set(["support-42-1", "footer-42-1"]));
+  });
   test("interpolates poses and keeps rider occupancy from current tick", () => {
     const previous = new Float32Array([0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0]);
     const current = new Float32Array([0, 2, 4, 6, 0, 1, 0, 0, 0, 1, 3]);

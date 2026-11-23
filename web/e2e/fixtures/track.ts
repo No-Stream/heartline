@@ -3,6 +3,7 @@ import { createWorldRenderer, loadAtlas, type Atlas, type WorldView } from "../.
 import { buildTrackQuads, interpolateTrainPoses, trackStyle, type TrackPaint } from "../../src/render/track/geometry";
 import { buildRiderQuads, buildTrainQuads } from "../../src/render/track/trains";
 import { parseTrainLayout } from "../../src/train-layout";
+import { DEMO_COASTER_ID } from "../../src/protocol";
 
 /** The fixture paints its coasters in its own atlas's theme inks: track in steel, supports in wood. */
 function fixturePaint(atlas: Atlas): TrackPaint {
@@ -22,7 +23,7 @@ declare global {
     renderTrackFixture(rotation: Rotation): Promise<{ picks: string[] }>;
     checkTrainMotion(): Promise<{ previous: number[]; current: number[]; interpolated: number[][] }>;
     demoTrackPoints(): Promise<{ x: number; y: number; z: number }[]>;
-    checkCoasterTransfer(): Promise<{ rails: number; ties: number; supports: number; shared: boolean; resent: boolean; refreshedSupports: boolean }>;
+    checkCoasterTransfer(): Promise<{ rails: number; ties: number; supports: number; shared: boolean; revisionChanged: boolean; geometryEqual: boolean; refreshedSupports: boolean }>;
     renderRiderOrientations(): Promise<Record<"upright" | "banked" | "inverted", { pickable: boolean; hiddenByNearerGeometry: boolean; visibleOverFartherGeometry: boolean; topMinusBottom: { x: number; y: number } }>>;
   }
 }
@@ -81,20 +82,28 @@ window.renderRiderOrientations = async () => {
 
 window.checkCoasterTransfer = () => new Promise((resolve, reject) => {
   const worker = new Worker(new URL("../../src/worker.ts", import.meta.url), { type: "module" });
-  let first: { coasterRails: Float32Array; coasterTies: Float32Array; coasterSupports: Float32Array } | undefined;
+  let first: { trackRevision: string; rails: Float32Array; ties: Float32Array; supports: Float32Array } | undefined;
   worker.onerror = (event) => { worker.terminate(); reject(new Error(event.message)); };
-  worker.onmessage = (event: MessageEvent<{ type: string; coasterRails?: Float32Array; coasterTies?: Float32Array; coasterSupports?: Float32Array }>) => {
+  worker.onmessage = (event: MessageEvent<{ type: string; coasters?: { id: number; trackRevision: string; rails?: Float32Array; ties?: Float32Array; supports?: Float32Array }[] }>) => {
     const message = event.data;
     if (message.type !== "world") return;
+    const coaster = message.coasters?.find(({ id }) => id === DEMO_COASTER_ID);
+    if (!coaster) { worker.terminate(); reject(new Error("Demo coaster geometry missing")); return; }
     if (!first) {
-      if (!message.coasterRails || !message.coasterTies || !message.coasterSupports) { worker.terminate(); reject(new Error("Coaster geometry missing")); return; }
-      first = { coasterRails: message.coasterRails, coasterTies: message.coasterTies, coasterSupports: message.coasterSupports };
+      if (!coaster.rails || !coaster.ties || !coaster.supports) { worker.terminate(); reject(new Error("Coaster geometry missing")); return; }
+      first = { trackRevision: coaster.trackRevision, rails: coaster.rails, ties: coaster.ties, supports: coaster.supports };
       worker.postMessage({ type: "set-surface", x: 10, y: 20, corners: new Int16Array([1, 2, 3, 4]) });
     } else {
       worker.terminate();
-      resolve({ rails: first.coasterRails.length, ties: first.coasterTies.length, supports: first.coasterSupports.length,
-        shared: [first.coasterRails, first.coasterTies, first.coasterSupports].some((data) => !(data.buffer instanceof ArrayBuffer)),
-        resent: message.coasterRails !== undefined || message.coasterTies !== undefined, refreshedSupports: message.coasterSupports instanceof Float32Array });
+      const rails = coaster.rails;
+      const ties = coaster.ties;
+      const geometryEqual = rails !== undefined && ties !== undefined
+        && first.rails.length === rails.length && first.rails.every((value, index) => value === rails[index])
+        && first.ties.length === ties.length && first.ties.every((value, index) => value === ties[index]);
+      resolve({ rails: first.rails.length, ties: first.ties.length, supports: first.supports.length,
+        shared: [first.rails, first.ties, first.supports].some((data) => !(data.buffer instanceof ArrayBuffer)),
+        revisionChanged: first.trackRevision !== coaster.trackRevision, geometryEqual,
+        refreshedSupports: coaster.supports instanceof Float32Array && coaster.supports !== first.supports });
     }
   };
   initializeDemoWorker(worker);
@@ -167,9 +176,10 @@ window.checkTrainMotion = () => new Promise((resolve, reject) => {
   const worker = new Worker(new URL("../../src/worker.ts", import.meta.url), { type: "module" });
   let previous: Float32Array | undefined;
   worker.onerror = (event) => { worker.terminate(); reject(new Error(event.message)); };
-  worker.onmessage = (event: MessageEvent<{ type: string; trainPoses?: Float32Array }>) => {
-    if (event.data.type !== "snapshot" || !event.data.trainPoses?.length) return;
-    const current = event.data.trainPoses;
+  worker.onmessage = (event: MessageEvent<{ type: string; coasters?: { id: number; trainPoses: Float32Array }[] }>) => {
+    if (event.data.type !== "snapshot") return;
+    const current = event.data.coasters?.find(({ id }) => id === DEMO_COASTER_ID)?.trainPoses;
+    if (!current?.length) return;
     if (!previous) { previous = current; return; }
     if (current[1] === previous[1] && current[2] === previous[2] && current[3] === previous[3]) return;
     const interpolated = [0, 0.25, 0.5, 0.75, 1].map((fraction) => [...interpolateTrainPoses(previous!, current, fraction).slice(0, 11)]);
@@ -182,9 +192,10 @@ window.checkTrainMotion = () => new Promise((resolve, reject) => {
 window.demoTrackPoints = () => new Promise((resolve, reject) => {
   const worker = new Worker(new URL("../../src/worker.ts", import.meta.url), { type: "module" });
   worker.onerror = (event) => { worker.terminate(); reject(new Error(event.message)); };
-  worker.onmessage = (event: MessageEvent<{ type: string; coasterRails?: Float32Array }>) => {
-    if (event.data.type !== "world" || !event.data.coasterRails) return;
-    const geometry = event.data.coasterRails;
+  worker.onmessage = (event: MessageEvent<{ type: string; coasters?: { id: number; rails?: Float32Array }[] }>) => {
+    if (event.data.type !== "world") return;
+    const geometry = event.data.coasters?.find(({ id }) => id === DEMO_COASTER_ID)?.rails;
+    if (!geometry) return;
     const points: { x: number; y: number; z: number }[] = [];
     for (let index = 0; index < geometry.length; index += 19) {
       points.push({ x: geometry[index + 1], y: geometry[index + 2], z: geometry[index + 3] });

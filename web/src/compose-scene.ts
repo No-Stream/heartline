@@ -7,7 +7,6 @@ import { BACKDROPS, DAY_LENGTH_TICKS, lightingAt, printOnBackdrop, sunAt } from 
 import { buildPeople, riderAppearances } from "./render/people";
 import { buildTrackQuads, interpolateTrainPoses, trackPaint, trackStyle, type TrackQuad } from "./render/track/geometry";
 import { buildRiderQuads, buildTrainQuads } from "./render/track/trains";
-import type { TrainLayout } from "./train-layout";
 import { buildGhostQuads } from "./render/track/ghost";
 import { buildBlockBoundaryQuads } from "./render/track/blocks";
 import { buildSelectionRing } from "./guest-panel/selection-ring";
@@ -17,17 +16,14 @@ import { buildSceneryGhostQuads, scenerySprites, type Scenery, type SceneryPrevi
 import { buildProximityMarkers, buildTestingRibbon, overlaySamples, type TestingMetric, type TestingSample } from "./coaster-testing";
 import type { Atlas, GeometryQuad, WorldSprite, WorldView } from "./render/scene";
 import type { AtmospherePass, GeometryPass } from "./render/index";
-import type { CoasterSnapshot } from "./protocol";
+import { DEMO_COASTER_ID, type CoasterRenderData, type CoasterSnapshot } from "./protocol";
 import type { PathToolPreview } from "./path-tool";
 import type { Theme } from "./theme";
 import type { Tool } from "./toolbar";
 
 export interface SceneWorld extends WorldView {
-  readonly coasterRails: Float32Array;
-  readonly coasterTies: Float32Array;
-  readonly coasterSupports: Float32Array;
-  readonly coasterColors: CoasterColorScheme | null;
-  readonly coasterTrain: TrainLayout | null;
+  readonly coasters: readonly CoasterRenderData[];
+  readonly editingCoasterId: number | null;
 }
 
 export interface RenderedRiderBounds {
@@ -72,8 +68,8 @@ export interface ComposeSceneInput {
   /** The point of a coaster's test report the ride window is pointing at, drawn on the track. */
   readonly rideHighlight?: { readonly samples: readonly TestingSample[]; readonly distance: number };
   readonly constructionEffects: { quads(now: number, camera: Camera, viewport: Viewport): GeometryQuad[] };
-  readonly staticTrack: (rails: Float32Array, ties: Float32Array, supports: Float32Array, colors: CoasterColorScheme, camera: Camera, viewport: Viewport) => readonly TrackQuad[];
-  readonly builtTrack: (rails: Float32Array, ties: Float32Array, supports: Float32Array, colors: CoasterColorScheme, camera: Camera, viewport: Viewport) => readonly TrackQuad[];
+  readonly staticTrack: (rails: Float32Array, ties: Float32Array, supports: Float32Array, colors: CoasterColorScheme, camera: Camera, viewport: Viewport, coasterId?: number, trackRevision?: string) => readonly TrackQuad[];
+  readonly builtTrack: (rails: Float32Array, ties: Float32Array, supports: Float32Array, colors: CoasterColorScheme, camera: Camera, viewport: Viewport, coasterId?: number, trackRevision?: string) => readonly TrackQuad[];
   readonly now: number;
   readonly frozen: boolean;
   readonly dayPhase: number;
@@ -90,8 +86,17 @@ export function composeScene(input: ComposeSceneInput): SceneComposition {
   const previewWouldTunnel = input.construction?.pieces.find((piece) => piece.id === input.construction?.selected)?.wouldTunnel
     ?? input.construction?.elements.find((element) => element.id === input.construction?.selected)?.wouldTunnel
     ?? false;
-  const occupants = input.current ? riderAppearances(input.current, input.current.constructionRiders, input.atlas) : new Map();
-  const ridingIds = new Set([...occupants.values()].map((occupant) => occupant.id));
+  const previousCoasters = new Map(input.previous?.coasters.map((coaster) => [coaster.id, coaster]) ?? []);
+  const renderedCoasters = input.current?.coasters.map((coaster) => {
+    const previous = previousCoasters.get(coaster.id);
+    return {
+      id: coaster.id,
+      trainPoses: interpolateTrainPoses(previous?.trainPoses ?? coaster.trainPoses, coaster.trainPoses, input.interpolation),
+      occupants: coaster.riders.length ? riderAppearances(input.current!, coaster.riders, input.atlas) : undefined,
+    };
+  }) ?? [];
+  const renderedCoastersById = new Map(renderedCoasters.map((coaster) => [coaster.id, coaster]));
+  const ridingIds = new Set(renderedCoasters.flatMap(({ occupants }) => occupants ? [...occupants.values()].map((occupant) => occupant.id) : []));
   const people = input.current
     ? buildPeople(input.previous, input.current, input.interpolation, input.camera.rotation, input.atlas).filter((person) => !ridingIds.has(person.id))
     : [];
@@ -104,12 +109,7 @@ export function composeScene(input: ComposeSceneInput): SceneComposition {
     }));
   }
 
-  const trainPoses = input.current
-    ? interpolateTrainPoses(input.previous?.trainPoses ?? input.current.trainPoses, input.current.trainPoses, input.interpolation)
-    : noGeometry;
-  const constructionTrainPoses = input.current
-    ? interpolateTrainPoses(input.previous?.constructionTrainPoses ?? input.current.constructionTrainPoses, input.current.constructionTrainPoses, input.interpolation)
-    : noGeometry;
+  const trainPoses = renderedCoastersById.get(DEMO_COASTER_ID)?.trainPoses ?? renderedCoasters[0]?.trainPoses ?? noGeometry;
   const testingSamples = overlaySamples(
     input.construction?.testingReport?.samples ?? null,
     input.construction?.constructionForcePreview?.forceEnvelopeSamples ?? null,
@@ -124,8 +124,15 @@ export function composeScene(input: ComposeSceneInput): SceneComposition {
   const backdrop = BACKDROPS[input.theme];
   const { lighting, paper } = printOnBackdrop(lightingAt(input.dayPhase), backdrop);
   const sun = sunAt(input.dayPhase);
+  const orderedCoasters = [...input.world.coasters].sort((first, second) => {
+    if (first.id === DEMO_COASTER_ID) return -1;
+    if (second.id === DEMO_COASTER_ID) return 1;
+    return first.id - second.id;
+  });
   const atmospherePass: AtmospherePass = (camera, viewport, atlas, scale) => {
-    const rails = input.construction ? [input.world.coasterRails, input.construction.placedRails] : [input.world.coasterRails];
+    const rails = orderedCoasters.map((coaster) => coaster.id === input.world.editingCoasterId && input.construction
+      ? input.construction.placedRails
+      : coaster.rails);
     const lights = buildLights({ facilities: input.facilities, rails, sprites, atlas, scale }, lighting, effectTick, camera, viewport);
     const fireworks = buildFireworks(parkBounds(input.facilities, rails), lighting, effectTick, camera, viewport);
     const horizonY = projectWorld(camera, viewport, {
@@ -155,10 +162,25 @@ export function composeScene(input: ComposeSceneInput): SceneComposition {
     (camera, viewport, atlas) => buildFacilityGeometry(input.facilities, camera, viewport, trackStyle(atlas)),
     (camera, viewport, atlas) => buildSelectionRing(selectedGuest, camera, viewport, atlas),
     (camera, viewport, atlas, scale) => [
-      ...(input.world.coasterColors ? input.staticTrack(input.world.coasterRails, input.world.coasterTies, input.world.coasterSupports, input.world.coasterColors, camera, viewport) : []),
-      ...(input.construction?.colors ? (input.activeTool === "coaster" && input.construction.blockReport.sections.length
-        ? buildTrackQuads(input.construction.placedRails, input.construction.placedTies, input.construction.placedSupports, camera, viewport, trackPaint(trackStyle(atlas), input.construction.colors), input.construction.blockReport.sections.map((section) => section.boundaryMetres), input.construction.railDistances)
-        : input.builtTrack(input.construction.placedRails, input.construction.placedTies, input.construction.placedSupports, input.construction.colors, camera, viewport)).map((quad) => ({ ...quad, id: `construction-${quad.id}` })) : []),
+      ...orderedCoasters.flatMap((coaster) => {
+        if (!coaster.colors) return [];
+        const edited = coaster.id === input.world.editingCoasterId && input.construction?.colors;
+        if (edited && input.activeTool === "coaster" && input.construction.blockReport.sections.length) {
+          return buildTrackQuads(
+            input.construction.placedRails,
+            input.construction.placedTies,
+            input.construction.placedSupports,
+            camera,
+            viewport,
+            trackPaint(trackStyle(atlas), input.construction.colors),
+            input.construction.blockReport.sections.map((section) => section.boundaryMetres),
+            input.construction.railDistances,
+            coaster.id,
+          );
+        }
+        if (edited) return input.builtTrack(input.construction!.placedRails, input.construction!.placedTies, input.construction!.placedSupports, input.construction!.colors!, camera, viewport, coaster.id, coaster.trackRevision);
+        return input.staticTrack(coaster.rails, coaster.ties, coaster.supports, coaster.colors, camera, viewport, coaster.id, coaster.trackRevision);
+      }),
       ...(input.construction && input.activeTool === "coaster" ? buildBlockBoundaryQuads(input.construction.placedRails, input.construction.railDistances, input.construction.blockReport.sections, camera, viewport, trackStyle(atlas)) : []),
       ...buildGhostQuads(input.stationGhost(), noGeometry, noGeometry, true, camera, viewport, trackStyle(atlas)).map((quad) => ({ ...quad, color: [0.25, 0.55, 0.85, 0.55] as const })),
       ...(input.construction ? buildGhostQuads(input.construction.previewRails, input.construction.previewTies, input.construction.previewSupports, input.construction.canAppend, camera, viewport, trackStyle(atlas), previewWouldTunnel) : []),
@@ -173,24 +195,30 @@ export function composeScene(input: ComposeSceneInput): SceneComposition {
           input.construction.candidateForcePreview.limits,
         ).map((quad) => ({ ...quad, id: `candidate-force-${quad.id.slice("testing-".length)}` }))
         : []),
-      ...(input.world.coasterColors && input.world.coasterTrain ? buildTrainQuads(trainPoses, camera, viewport, trackPaint(trackStyle(atlas), input.world.coasterColors), input.world.coasterTrain) : []),
-      ...(input.construction?.colors && input.construction.trainLayout ? buildTrainQuads(constructionTrainPoses, camera, viewport, trackPaint(trackStyle(atlas), input.construction.colors), input.construction.trainLayout) : []),
-      ...(input.world.coasterTrain ? buildRiderQuads(trainPoses, camera, viewport, atlas, scale, input.world.coasterTrain) : []),
-      ...(input.construction?.trainLayout ? buildRiderQuads(constructionTrainPoses, camera, viewport, atlas, scale, input.construction.trainLayout, occupants) : []).map((quad) => {
-        riders.push({
-          id: quad.id,
-          left: Math.min(...quad.vertices.map((vertex) => vertex.x)),
-          right: Math.max(...quad.vertices.map((vertex) => vertex.x)),
-          top: Math.min(...quad.vertices.map((vertex) => vertex.y)),
-          bottom: Math.max(...quad.vertices.map((vertex) => vertex.y)),
-        });
-        if (quad.id === input.selectedGuestId) {
-          input.setGuestAnchor({
-            x: quad.vertices.reduce((sum, vertex) => sum + vertex.x, 0) / 4,
-            y: quad.vertices.reduce((sum, vertex) => sum + vertex.y, 0) / 4,
+      ...orderedCoasters.flatMap((coaster) => {
+        const snapshot = renderedCoastersById.get(coaster.id);
+        if (!snapshot || !coaster.colors || !coaster.trainLayout) return [];
+        return buildTrainQuads(snapshot.trainPoses, camera, viewport, trackPaint(trackStyle(atlas), coaster.colors), coaster.trainLayout, coaster.id);
+      }),
+      ...orderedCoasters.flatMap((coaster) => {
+        const snapshot = renderedCoastersById.get(coaster.id);
+        if (!snapshot || !coaster.trainLayout) return [];
+        return buildRiderQuads(snapshot.trainPoses, camera, viewport, atlas, scale, coaster.trainLayout, snapshot.occupants).map((quad) => {
+          riders.push({
+            id: quad.id,
+            left: Math.min(...quad.vertices.map((vertex) => vertex.x)),
+            right: Math.max(...quad.vertices.map((vertex) => vertex.x)),
+            top: Math.min(...quad.vertices.map((vertex) => vertex.y)),
+            bottom: Math.max(...quad.vertices.map((vertex) => vertex.y)),
           });
-        }
-        return quad;
+          if (quad.id === input.selectedGuestId) {
+            input.setGuestAnchor({
+              x: quad.vertices.reduce((sum, vertex) => sum + vertex.x, 0) / 4,
+              y: quad.vertices.reduce((sum, vertex) => sum + vertex.y, 0) / 4,
+            });
+          }
+          return quad;
+        });
       }),
       ...(testingSamples.length && (input.testingMetric || input.testingHighlightDistance !== undefined)
         ? buildTestingRibbon(

@@ -26,7 +26,6 @@ export interface RideWindow {
   close(): void;
 }
 
-const OWNER_LABELS = { demo: "Park coaster", player: "Your coaster" } as const;
 
 function nearestSampleToDistance(samples: readonly TestingSample[], distance: number): number {
   let nearest = 0;
@@ -108,8 +107,8 @@ export function createRideWindow(canvas: HTMLCanvasElement, callbacks: RideWindo
 
   function render(): void {
     if (!info) return;
-    root.dataset.ride = info.ride;
-    eyebrow.textContent = `${OWNER_LABELS[info.ride]} · ${info.manufacturer}`;
+    root.dataset.ride = String(info.ride);
+    eyebrow.textContent = `${info.ride === 0xffff_ffff ? "Park coaster" : "Your coaster"} · ${info.manufacturer}`;
     name.textContent = info.modelName;
     untested.hidden = info.report !== null;
     report.hidden = info.report === null;

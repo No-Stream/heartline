@@ -11,6 +11,10 @@ pub mod layouts;
 pub mod park_description;
 pub mod reports;
 mod save;
+#[path = "save_v6.rs"]
+mod save_v6;
+#[path = "save_v7.rs"]
+mod save_v7;
 pub use save::SaveLoadError;
 #[cfg(test)]
 mod save_tests;
@@ -30,7 +34,7 @@ use theme_park_sim::facilities::{
     FacilityKind, ParkFacilities, facility_access_direction, station_positions,
 };
 use theme_park_sim::guests::{AgeGroup, GuestId};
-use theme_park_sim::park::{DemoCoaster, Park};
+use theme_park_sim::park::{Coaster, CoasterId, DemoCoaster, Park};
 use theme_park_sim::park_guests::ParkGuests;
 #[cfg(test)]
 use theme_park_sim::physics::BlockOperation;
@@ -79,6 +83,7 @@ struct SupportRenderCache {
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct WasmSimulation {
     park: Park,
+    editing: Option<CoasterId>,
     facility_message: String,
     path_message: String,
     terrain_message: String,
@@ -90,7 +95,6 @@ pub struct WasmSimulation {
     #[serde(default)]
     selected_shape: Option<theme_park_sim::track::shaped::ElementIntent>,
     selected_element: Option<String>,
-    construction_undo_groups: Vec<usize>,
     construction_completion: Option<Completion>,
     /// Ranked finish options. Byte-compatible with the earlier `Option<Completion>` in saves.
     construction_completion_available: Vec<Completion>,
@@ -117,6 +121,57 @@ impl std::ops::Deref for WasmSimulation {
 impl std::ops::DerefMut for WasmSimulation {
     fn deref_mut(&mut self) -> &mut Park {
         &mut self.park
+    }
+}
+
+impl WasmSimulation {
+    pub fn editing_coaster_id(&self) -> Option<CoasterId> {
+        self.editing.filter(|id| self.park.coaster(*id).is_some())
+    }
+
+    pub fn editing_coaster(&self) -> Option<&Coaster> {
+        self.editing_coaster_id()
+            .and_then(|id| self.park.coaster(id))
+    }
+
+    pub(crate) fn editing_coaster_mut(&mut self) -> Option<&mut Coaster> {
+        let id = self.editing_coaster_id()?;
+        self.park.coaster_mut(id)
+    }
+
+    pub fn editing_construction(&self) -> Option<&Construction> {
+        self.editing_coaster().map(|coaster| &coaster.construction)
+    }
+
+    pub(crate) fn editing_construction_mut(&mut self) -> Option<&mut Construction> {
+        self.editing_coaster_mut()
+            .map(|coaster| &mut coaster.construction)
+    }
+
+    pub(crate) fn close_editing_live_coaster(&mut self) {
+        if let Some(id) = self.editing_coaster_id() {
+            self.park.close_live_coaster(id);
+        }
+    }
+
+    pub(crate) fn clear_editing_block_layout(&mut self) {
+        if let Some(id) = self.editing_coaster_id() {
+            self.park.clear_block_layout(id);
+        }
+    }
+
+    pub(crate) fn invalidate_editing_track_state(&mut self) {
+        let Some(id) = self.editing_coaster_id() else {
+            return;
+        };
+        self.clear_editing_block_layout();
+        self.park.clear_support_render_cache(id);
+        let coaster = self.park.coaster_mut(id).expect("editing coaster exists");
+        coaster.construction_recorder = None;
+        coaster.construction_report = None;
+        coaster.construction_train = None;
+        coaster.construction_outcome = None;
+        coaster.construction_message.clear();
     }
 }
 
@@ -227,14 +282,22 @@ impl WasmSimulation {
     }
 
     fn block_reasons(&self) -> Vec<String> {
-        [&self.block_message, &self.block_throughput_reason]
+        self.editing_coaster()
             .into_iter()
+            .flat_map(|coaster| [&coaster.block_message, &coaster.block_throughput_reason])
             .filter(|reason| !reason.is_empty())
             .cloned()
             .collect()
     }
 
     fn facility_obstacles(&self) -> Vec<SupportObstacle> {
+        self.facility_obstacles_excluding(self.editing_coaster_id())
+    }
+
+    fn facility_obstacles_excluding(
+        &self,
+        excluded_coaster: Option<CoasterId>,
+    ) -> Vec<SupportObstacle> {
         let mut obstacles: Vec<_> = self
             .park
             .facilities
@@ -262,11 +325,33 @@ impl WasmSimulation {
                 &coaster.train_configuration,
             ));
         }
+        for (&id, coaster) in &self.park.coasters {
+            if Some(id) == excluded_coaster {
+                continue;
+            }
+            let pieces: Vec<_> = coaster
+                .construction
+                .pieces()
+                .iter()
+                .chain(
+                    coaster
+                        .construction
+                        .disconnected_segments()
+                        .iter()
+                        .flat_map(|segment| &segment.pieces),
+                )
+                .cloned()
+                .collect();
+            obstacles.extend(track_support_obstacles(
+                &pieces,
+                &coaster.construction.model().train,
+            ));
+        }
         obstacles
     }
     fn select_compatible_piece(&mut self) {
         self.selected_element = None;
-        let Some(construction) = &self.park.construction else {
+        let Some(construction) = self.editing_construction() else {
             return;
         };
         let obstacles = self.facility_obstacles();
@@ -289,7 +374,7 @@ impl WasmSimulation {
         render: fn(&[Piece], &World) -> Vec<f32>,
         stride: usize,
     ) -> Vec<f32> {
-        let Some(construction) = &self.park.construction else {
+        let Some(construction) = self.editing_construction() else {
             return Vec::new();
         };
         let entries: Vec<_> = construction
@@ -311,7 +396,7 @@ impl WasmSimulation {
         self.encode_construction_geometry(geometry, stride)
     }
     fn encode_construction_geometry(&self, mut geometry: Vec<f32>, stride: usize) -> Vec<f32> {
-        if self.park.construction.as_ref().is_some_and(|construction| {
+        if self.editing_construction().is_some_and(|construction| {
             construction.model().support_style == SupportStyle::SteelColumns
         }) {
             // Steel records use -(piece ID + 1); consumers decode before picking.
@@ -320,8 +405,7 @@ impl WasmSimulation {
             }
         } else if stride != layouts::SUPPORT.len()
             && self
-                .construction
-                .as_ref()
+                .editing_construction()
                 .is_some_and(|construction| construction.model().track_material == Material::Wood)
         {
             for record in geometry.chunks_exact_mut(stride) {
@@ -334,7 +418,7 @@ impl WasmSimulation {
         if let Some(completion) = &self.construction_completion {
             return completion.geometry.clone();
         }
-        let Some(construction) = &self.park.construction else {
+        let Some(construction) = self.editing_construction() else {
             return Vec::new();
         };
         if construction.is_closed() {
@@ -1000,6 +1084,9 @@ mod construction_bridge_tests;
 #[cfg(test)]
 #[path = "tests/facilities.rs"]
 mod facility_bridge_tests;
+#[cfg(test)]
+#[path = "tests/multi_coaster.rs"]
+mod multi_coaster_tests;
 #[cfg(test)]
 #[path = "tests/paths.rs"]
 mod path_bridge_tests;

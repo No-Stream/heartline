@@ -339,9 +339,6 @@ pub(crate) fn inline_park_ride_files(
         .get_mut("coasters")
         .and_then(Value::as_array_mut)
         .ok_or_else(|| "park description field `coasters` must be an array".to_owned())?;
-    if coasters.len() > 1 {
-        return Err("this build supports one player coaster per park".into());
-    }
 
     for (coaster_index, coaster) in coasters.iter_mut().enumerate() {
         let ride_reference = coaster.get("ride").and_then(Value::as_str).ok_or_else(|| {
@@ -1072,8 +1069,7 @@ fn execute_command(
                 .map(|request| {
                     let model = session
                         .simulation()
-                        .construction
-                        .as_ref()
+                        .editing_construction()
                         .ok_or_else(|| "shaped placement requires active construction".to_owned())?
                         .model();
                     Ok::<ElementIntent, String>(request.into_intent(model))
@@ -1187,8 +1183,7 @@ fn execute_command(
                 Some(
                     session
                         .simulation()
-                        .construction
-                        .as_ref()
+                        .editing_construction()
                         .and_then(|construction| construction.pieces().last())
                         .and_then(|piece| piece.element_spec())
                         .cloned()
@@ -1676,8 +1671,7 @@ fn state_value_with_estimates(
     );
     let simulation = session.simulation();
     let construction = simulation
-        .construction
-        .as_ref()
+        .editing_construction()
         .ok_or_else(|| "there is no active construction".to_owned())?;
     let end = construction.end();
     let start = construction.start();
@@ -1820,8 +1814,7 @@ fn placed_construction_pieces(
 ) -> Result<Vec<theme_park_sim::track::Piece>, String> {
     Ok(session
         .simulation()
-        .construction
-        .as_ref()
+        .editing_construction()
         .ok_or_else(|| "ride has no construction".to_owned())?
         .pieces()
         .to_vec())
@@ -2045,8 +2038,7 @@ fn render_shaped_choices(session: &mut BuilderSession) -> Result<CommandReply, S
     let (model_key, vertical_limits, lateral_limit, profile) = {
         let construction = session
             .simulation()
-            .construction
-            .as_ref()
+            .editing_construction()
             .ok_or_else(|| "there is no active construction".to_owned())?;
         let model = construction.model();
         (
@@ -2445,7 +2437,7 @@ fn candidate_preview_unavailable(
         if !preview_reason.is_empty() {
             return format!("candidate preview is unavailable for {id}: {preview_reason}");
         }
-        let Some(construction) = simulation.construction.as_ref() else {
+        let Some(construction) = simulation.editing_construction() else {
             return format!(
                 "candidate preview is unavailable for {id}: there is no active construction"
             );
@@ -2476,7 +2468,7 @@ fn candidate_geometry_value(session: &BuilderSession) -> Option<Value> {
 }
 
 fn rated_window_for_id(simulation: &WasmSimulation, id: &str) -> Option<[f64; 2]> {
-    let construction = simulation.construction.as_ref()?;
+    let construction = simulation.editing_construction()?;
     let model = construction.model();
     let piece = theme_park_sim::track::catalog()
         .iter()
@@ -2666,8 +2658,7 @@ fn format_peaks(peaks: Option<&ConstructionLastPlacedForceWire>) -> String {
 fn render_map(session: &BuilderSession) -> Result<CommandReply, String> {
     let construction = session
         .simulation()
-        .construction
-        .as_ref()
+        .editing_construction()
         .ok_or_else(|| "there is no active construction".to_owned())?;
     let mut samples = Vec::new();
     for (piece_index, piece) in construction.pieces().iter().enumerate() {
@@ -2773,9 +2764,13 @@ fn test_ride_with_margins(
     String,
 > {
     let (mut session, estimates, _) = replay_with_estimates(ride, false)?;
+    let coaster_id = session
+        .simulation()
+        .editing_coaster_id()
+        .ok_or_else(|| "rated entry margins require an edited coaster".to_owned())?;
     let (circuit, _) = session
         .simulation()
-        .construction_circuit_and_train()
+        .construction_circuit_and_train(coaster_id)
         .ok_or_else(|| "rated entry margins require a closed circuit".to_owned())?;
     let model = coaster_models()
         .into_iter()
@@ -2932,9 +2927,13 @@ fn test_ride_with_browser_estimates(
 > {
     let (mut session, estimates, browser_estimates) = replay_with_estimates(ride, true)?;
     let test_run = finish_test_run(&mut session)?;
+    let coaster_id = session
+        .simulation()
+        .editing_coaster_id()
+        .ok_or_else(|| "ride test completed without an edited coaster".to_owned())?;
     let (circuit, _) = session
         .simulation()
-        .construction_circuit_and_train()
+        .construction_circuit_and_train(coaster_id)
         .ok_or_else(|| "ride test completed without a construction circuit".to_owned())?;
     Ok((test_run, estimates, browser_estimates, circuit))
 }
@@ -2943,8 +2942,8 @@ fn finish_test_run(session: &mut BuilderSession) -> Result<TestRun, String> {
     session.test().map_err(|error| error.to_string())?;
     session
         .simulation()
-        .construction_report
-        .as_ref()
+        .editing_coaster()
+        .and_then(|coaster| coaster.construction_report.as_ref())
         .cloned()
         .ok_or_else(|| "ride test completed without a native report".to_owned())
 }
@@ -2994,8 +2993,7 @@ pub(crate) fn replay_with_estimates(
             RideStep::Place(place) => {
                 let construction_before = session
                     .simulation()
-                    .construction
-                    .as_ref()
+                    .editing_construction()
                     .ok_or_else(|| "there is no active construction".to_owned())?;
                 let first_piece_index = construction_before.pieces().len();
                 let start_distance = construction_before
@@ -3042,8 +3040,7 @@ pub(crate) fn replay_with_estimates(
                 }
                 let construction_after = session
                     .simulation()
-                    .construction
-                    .as_ref()
+                    .editing_construction()
                     .ok_or_else(|| "there is no active construction".to_owned())?;
                 let track_after = construction_track(&session)?;
                 let pieces = construction_after.pieces();
@@ -3103,8 +3100,7 @@ pub(crate) fn replay_with_estimates(
             RideStep::Shape(shape) => {
                 let construction_before = session
                     .simulation()
-                    .construction
-                    .as_ref()
+                    .editing_construction()
                     .ok_or_else(|| "there is no active construction".to_owned())?;
                 let piece_index = construction_before.pieces().len();
                 let start_distance = construction_before
@@ -3129,8 +3125,7 @@ pub(crate) fn replay_with_estimates(
                     })?;
                 let construction_after = session
                     .simulation()
-                    .construction
-                    .as_ref()
+                    .editing_construction()
                     .ok_or_else(|| "there is no active construction".to_owned())?;
                 if construction_after.pieces().len() != piece_index + 1 {
                     return Err(format_replay_piece_error(
@@ -3491,8 +3486,7 @@ fn finished_track_estimates(
         .collect();
     let construction = session
         .simulation()
-        .construction
-        .as_ref()
+        .editing_construction()
         .ok_or_else(|| "there is no active construction".to_owned())?;
     let pieces = construction.pieces();
     let mut piece_starts = Vec::with_capacity(pieces.len());
@@ -5373,8 +5367,7 @@ mod shaped_replay_estimate_tests {
         spec_session.place().unwrap();
         let spec = spec_session
             .simulation()
-            .construction
-            .as_ref()
+            .editing_construction()
             .unwrap()
             .pieces()
             .last()
@@ -5421,8 +5414,7 @@ mod shaped_replay_estimate_tests {
         let (mut session, estimates, _) = replay_with_estimates(&ride, false).unwrap();
         let piece_index = session
             .simulation()
-            .construction
-            .as_ref()
+            .editing_construction()
             .unwrap()
             .pieces()
             .len()

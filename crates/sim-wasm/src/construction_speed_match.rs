@@ -54,7 +54,7 @@ impl WasmSimulation {
         id: &str,
         entry_speed: Option<f64>,
     ) -> Option<ConstructionSpeedMatchWire> {
-        let construction = self.construction.as_ref()?;
+        let construction = self.editing_construction()?;
         let id = pieceid_from_wire(id)?;
         let model = construction.model();
         let selected_piece = catalog().iter().find(|piece| piece.id == id)?;

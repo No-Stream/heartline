@@ -2,7 +2,7 @@ use std::collections::{HashSet, VecDeque};
 
 use serde_json::Value;
 
-use super::WasmSimulation;
+use super::{CoasterId, WasmSimulation};
 
 #[test]
 fn candidate_force_preview_reports_selected_track_without_placing_it() {
@@ -222,7 +222,7 @@ fn construction_force_preview_reports_launch_capability_and_estimated_force() {
     assert_eq!(launch["pieceIndex"], 1);
     assert_eq!(launch["maximumSpeed"], track[1]["launchMaximumSpeed"]);
     assert!(launch["peakLongitudinalG"].as_f64().unwrap() > 0.0);
-    let launch_start = simulation.construction.as_ref().unwrap().pieces()[0].length();
+    let launch_start = simulation.editing_construction().unwrap().pieces()[0].length();
     let peak = preview["forceEnvelopeSamples"]
         .as_array()
         .unwrap()
@@ -306,7 +306,7 @@ fn return_path(
 }
 
 fn append_return_path(simulation: &mut WasmSimulation) {
-    let construction = simulation.construction.as_ref().unwrap();
+    let construction = simulation.editing_construction().unwrap();
     let route = return_path(
         construction.end(),
         construction.start(),
@@ -324,11 +324,22 @@ fn append_return_path(simulation: &mut WasmSimulation) {
     }
     simulation.construction_close();
     assert!(simulation.construction_message().is_empty());
-    assert!(simulation.construction.as_ref().unwrap().is_closed());
+    assert!(simulation.editing_construction().unwrap().is_closed());
 }
 
-fn ride_info(simulation: &WasmSimulation, ride: &str) -> Value {
-    serde_json::from_str(&simulation.ride_info_json(ride)).unwrap()
+fn ride_info(simulation: &WasmSimulation, coaster_id: u32) -> Value {
+    serde_json::from_str(&simulation.coaster_ride_info_json(coaster_id)).unwrap()
+}
+
+fn render_entry(simulation: &WasmSimulation, coaster_id: u32) -> Value {
+    serde_json::from_str::<Value>(&simulation.coaster_render_list_json())
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["id"] == coaster_id)
+        .unwrap()
+        .clone()
 }
 
 fn finite_ratings(report: &Value) -> bool {
@@ -342,18 +353,32 @@ fn finite_ratings(report: &Value) -> bool {
 #[test]
 fn demo_ride_test_fills_in_the_demo_report() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
-    let before = ride_info(&simulation, "demo");
-    assert_eq!(before["ride"], "demo");
+    let before = ride_info(&simulation, u32::MAX);
+    assert_eq!(before["ride"], u32::MAX);
     assert_eq!(before["modelName"], "Timber Tumbler");
     assert_eq!(before["manufacturer"], "Rocky Road Construction");
     assert!(before["limits"]["maximumLateralG"].is_number());
     assert_eq!(before["report"], Value::Null);
 
     assert_eq!(simulation.ride_test("demo"), "");
-    let report = &ride_info(&simulation, "demo")["report"];
+    let report = &ride_info(&simulation, u32::MAX)["report"];
     assert!(finite_ratings(report));
     assert!(!report["samples"].as_array().unwrap().is_empty());
     assert!(report["statistics"]["maxSpeed"].as_f64().unwrap() > 0.0);
+}
+
+#[test]
+fn numeric_ride_actions_address_demo_and_built_coasters() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    append_lift_drop_fixture(&mut simulation);
+
+    assert_eq!(simulation.coaster_test(0), "");
+    assert_eq!(simulation.coaster_test(u32::MAX), "");
+    assert_eq!(simulation.coaster_test(99), "No coaster has that id.");
+    assert_eq!(ride_info(&simulation, 0)["ride"], 0);
+    assert_eq!(ride_info(&simulation, u32::MAX)["ride"], u32::MAX);
+    assert!(ride_info(&simulation, 0)["report"].is_object());
+    assert!(ride_info(&simulation, u32::MAX)["report"].is_object());
 }
 
 #[test]
@@ -368,7 +393,7 @@ fn ride_test_refuses_unfinished_player_track_and_missing_demo() {
         player_only.ride_test("player"),
         "A closed circuit longer than the train is required"
     );
-    assert_eq!(ride_info(&player_only, "player")["report"], Value::Null);
+    assert_eq!(ride_info(&player_only, 0)["report"], Value::Null);
 }
 
 #[test]
@@ -378,7 +403,12 @@ fn headless_player_ride_test_matches_the_animated_builder_test() {
     animated.construction_test();
     for _ in 0..9000 {
         animated.tick();
-        if animated.construction_outcome.is_some() {
+        if animated
+            .editing_coaster()
+            .unwrap()
+            .construction_outcome
+            .is_some()
+        {
             break;
         }
     }
@@ -388,9 +418,15 @@ fn headless_player_ride_test_matches_the_animated_builder_test() {
     append_lift_drop_fixture(&mut headless);
     let hash_before = headless.state_hash();
     assert_eq!(headless.ride_test("player"), "");
-    assert!(headless.construction_train.is_none());
+    assert!(
+        headless
+            .editing_coaster()
+            .unwrap()
+            .construction_train
+            .is_none()
+    );
     assert!(headless.construction_message().is_empty());
-    assert_eq!(headless.coaster_ratings, None);
+    assert_eq!(headless.editing_coaster().unwrap().coaster_ratings, None);
     assert_ne!(headless.state_hash(), hash_before);
 
     let animated_report: Value =
@@ -400,12 +436,12 @@ fn headless_player_ride_test_matches_the_animated_builder_test() {
     assert!(!piece_force_peaks.is_empty());
     assert_eq!(
         piece_force_peaks.len(),
-        animated.park.construction.as_ref().unwrap().pieces().len()
+        animated.editing_construction().unwrap().pieces().len()
     );
     assert_eq!(piece_force_peaks[0]["pieceIndex"], 0);
     assert!(piece_force_peaks[0]["frontCar"].is_object());
     assert!(piece_force_peaks[0]["worstCar"].is_object());
-    assert_eq!(ride_info(&headless, "player")["report"], animated_report);
+    assert_eq!(ride_info(&headless, 0)["report"], animated_report);
 }
 
 #[test]
@@ -415,8 +451,8 @@ fn a_track_change_clears_the_player_report_but_not_the_demo_report() {
     assert_eq!(simulation.ride_test("player"), "");
     assert_eq!(simulation.ride_test("demo"), "");
     simulation.construction_undo();
-    assert_eq!(ride_info(&simulation, "player")["report"], Value::Null);
-    assert!(finite_ratings(&ride_info(&simulation, "demo")["report"]));
+    assert_eq!(ride_info(&simulation, 0)["report"], Value::Null);
+    assert!(finite_ratings(&ride_info(&simulation, u32::MAX)["report"]));
 }
 
 fn append_lift_drop_fixture(simulation: &mut WasmSimulation) {
@@ -479,8 +515,8 @@ fn station_height_used_by_browser_can_start_construction() {
     let mut simulation = WasmSimulation::new(2026, 12, String::from("demo"));
     simulation.construction_start(100, 100, 40, 0);
     let obstacles = simulation.facility_obstacles();
-    let world = &simulation.park.world;
-    let construction = simulation.park.construction.as_mut().unwrap();
+    let (world, coasters) = (&simulation.park.world, &mut simulation.park.coasters);
+    let construction = &mut coasters.get_mut(&CoasterId(0)).unwrap().construction;
     construction.set_chain(true);
     for piece_id in [
         theme_park_sim::track::PieceId::LevelToGentleUp,
@@ -505,8 +541,7 @@ fn station_height_used_by_browser_can_start_construction() {
     );
     assert_eq!(
         simulation
-            .construction
-            .as_ref()
+            .editing_construction()
             .expect("station construction should be active")
             .pieces()
             .len(),
@@ -527,15 +562,20 @@ fn tunnel_construction(surface_height: i16, track_height: i32) -> WasmSimulation
             water: None,
         },
     );
-    simulation.park.construction = Some(theme_park_sim::track::construction::Construction::new(
-        super::TrackState {
-            x: 50,
-            y: 50,
-            z: track_height,
-            ..super::TrackState::origin()
-        },
-        super::hybrid_model(),
-    ));
+    let coaster_id = CoasterId(0);
+    simulation.park.replace_coaster(
+        coaster_id,
+        theme_park_sim::track::construction::Construction::new(
+            super::TrackState {
+                x: 50,
+                y: 50,
+                z: track_height,
+                ..super::TrackState::origin()
+            },
+            super::hybrid_model(),
+        ),
+    );
+    simulation.editing = Some(coaster_id);
     simulation
 }
 
@@ -603,14 +643,13 @@ fn browser_route_can_append_gentle_down_after_transition() {
         );
     }
 
-    let transition_exit = simulation.construction.as_ref().unwrap().end();
+    let transition_exit = simulation.editing_construction().unwrap().end();
     assert_eq!(transition_exit.x, 180, "{transition_exit:?}");
     assert_eq!(transition_exit.y, 133, "{transition_exit:?}");
     assert_eq!(transition_exit.z, 28, "{transition_exit:?}");
 
     let descending_choice = simulation
-        .construction
-        .as_ref()
+        .editing_construction()
         .unwrap()
         .choices(&simulation.world, &[])
         .into_iter()
@@ -641,8 +680,7 @@ fn browser_route_can_append_gentle_down_after_transition() {
         ),
     ] {
         let choice = simulation
-            .construction
-            .as_ref()
+            .editing_construction()
             .unwrap()
             .choices(&simulation.world, &[])
             .into_iter()
@@ -652,7 +690,7 @@ fn browser_route_can_append_gentle_down_after_transition() {
             choice.result,
             Ok(()),
             "{piece} from {:?}: {choice:?}",
-            simulation.construction.as_ref().unwrap().end(),
+            simulation.editing_construction().unwrap().end(),
         );
         descents_will_tunnel |= choice.would_tunnel;
 
@@ -786,7 +824,7 @@ fn finish_preview_does_not_change_track_and_confirmation_closes_it() {
     assert!(!simulation.construction_rails().is_empty());
     simulation.construction_finish_confirm();
     assert!(!simulation.construction_finish_preview_active());
-    assert!(simulation.construction.as_ref().unwrap().is_closed());
+    assert!(simulation.editing_construction().unwrap().is_closed());
     assert_ne!(simulation.construction_track(), before);
 }
 
@@ -813,7 +851,7 @@ fn finish_cycle_moves_the_preview_through_the_ranked_options() {
     assert_eq!(previewed(&simulation), option_count - 1);
     assert!(simulation.construction_finish_preview_active());
     simulation.construction_finish_confirm();
-    assert!(simulation.construction.as_ref().unwrap().is_closed());
+    assert!(simulation.editing_construction().unwrap().is_closed());
 }
 
 #[test]
@@ -841,7 +879,7 @@ fn finish_preview_is_cancelled_by_track_edits() {
     let before = simulation.construction_track();
     simulation.construction_finish_confirm();
     assert_eq!(simulation.construction_track(), before);
-    assert!(!simulation.construction.as_ref().unwrap().is_closed());
+    assert!(!simulation.editing_construction().unwrap().is_closed());
 }
 
 #[test]
@@ -862,7 +900,7 @@ fn changing_cars_per_train_invalidates_and_rebuilds_finish_preview() {
     simulation.construction_finish_preview();
     simulation.construction_finish_confirm();
     assert!(
-        simulation.construction.as_ref().unwrap().is_closed(),
+        simulation.editing_construction().unwrap().is_closed(),
         "{}",
         simulation.construction_message()
     );
@@ -1025,7 +1063,7 @@ fn construction_falls_back_to_the_first_valid_piece_without_a_straight_continuat
         .unwrap();
 
     assert_eq!(simulation.construction_selected(), first_valid);
-    let construction = simulation.park.construction.as_ref().unwrap();
+    let construction = simulation.editing_construction().unwrap();
     let end = construction.end();
     assert_eq!((end.x, end.y, end.z), (216, 208, 20));
     let candidates =
@@ -1123,7 +1161,7 @@ fn model_selection_controls_new_construction_and_launch_choices() {
     simulation.construction_select("model:velocity_viper");
     simulation.construction_start(200, 200, 20, 0);
     assert_eq!(
-        simulation.construction.as_ref().unwrap().model().name,
+        simulation.editing_construction().unwrap().model().name,
         "Velocity Viper"
     );
     assert!(
@@ -1133,7 +1171,7 @@ fn model_selection_controls_new_construction_and_launch_choices() {
     );
     simulation.construction_select("LaunchShort");
     assert!(simulation.construction_can_append());
-    let construction = simulation.construction.as_ref().unwrap();
+    let construction = simulation.editing_construction().unwrap();
     let obstacles =
         super::track_support_obstacles(construction.pieces(), &construction.model().train);
     let preview = simulation.construction_preview();
@@ -1153,7 +1191,7 @@ fn model_selection_controls_new_construction_and_launch_choices() {
     simulation.construction_select("model:hybrid");
     simulation.construction_start(200, 200, 20, 0);
     assert_eq!(
-        simulation.construction.as_ref().unwrap().model().name,
+        simulation.editing_construction().unwrap().model().name,
         super::hybrid_model().name
     );
 }
@@ -1194,7 +1232,7 @@ fn rail_distances_follow_placed_rail_intervals_across_pieces() {
     simulation.construction_start(200, 200, 20, 0);
     simulation.construction_select("Straight");
     simulation.construction_append();
-    let construction = simulation.construction.as_ref().unwrap();
+    let construction = simulation.editing_construction().unwrap();
     let rails = simulation.construction_placed_rails();
     let distances = simulation.construction_rail_distances();
     assert_eq!(distances.len(), rails.len() / 19);
@@ -1306,7 +1344,7 @@ fn construction_commands_validate_and_preview_without_mutating_on_failure() {
     simulation.construction_select("Straight");
     assert!(simulation.construction_can_append());
     assert!(!simulation.construction_rails().is_empty());
-    let construction = simulation.construction.as_ref().unwrap();
+    let construction = simulation.editing_construction().unwrap();
     let obstacles =
         super::track_support_obstacles(construction.pieces(), &construction.model().train);
     let preview = simulation.construction_preview();
@@ -1373,7 +1411,7 @@ fn placing_track_into_a_hill_carves_it_and_undo_restores_terrain() {
     let tunnel_plan = theme_park_sim::track::clearance::tunnel_plan(
         &simulation.world,
         &piece,
-        &simulation.construction.as_ref().unwrap().model().train,
+        &simulation.editing_construction().unwrap().model().train,
     )
     .expect("selected piece has a tunnel plan");
     let midpoint = piece.sample(piece.length() / 2.0).position;
@@ -1397,14 +1435,13 @@ fn placing_track_into_a_hill_carves_it_and_undo_restores_terrain() {
     );
     simulation.construction_append();
 
-    assert_eq!(simulation.construction.as_ref().unwrap().pieces().len(), 1);
+    assert_eq!(simulation.editing_construction().unwrap().pieces().len(), 1);
     assert_eq!(simulation.world_state_hash(), expected_world.state_hash());
     assert_ne!(simulation.world_state_hash(), terrain_before_piece);
     simulation.construction_undo();
     assert!(
         simulation
-            .construction
-            .as_ref()
+            .editing_construction()
             .unwrap()
             .pieces()
             .is_empty()
@@ -1423,14 +1460,14 @@ fn deleting_a_middle_piece_restores_only_cells_no_remaining_piece_needs() {
         simulation.construction_select(piece);
         simulation.construction_append();
         assert_eq!(
-            simulation.construction.as_ref().unwrap().pieces().len(),
+            simulation.editing_construction().unwrap().pieces().len(),
             index + 1
         );
     }
 
     simulation.construction_delete(1);
 
-    let construction = simulation.construction.as_ref().unwrap();
+    let construction = simulation.editing_construction().unwrap();
     let retained: Vec<_> = construction
         .piece_ids()
         .iter()
@@ -1469,8 +1506,7 @@ fn undo_preserves_space_the_player_carved_by_hand() {
         .next()
         .expect("selected track has preview geometry");
     let train = simulation
-        .construction
-        .as_ref()
+        .editing_construction()
         .unwrap()
         .model()
         .train
@@ -1498,7 +1534,7 @@ fn undo_preserves_space_the_player_carved_by_hand() {
     let terrain_with_manual_cavern = simulation.world_state_hash();
 
     simulation.construction_append();
-    assert_eq!(simulation.construction.as_ref().unwrap().pieces().len(), 1);
+    assert_eq!(simulation.editing_construction().unwrap().pieces().len(), 1);
     simulation.construction_undo();
 
     assert_eq!(simulation.world_state_hash(), terrain_with_manual_cavern);
@@ -1527,7 +1563,7 @@ fn tunnelled_element_undo_restores_its_whole_sequence() {
     simulation.construction_append();
 
     assert_eq!(
-        simulation.construction.as_ref().unwrap().pieces().len(),
+        simulation.editing_construction().unwrap().pieces().len(),
         element_geometry.len()
     );
     assert_ne!(simulation.world_state_hash(), terrain_before_element);
@@ -1567,7 +1603,7 @@ fn placed_support_cache_matches_full_render_after_track_changes() {
         if let Some(id) = deleted {
             simulation.construction_delete(id);
         }
-        let construction = simulation.construction.as_ref().unwrap();
+        let construction = simulation.editing_construction().unwrap();
         let entries: Vec<_> = construction
             .piece_ids()
             .iter()
@@ -1585,14 +1621,32 @@ fn placed_support_cache_matches_full_render_after_track_changes() {
             record[0] = *entries[record[0] as usize].0 as f32;
         }
         let entry_count = entries.len();
-        assert_eq!(simulation.park.support_render_cache.len(), entry_count);
-        assert_eq!(simulation.construction_placed_supports(), expected);
-        assert_eq!(simulation.park.support_render_cache.len(), entry_count);
         assert_eq!(
-            simulation.park.refresh_construction_supports().unwrap(),
+            simulation
+                .park
+                .support_render_cache_len(simulation.editing_coaster_id().unwrap()),
+            entry_count
+        );
+        assert_eq!(simulation.construction_placed_supports(), expected);
+        assert_eq!(
+            simulation
+                .park
+                .support_render_cache_len(simulation.editing_coaster_id().unwrap()),
+            entry_count
+        );
+        assert_eq!(
+            simulation
+                .park
+                .refresh_construction_supports(CoasterId(0))
+                .unwrap(),
             expected
         );
-        assert_eq!(simulation.park.support_render_cache.len(), entry_count);
+        assert_eq!(
+            simulation
+                .park
+                .support_render_cache_len(simulation.editing_coaster_id().unwrap()),
+            entry_count
+        );
         assert_eq!(simulation.construction_placed_supports(), expected);
     }
 }
@@ -1755,8 +1809,7 @@ fn chain_mode_controls_placed_piece_and_refusals() {
     assert!(simulation.construction_message().is_empty());
     assert_eq!(
         simulation
-            .construction
-            .as_ref()
+            .editing_construction()
             .unwrap()
             .pieces()
             .last()
@@ -1773,8 +1826,8 @@ fn coaster_colours_start_from_the_model_and_change_the_state_hash() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     assert_eq!(simulation.construction_colors(), "null");
     assert_eq!(
-        simulation.coaster_colors(),
-        "{\"track\":\"coral\",\"supports\":\"timber\",\"trains\":\"sage\"}"
+        render_entry(&simulation, u32::MAX)["colors"],
+        serde_json::json!({"track":"coral", "supports":"timber", "trains":"sage"})
     );
     for (model, colors) in [
         (
@@ -1792,7 +1845,12 @@ fn coaster_colours_start_from_the_model_and_change_the_state_hash() {
     ] {
         simulation.construction_select(model);
         simulation.construction_start(100, 100, 40, 0);
-        assert_eq!(simulation.construction_colors(), colors, "{model}");
+        let coaster_id = simulation.editing_coaster_id().unwrap().0;
+        assert_eq!(
+            render_entry(&simulation, coaster_id)["colors"],
+            serde_json::from_str::<Value>(colors).unwrap(),
+            "{model}"
+        );
     }
 
     let before = simulation.state_hash();
@@ -1814,8 +1872,8 @@ fn coaster_colours_start_from_the_model_and_change_the_state_hash() {
 
     simulation.construction_start(120, 120, 40, 0);
     assert_eq!(
-        simulation.construction_colors(),
-        "{\"track\":\"timber\",\"supports\":\"timber\",\"trains\":\"slate\"}"
+        render_entry(&simulation, simulation.editing_coaster_id().unwrap().0)["colors"],
+        serde_json::json!({"track":"timber", "supports":"timber", "trains":"slate"})
     );
 }
 
@@ -1831,7 +1889,7 @@ fn train_layouts_name_each_model_and_its_train_shape() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     assert_eq!(simulation.construction_train_layout(), "null");
     assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&simulation.coaster_train_layout()).unwrap(),
+        render_entry(&simulation, u32::MAX)["trainLayout"],
         serde_json::json!({"model": "hybrid", "trackMaterial": "hybrid", "carsPerTrain": 6, "rowsPerCar": 2, "seatsPerRow": 2, "lengthMetres": 18.0})
     );
     for (model, key, material, cars, rows) in [
@@ -1841,9 +1899,9 @@ fn train_layouts_name_each_model_and_its_train_shape() {
     ] {
         simulation.construction_select(model);
         simulation.construction_start(100, 100, 40, 0);
+        let coaster_id = simulation.editing_coaster_id().unwrap().0;
         assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&simulation.construction_train_layout())
-                .unwrap(),
+            render_entry(&simulation, coaster_id)["trainLayout"],
             serde_json::json!({"model": key, "trackMaterial": material, "carsPerTrain": cars, "rowsPerCar": rows, "seatsPerRow": 2, "lengthMetres": 18.0}),
             "{model}"
         );
@@ -1873,13 +1931,23 @@ fn coaster_colours_replay_to_the_same_state() {
 fn lift_drop_circuit_completes_lap() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     append_lift_drop_fixture(&mut simulation);
-    assert!(!simulation.park.support_render_cache.is_empty());
+    assert!(
+        simulation
+            .park
+            .support_render_cache_len(simulation.editing_coaster_id().unwrap())
+            > 0
+    );
     simulation.construction_test();
     for _ in 0..9000 {
         simulation.tick();
         if simulation.construction_message() == "Train completed a lap." {
-            assert!(!simulation.park.support_render_cache.is_empty());
-            assert!(!simulation.park.proximity_supports().is_empty());
+            assert!(
+                simulation
+                    .park
+                    .support_render_cache_len(simulation.editing_coaster_id().unwrap())
+                    > 0
+            );
+            assert!(!simulation.park.proximity_supports(CoasterId(0)).is_empty());
             let report: serde_json::Value =
                 serde_json::from_str(&simulation.construction_test_report_json()).unwrap();
             let statistics = &report["statistics"];
@@ -1891,11 +1959,21 @@ fn lift_drop_circuit_completes_lap() {
             assert!(statistics["invertedSeconds"].as_f64().unwrap() > 0.0);
             return;
         }
-        if simulation.construction_outcome.is_some() {
+        if simulation
+            .editing_coaster()
+            .unwrap()
+            .construction_outcome
+            .is_some()
+        {
             break;
         }
     }
-    let (circuit, train) = simulation.construction_train.as_ref().unwrap();
+    let (circuit, train) = simulation
+        .editing_coaster()
+        .unwrap()
+        .construction_train
+        .as_ref()
+        .unwrap();
     let mut start = 0.0;
     let mut piece = "unknown";
     for candidate in circuit.pieces() {
@@ -1922,7 +2000,7 @@ fn opening_after_a_completed_test_keeps_the_report_for_the_ride_info_window() {
     for _ in 0..9000 {
         simulation.tick();
         if simulation.construction_message() == "Train completed a lap." {
-            let station = &simulation.construction.as_ref().unwrap().pieces()[0];
+            let station = &simulation.editing_construction().unwrap().pieces()[0];
             let (queue, exit) = super::station_positions(station).unwrap();
             for (position, kind) in [
                 (queue, super::PathKind::Queue),
@@ -1946,24 +2024,31 @@ fn opening_after_a_completed_test_keeps_the_report_for_the_ride_info_window() {
                     .construction_test_report_json()
                     .contains("\"rating\"")
             );
-            let report_before_opening = ride_info(&simulation, "player")["report"].clone();
+            let report_before_opening = ride_info(&simulation, 0)["report"].clone();
             assert!(report_before_opening["rating"]["excitement"].is_number());
             assert!(simulation.construction_set_open(true));
             assert_eq!(simulation.construction_test_report_json(), "null");
-            assert_eq!(
-                ride_info(&simulation, "player")["report"],
-                report_before_opening
-            );
+            assert_eq!(ride_info(&simulation, 0)["report"], report_before_opening);
             simulation.construction_set_open(false);
             simulation.construction_undo();
-            assert_eq!(ride_info(&simulation, "player")["report"], Value::Null);
+            assert_eq!(ride_info(&simulation, 0)["report"], Value::Null);
             return;
         }
-        if simulation.construction_outcome.is_some() {
+        if simulation
+            .editing_coaster()
+            .unwrap()
+            .construction_outcome
+            .is_some()
+        {
             break;
         }
     }
-    let (circuit, train) = simulation.construction_train.as_ref().unwrap();
+    let (circuit, train) = simulation
+        .editing_coaster()
+        .unwrap()
+        .construction_train
+        .as_ref()
+        .unwrap();
     let mut start = 0.0;
     let mut piece = "unknown";
     for candidate in circuit.pieces() {
@@ -2038,14 +2123,19 @@ fn construction_closes_and_runs_physics_deterministically() {
     );
     simulation.construction_delete(5);
     assert_eq!(simulation.construction_test_report_json(), "null");
-    let (_, recovered_train) = simulation.construction_train.as_ref().unwrap();
+    let (_, recovered_train) = simulation
+        .editing_coaster()
+        .unwrap()
+        .construction_train
+        .as_ref()
+        .unwrap();
     assert_eq!(recovered_train.speed(), 0.0);
     let recovered_poses = simulation.construction_train_poses();
-    let station = &simulation.construction.as_ref().unwrap().pieces()[0];
+    let station = &simulation.editing_construction().unwrap().pieces()[0];
     let recovered_state = simulation.construction_train_states();
     assert_eq!(recovered_state, vec![0.0, 0.0, 4.0, 1.0, 0.0, 0.0]);
     assert_eq!(recovered_train.distance(), station.length());
-    let config = &simulation.construction.as_ref().unwrap().model().train;
+    let config = &simulation.editing_construction().unwrap().model().train;
     assert_eq!(recovered_poses.len(), usize::from(config.cars) * 11);
     for (index, car) in recovered_poses.chunks_exact(11).enumerate() {
         let distance = (station.length()
