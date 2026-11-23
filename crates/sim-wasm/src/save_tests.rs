@@ -456,16 +456,42 @@ fn save_keeps_demo_and_player_test_reports() {
 }
 
 #[test]
-fn saves_use_v8_and_round_trip() {
+fn saves_use_v9_and_round_trip() {
     let compatible_v6_bytes = decompress_save_fixture(include_bytes!(
         "../tests/fixtures/coaster-grouping-v6-compatible.save.xz"
     ));
     assert!(compatible_v6_bytes.starts_with(b"TPSAVE\x06"));
     let expected = WasmSimulation::load_state_native(&compatible_v6_bytes).unwrap();
-    let saved_v8 = expected.save_state().unwrap();
-    assert!(saved_v8.starts_with(b"TPSAVE\x08"));
-    let v8_round_trip = WasmSimulation::load_state_native(&saved_v8).unwrap();
-    assert_eq!(expected.state_hash(), v8_round_trip.state_hash());
+    let saved_v9 = expected.save_state().unwrap();
+    assert!(saved_v9.starts_with(b"TPSAVE\x09"));
+    let v9_round_trip = WasmSimulation::load_state_native(&saved_v9).unwrap();
+    assert_eq!(expected.state_hash(), v9_round_trip.state_hash());
+}
+
+#[test]
+fn frozen_v8_save_layout_loads_and_continues() {
+    let v7_bytes = decompress_save_fixture(include_bytes!(
+        "../tests/fixtures/coaster-grouping-v7.save.xz"
+    ));
+    let mut expected = WasmSimulation::load_state_native(&v7_bytes).unwrap();
+    let mut legacy_v8 = expected.save_state().unwrap();
+    assert!(legacy_v8.starts_with(b"TPSAVE\x09"));
+
+    // V8 and V9 have the same payload field layout. Relabel a V9 payload with the
+    // old header to exercise the frozen V8 decoder and its conversion path.
+    legacy_v8[6] = 8;
+    let mut restored = WasmSimulation::load_state_native(&legacy_v8).unwrap();
+    assert_eq!(expected.state_hash(), restored.state_hash());
+    assert_eq!(
+        expected.editing_construction().unwrap().pieces().len(),
+        restored.editing_construction().unwrap().pieces().len()
+    );
+
+    for _ in 0..10 {
+        expected.tick();
+        restored.tick();
+        assert_eq!(expected.state_hash(), restored.state_hash());
+    }
 }
 
 #[test]
@@ -526,14 +552,14 @@ fn tested_open_v6_fixture_keeps_its_typed_v4_v5_rejection() {
 }
 
 #[test]
-fn tested_open_v6_fixture_saves_and_reloads_as_v8_without_changing_hash() {
+fn tested_open_v6_fixture_saves_and_reloads_as_v9_without_changing_hash() {
     let rich_v6_bytes = decompress_save_fixture(include_bytes!(
         "../tests/fixtures/coaster-grouping-v6.save.xz"
     ));
     let mut original = WasmSimulation::load_state_native(&rich_v6_bytes).unwrap();
-    let saved_v8 = original.save_state().unwrap();
-    assert!(saved_v8.starts_with(b"TPSAVE\x08"));
-    let mut restored = WasmSimulation::load_state_native(&saved_v8).unwrap();
+    let saved_v9 = original.save_state().unwrap();
+    assert!(saved_v9.starts_with(b"TPSAVE\x09"));
+    let mut restored = WasmSimulation::load_state_native(&saved_v9).unwrap();
     assert_eq!(original.state_hash(), restored.state_hash());
 
     for _ in 0..10 {
@@ -544,14 +570,14 @@ fn tested_open_v6_fixture_saves_and_reloads_as_v8_without_changing_hash() {
 }
 
 #[test]
-fn v7_fixture_migrates_to_v8_and_continues_after_reload() {
+fn v7_fixture_migrates_to_v9_and_continues_after_reload() {
     let v7_bytes = decompress_save_fixture(include_bytes!(
         "../tests/fixtures/coaster-grouping-v7.save.xz"
     ));
     let mut original = WasmSimulation::load_state_native(&v7_bytes).unwrap();
-    let v8_bytes = original.save_state().unwrap();
-    assert!(v8_bytes.starts_with(b"TPSAVE\x08"));
-    let mut restored = WasmSimulation::load_state_native(&v8_bytes).unwrap();
+    let v9_bytes = original.save_state().unwrap();
+    assert!(v9_bytes.starts_with(b"TPSAVE\x09"));
+    let mut restored = WasmSimulation::load_state_native(&v9_bytes).unwrap();
     assert_eq!(original.state_hash(), restored.state_hash());
 
     for _ in 0..30 {
@@ -702,16 +728,76 @@ fn save_round_trips_horizon_hawk_shaped_ride_under_two_mebibytes() {
 }
 
 #[test]
-fn v6_save_round_trips_shaped_inversions() {
-    for (model_key, selection) in [
-        ("velocity_viper", "shape:loop:left:4:neutral"),
-        ("velocity_viper", "shape:zeroGRoll:right:3.5"),
-        ("velocity_viper", "shape:ravenTurn:left:4:floaty"),
-        ("wooden_twister", "shape:loop:left:3.5:neutral"),
+fn v9_save_round_trips_shaped_inversion_intents_and_pieces() {
+    for (model_key, selection, expected_piece_id) in [
+        (
+            "velocity_viper",
+            "shape:loop:left:4:neutral",
+            PieceId::ShapedLoopLeft,
+        ),
+        (
+            "velocity_viper",
+            "shape:loop:right:4:neutral",
+            PieceId::ShapedLoopRight,
+        ),
+        (
+            "velocity_viper",
+            "shape:zeroGRoll:right:3.5",
+            PieceId::ShapedZeroGRollRight,
+        ),
+        (
+            "velocity_viper",
+            "shape:zeroGRoll:left:3.5",
+            PieceId::ShapedZeroGRollLeft,
+        ),
+        (
+            "velocity_viper",
+            "shape:ravenTurn:left:4:floaty",
+            PieceId::ShapedRavenTurnLeft,
+        ),
+        (
+            "velocity_viper",
+            "shape:ravenTurn:right:4:floaty",
+            PieceId::ShapedRavenTurnRight,
+        ),
+        (
+            "wooden_twister",
+            "shape:loop:left:3.5:neutral",
+            PieceId::ShapedLoopLeft,
+        ),
     ] {
         let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
         simulation.construction_select(&format!("model:{model_key}"));
-        simulation.construction_start(128, 128, 20, 0);
+        simulation.construction_start(128, 128, 60, 0);
+        let prefix_piece_ids: &[&str] = if model_key == "wooden_twister" {
+            &[
+                "LevelToGentleDown",
+                "GentleToSteepDown",
+                "SteepToGentleDown",
+                "GentleDown",
+                "GentleDownToLevel",
+                "Straight",
+            ]
+        } else {
+            &[
+                "LevelToGentleDown",
+                "GentleToSteepDown",
+                "SteepDown",
+                "SteepToGentleDown",
+                "GentleDownToLevel",
+                "Straight",
+            ]
+        };
+        for piece_id in prefix_piece_ids {
+            simulation.construction_select(piece_id);
+            assert!(
+                simulation.construction_can_append(),
+                "{model_key} prefix piece {piece_id} cannot append: {}",
+                simulation.construction_message()
+            );
+            simulation.construction_append();
+            assert!(simulation.construction_message().is_empty());
+        }
         simulation.construction_select(selection);
         assert!(
             simulation.construction_message().is_empty(),
@@ -719,12 +805,41 @@ fn v6_save_round_trips_shaped_inversions() {
             simulation.construction_message()
         );
 
-        let saved = simulation.save_state_native().unwrap();
-        let restored = WasmSimulation::load_state_native(&saved).unwrap();
-        let selected = restored
+        let selected_save = simulation.save_state_native().unwrap();
+        assert!(selected_save.starts_with(b"TPSAVE\x09"));
+        let selected_restore = WasmSimulation::load_state_native(&selected_save).unwrap();
+        let selected = selected_restore
             .construction_selected_shape_wire(true)
             .expect("selected shaped inversion survives save loading");
         assert_eq!(selected.selection, selection);
+
+        assert!(simulation.construction_can_append());
+        simulation.construction_append();
+        assert!(simulation.construction_message().is_empty());
+        assert_eq!(
+            simulation
+                .editing_construction()
+                .unwrap()
+                .pieces()
+                .last()
+                .unwrap()
+                .id,
+            expected_piece_id
+        );
+
+        let saved = simulation.save_state_native().unwrap();
+        assert!(saved.starts_with(b"TPSAVE\x09"));
+        let restored = WasmSimulation::load_state_native(&saved).unwrap();
+        assert_eq!(
+            restored
+                .editing_construction()
+                .unwrap()
+                .pieces()
+                .last()
+                .unwrap()
+                .id,
+            expected_piece_id
+        );
     }
 }
 
