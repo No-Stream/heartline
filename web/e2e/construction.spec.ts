@@ -566,7 +566,7 @@ for (const modelCase of [
 test("places shaped vertical loop, zero-g roll, and Raven turn on Velocity Viper @fast", async ({ page }) => {
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
-  await openTool(page, "Coaster");
+  await openCoasterBuilder(page);
   await selectUnits(page, "metric");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
 
@@ -628,7 +628,7 @@ test("places shaped vertical loop, zero-g roll, and Raven turn on Velocity Viper
 test("places shaped vertical loop, zero-g roll, and Raven turn on Timber Tumbler @fast", async ({ page }) => {
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
-  await openTool(page, "Coaster");
+  await openCoasterBuilder(page);
   await selectUnits(page, "metric");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
   await page.locator(".builder select[data-model]").selectOption("model:hybrid");
@@ -682,7 +682,7 @@ test("places shaped vertical loop, zero-g roll, and Raven turn on Timber Tumbler
 test("places shaped steel-structure vertical loop on Briar Blitz with amber feel note @fast", async ({ page }) => {
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
-  await openTool(page, "Coaster");
+  await openCoasterBuilder(page);
   await selectUnits(page, "metric");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
 
