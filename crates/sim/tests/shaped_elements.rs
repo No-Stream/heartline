@@ -16,9 +16,9 @@ use theme_park_sim::track::shaped::{
     default_raven_turn_peak_g, default_zero_g_roll_peak_g, solve, solve_confirm, solve_preview,
 };
 use theme_park_sim::track::{
-    Bank, CoasterModel, Hand, Heading, Heartlining, HillFeel, HorizontalCurvature, Material, Piece,
-    PieceId, PieceKind, Slope, TrackState, TrainConfiguration, VerticalCurvature, catalog,
-    coaster_models, family_coaster_model, hybrid_model, hyper_model, wooden_twister_model,
+    Bank, CoasterModel, Hand, Heading, Heartlining, HillFeel, HorizontalCurvature, Inversion,
+    Material, Piece, PieceId, PieceKind, Slope, TrackState, TrainConfiguration, VerticalCurvature,
+    catalog, coaster_models, family_coaster_model, hybrid_model, hyper_model, wooden_twister_model,
 };
 use theme_park_sim::world::{Surface, World};
 
@@ -1866,6 +1866,89 @@ fn assert_inversion_envelope(
     }
 }
 
+fn raven_apex_vertical_g_by_car(
+    prefix: &[Piece],
+    model: &CoasterModel,
+    piece: &Piece,
+    entry_speed_mps: f64,
+    apex_height_m: f64,
+) -> Vec<f64> {
+    let candidate_index = prefix.len();
+    let candidate_start_m = prefix.iter().map(Piece::length).sum::<f64>();
+    let mut pieces = prefix.to_vec();
+    pieces.push(piece.clone());
+    pieces.extend(runout_from(piece, &model.train));
+    let circuit = Circuit::open(pieces).expect("Raven candidate has a station and runout");
+
+    let scan_steps = 4096;
+    let apex_distance_m = (0..=scan_steps)
+        .map(|step| piece.length() * step as f64 / scan_steps as f64)
+        .filter_map(|distance_m| {
+            let sample = piece.sample(distance_m);
+            (sample.up.z < -0.999 && sample.roll.abs() < 1e-9)
+                .then_some((sample.position.z, distance_m))
+        })
+        .filter(|(height_m, _)| (*height_m - apex_height_m).abs() <= 0.01)
+        .map(|(_, distance_m)| distance_m)
+        .max_by(f64::total_cmp)
+        .expect("Raven geometry has a flat inverted apex join");
+
+    let mut train = Train::new(
+        &circuit,
+        &model.train,
+        PhysicsConfig {
+            lift_speed: entry_speed_mps,
+            ..PhysicsConfig::default()
+        },
+        candidate_start_m,
+        entry_speed_mps,
+    );
+    let mut closest_apex_samples = vec![None; usize::from(model.train.cars)];
+    let clear_candidate_distance_m = candidate_start_m + piece.length() + model.train.length_metres;
+    for _ in 0..100_000 {
+        train.step(&circuit);
+        for timestep_readings in train.take_readings() {
+            for (car_index, reading) in timestep_readings.into_iter().enumerate() {
+                if reading.piece_index != candidate_index {
+                    continue;
+                }
+                let local_distance_m = reading.distance - candidate_start_m;
+                let track_sample = piece.sample(local_distance_m);
+                if track_sample.up.z >= -0.95 || track_sample.roll.abs() >= 0.05 {
+                    continue;
+                }
+                let apex_distance_error_m = (local_distance_m - apex_distance_m).abs();
+                let closest_sample = &mut closest_apex_samples[car_index];
+                if closest_sample.is_none_or(|(closest_error_m, _): (f64, f64)| {
+                    apex_distance_error_m < closest_error_m
+                }) {
+                    *closest_sample = Some((apex_distance_error_m, reading.g.vertical));
+                }
+            }
+        }
+        if train.distance() >= clear_candidate_distance_m {
+            break;
+        }
+        assert!(
+            train.notes().is_empty(),
+            "Raven test train recovered before the apex"
+        );
+    }
+    closest_apex_samples
+        .into_iter()
+        .enumerate()
+        .map(|(car_index, closest_sample)| {
+            let (distance_error_m, vertical_g) = closest_sample
+                .unwrap_or_else(|| panic!("car {car_index} did not pass the Raven apex"));
+            assert!(
+                distance_error_m <= 0.5,
+                "car {car_index} apex sample missed the join by {distance_error_m:.3} m"
+            );
+            vertical_g
+        })
+        .collect()
+}
+
 fn velocity_viper_model() -> CoasterModel {
     coaster_models()
         .into_iter()
@@ -2128,6 +2211,59 @@ fn shaped_zero_g_rolls_meet_peak_force_crest_and_roll_rate_contract() {
 }
 
 #[test]
+fn shaped_zero_g_roll_peak_force_steps_are_calibrated_for_each_supported_model() {
+    let cases = [
+        (velocity_viper_model(), 4, [Hand::Left, Hand::Right]),
+        (hybrid_model(), 4, [Hand::Right, Hand::Left]),
+    ];
+    for (base_model, cars, hands) in cases {
+        for (index, peak_g) in [3.0, 3.5, 3.8, 4.0, 4.2, 4.5].into_iter().enumerate() {
+            let (model, prefix, solved) = solve_with_prefix(
+                ElementIntent::ZeroGRoll {
+                    hand: hands[index % hands.len()],
+                    peak_g,
+                },
+                &base_model,
+                cars,
+                30.0,
+            )
+            .unwrap_or_else(|refusal| {
+                panic!(
+                    "{} {cars}-car zero-g roll at {peak_g:.1} g refused: {refusal:?}",
+                    base_model.name
+                )
+            });
+            let ElementSpec::ZeroGRoll {
+                target_peak_g,
+                delivered_peak_g,
+                delivered_crest_g,
+                peak_roll_rate_deg_s,
+                ..
+            } = solved.spec
+            else {
+                panic!("expected ZeroGRoll spec");
+            };
+            assert!((delivered_peak_g - target_peak_g).abs() <= 0.20);
+            assert!(delivered_crest_g.abs() <= 0.45);
+            assert!(peak_roll_rate_deg_s < 200.0);
+            assert_eq!(solved.piece.inversion, Some(Inversion::HeartlineRoll));
+            assert_eq!(solved.piece.heartlining, Some(Heartlining::Heartlined));
+            let within_model_vibe =
+                peak_g <= model.design_force_targets.maximum_vertical_g - 0.25 + 1e-9;
+            assert_inversion_envelope(
+                &prefix,
+                &model,
+                &solved.piece,
+                30.0,
+                peak_g,
+                within_model_vibe,
+                &format!("{} {cars}-car zero-g roll at {peak_g:.1} g", model.name),
+            );
+        }
+    }
+}
+
+#[test]
 fn shaped_raven_turns_meet_peak_force_reversal_and_roll_rate_contract() {
     for (base_model, cars, speeds) in [
         (velocity_viper_model(), 3, vec![22.0, 26.0, 30.0, 34.0]),
@@ -2237,6 +2373,94 @@ fn shaped_raven_turns_meet_peak_force_reversal_and_roll_rate_contract() {
         4.0,
         true,
         "viper diagonal Raven turn right floaty",
+    );
+}
+
+#[test]
+fn shaped_raven_turn_peak_force_and_top_feel_steps_are_calibrated() {
+    let model = velocity_viper_model();
+    let mut apex_force_misses = Vec::new();
+    let peak_forces_g = [3.5, 3.8, 4.0, 4.2, 4.5];
+    let top_feels = [
+        LoopTopFeel::Floaty,
+        LoopTopFeel::Neutral,
+        LoopTopFeel::PressedIn,
+    ];
+    for (case_index, (peak_g, top_feel)) in peak_forces_g
+        .into_iter()
+        .flat_map(|peak_g| {
+            top_feels
+                .into_iter()
+                .map(move |top_feel| (peak_g, top_feel))
+        })
+        .enumerate()
+    {
+        let hand = if case_index % 2 == 0 {
+            Hand::Left
+        } else {
+            Hand::Right
+        };
+        let (model, prefix, solved) = solve_with_prefix(
+            ElementIntent::RavenTurn {
+                hand,
+                peak_g,
+                top_feel,
+            },
+            &model,
+            4,
+            30.0,
+        )
+        .unwrap_or_else(|refusal| {
+            panic!("Viper Raven turn at {peak_g:.1} g {top_feel:?} refused: {refusal:?}")
+        });
+        let ElementSpec::RavenTurn {
+            target_peak_g,
+            delivered_peak_g,
+            top_feel: delivered_top_feel,
+            peak_roll_rate_deg_s,
+            height_m,
+            ..
+        } = solved.spec
+        else {
+            panic!("expected RavenTurn spec");
+        };
+        assert!((delivered_peak_g - target_peak_g).abs() <= 0.20);
+        assert_eq!(delivered_top_feel, top_feel);
+        assert!(peak_roll_rate_deg_s <= 200.0);
+        assert_eq!(
+            solved.piece.id,
+            match hand {
+                Hand::Left => PieceId::ShapedRavenTurnLeft,
+                Hand::Right => PieceId::ShapedRavenTurnRight,
+            }
+        );
+        let within_model_vibe =
+            peak_g <= model.design_force_targets.maximum_vertical_g - 0.25 + 1e-9;
+        assert_inversion_envelope(
+            &prefix,
+            &model,
+            &solved.piece,
+            30.0,
+            peak_g,
+            within_model_vibe,
+            &format!("Viper Raven turn at {peak_g:.1} g {top_feel:?}"),
+        );
+        let apex_vertical_g_by_car =
+            raven_apex_vertical_g_by_car(&prefix, &model, &solved.piece, 30.0, height_m);
+        for (car_index, vertical_g) in apex_vertical_g_by_car.into_iter().enumerate() {
+            let delivered_apex_load_g = -vertical_g;
+            if (delivered_apex_load_g - top_feel.target_g()).abs() > 0.35 {
+                apex_force_misses.push(format!(
+                    "{peak_g:.1} g {top_feel:?} car {car_index}: apex load {delivered_apex_load_g:.3} g, target {:.3} g",
+                    top_feel.target_g()
+                ));
+            }
+        }
+    }
+    assert!(
+        apex_force_misses.is_empty(),
+        "Raven apex top-feel calibration missed its 0.35 g tolerance:\n{}",
+        apex_force_misses.join("\n")
     );
 }
 
