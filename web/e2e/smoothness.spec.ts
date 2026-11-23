@@ -2,8 +2,6 @@ import { expect, test } from "@playwright/test";
 import type { FrameLogEntry, SnapshotArrivalEntry } from "../src/game-test";
 import { startCoasterTestLap } from "./game-page";
 
-test.use({ viewport: { width: 160, height: 90 } });
-
 type Point3d = { x: number; y: number; z: number };
 type TrackProjection = { fraction: number; distance: number };
 
@@ -110,6 +108,7 @@ function coefficientOfVariation(values: number[]): number {
 
 test("builder test coaster render progress stays smooth on the production build @slow", async ({ page }) => {
   test.setTimeout(90_000);
+  await page.setViewportSize({ width: 1280, height: 720 });
   await page.addInitScript(() => {
     const scope = window as Window & { smoothnessRails?: number[] };
     const NativeWorker = window.Worker;
@@ -127,6 +126,7 @@ test("builder test coaster render progress stays smooth on the production build 
   await page.goto("/?frameLog=1");
   await page.waitForFunction(() => window.smoothnessRails !== undefined && window.gameTest.frameLog().length > 0);
   await startCoasterTestLap(page);
+  await page.setViewportSize({ width: 160, height: 90 });
   await page.waitForTimeout(3_000);
   const measurementStart = await page.evaluate(() => ({
     now: performance.now(),
