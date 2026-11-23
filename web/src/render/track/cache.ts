@@ -4,12 +4,18 @@ import type { CoasterColorScheme } from "../../coaster-colors";
 import { buildTrackQuads, trackPaint, trackStyle, type TrackQuad } from "./geometry";
 
 export function createStaticTrackCache(atlas: Atlas) {
-  let previous: { key: string; rails: Float32Array; ties: Float32Array; supports: Float32Array; quads: TrackQuad[] } | undefined;
-  return (rails: Float32Array, ties: Float32Array, supports: Float32Array, colors: CoasterColorScheme, camera: Camera, viewport: Viewport): readonly TrackQuad[] => {
-    const key = `${camera.centerX},${camera.centerY},${camera.zoom},${camera.rotation},${viewport.width},${viewport.height},${colors.track},${colors.supports},${colors.trains}`;
-    if (!previous || previous.key !== key || previous.rails !== rails || previous.ties !== ties || previous.supports !== supports) {
-      previous = { key, rails, ties, supports, quads: buildTrackQuads(rails, ties, supports, camera, viewport, trackPaint(trackStyle(atlas), colors)).filter((quad) => geometryIntersectsViewport(quad, viewport)) };
+  const caches = new WeakMap<Float32Array, Map<number | undefined, { key: string; ties: Float32Array; supports: Float32Array; quads: TrackQuad[] }>>();
+  return (rails: Float32Array, ties: Float32Array, supports: Float32Array, colors: CoasterColorScheme, camera: Camera, viewport: Viewport, coasterId?: number, trackRevision?: string): readonly TrackQuad[] => {
+    let coasterCaches = caches.get(rails);
+    if (!coasterCaches) {
+      coasterCaches = new Map();
+      caches.set(rails, coasterCaches);
     }
-    return previous.quads;
+    const key = `${trackRevision ?? ""},${camera.centerX},${camera.centerY},${camera.zoom},${camera.rotation},${viewport.width},${viewport.height},${colors.track},${colors.supports},${colors.trains}`;
+    const previous = coasterCaches.get(coasterId);
+    if (!previous || previous.key !== key || previous.ties !== ties || previous.supports !== supports) {
+      coasterCaches.set(coasterId, { key, ties, supports, quads: buildTrackQuads(rails, ties, supports, camera, viewport, trackPaint(trackStyle(atlas), colors), undefined, undefined, coasterId).filter((quad) => geometryIntersectsViewport(quad, viewport)) });
+    }
+    return coasterCaches.get(coasterId)!.quads;
   };
 }

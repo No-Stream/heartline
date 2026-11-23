@@ -2193,7 +2193,7 @@ mod tests {
         trace_call(
             trace,
             "world: coaster_supports",
-            simulation.coaster_supports(),
+            simulation.coaster_supports(crate::guests::DEMO_COASTER_RENDER_ID),
         );
     }
 

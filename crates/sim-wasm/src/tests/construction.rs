@@ -327,8 +327,19 @@ fn append_return_path(simulation: &mut WasmSimulation) {
     assert!(simulation.editing_construction().unwrap().is_closed());
 }
 
-fn ride_info(simulation: &WasmSimulation, ride: &str) -> Value {
-    serde_json::from_str(&simulation.ride_info_json(ride)).unwrap()
+fn ride_info(simulation: &WasmSimulation, coaster_id: u32) -> Value {
+    serde_json::from_str(&simulation.coaster_ride_info_json(coaster_id)).unwrap()
+}
+
+fn render_entry(simulation: &WasmSimulation, coaster_id: u32) -> Value {
+    serde_json::from_str::<Value>(&simulation.coaster_render_list_json())
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["id"] == coaster_id)
+        .unwrap()
+        .clone()
 }
 
 fn finite_ratings(report: &Value) -> bool {
@@ -342,18 +353,32 @@ fn finite_ratings(report: &Value) -> bool {
 #[test]
 fn demo_ride_test_fills_in_the_demo_report() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
-    let before = ride_info(&simulation, "demo");
-    assert_eq!(before["ride"], "demo");
+    let before = ride_info(&simulation, u32::MAX);
+    assert_eq!(before["ride"], u32::MAX);
     assert_eq!(before["modelName"], "Timber Tumbler");
     assert_eq!(before["manufacturer"], "Rocky Road Construction");
     assert!(before["limits"]["maximumLateralG"].is_number());
     assert_eq!(before["report"], Value::Null);
 
     assert_eq!(simulation.ride_test("demo"), "");
-    let report = &ride_info(&simulation, "demo")["report"];
+    let report = &ride_info(&simulation, u32::MAX)["report"];
     assert!(finite_ratings(report));
     assert!(!report["samples"].as_array().unwrap().is_empty());
     assert!(report["statistics"]["maxSpeed"].as_f64().unwrap() > 0.0);
+}
+
+#[test]
+fn numeric_ride_actions_address_demo_and_built_coasters() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    append_lift_drop_fixture(&mut simulation);
+
+    assert_eq!(simulation.coaster_test(0), "");
+    assert_eq!(simulation.coaster_test(u32::MAX), "");
+    assert_eq!(simulation.coaster_test(99), "No coaster has that id.");
+    assert_eq!(ride_info(&simulation, 0)["ride"], 0);
+    assert_eq!(ride_info(&simulation, u32::MAX)["ride"], u32::MAX);
+    assert!(ride_info(&simulation, 0)["report"].is_object());
+    assert!(ride_info(&simulation, u32::MAX)["report"].is_object());
 }
 
 #[test]
@@ -368,7 +393,7 @@ fn ride_test_refuses_unfinished_player_track_and_missing_demo() {
         player_only.ride_test("player"),
         "A closed circuit longer than the train is required"
     );
-    assert_eq!(ride_info(&player_only, "player")["report"], Value::Null);
+    assert_eq!(ride_info(&player_only, 0)["report"], Value::Null);
 }
 
 #[test]
@@ -416,7 +441,7 @@ fn headless_player_ride_test_matches_the_animated_builder_test() {
     assert_eq!(piece_force_peaks[0]["pieceIndex"], 0);
     assert!(piece_force_peaks[0]["frontCar"].is_object());
     assert!(piece_force_peaks[0]["worstCar"].is_object());
-    assert_eq!(ride_info(&headless, "player")["report"], animated_report);
+    assert_eq!(ride_info(&headless, 0)["report"], animated_report);
 }
 
 #[test]
@@ -426,8 +451,8 @@ fn a_track_change_clears_the_player_report_but_not_the_demo_report() {
     assert_eq!(simulation.ride_test("player"), "");
     assert_eq!(simulation.ride_test("demo"), "");
     simulation.construction_undo();
-    assert_eq!(ride_info(&simulation, "player")["report"], Value::Null);
-    assert!(finite_ratings(&ride_info(&simulation, "demo")["report"]));
+    assert_eq!(ride_info(&simulation, 0)["report"], Value::Null);
+    assert!(finite_ratings(&ride_info(&simulation, u32::MAX)["report"]));
 }
 
 fn append_lift_drop_fixture(simulation: &mut WasmSimulation) {
@@ -1801,8 +1826,8 @@ fn coaster_colours_start_from_the_model_and_change_the_state_hash() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     assert_eq!(simulation.construction_colors(), "null");
     assert_eq!(
-        simulation.coaster_colors(),
-        "{\"track\":\"coral\",\"supports\":\"timber\",\"trains\":\"sage\"}"
+        render_entry(&simulation, u32::MAX)["colors"],
+        serde_json::json!({"track":"coral", "supports":"timber", "trains":"sage"})
     );
     for (model, colors) in [
         (
@@ -1820,7 +1845,12 @@ fn coaster_colours_start_from_the_model_and_change_the_state_hash() {
     ] {
         simulation.construction_select(model);
         simulation.construction_start(100, 100, 40, 0);
-        assert_eq!(simulation.construction_colors(), colors, "{model}");
+        let coaster_id = simulation.editing_coaster_id().unwrap().0;
+        assert_eq!(
+            render_entry(&simulation, coaster_id)["colors"],
+            serde_json::from_str::<Value>(colors).unwrap(),
+            "{model}"
+        );
     }
 
     let before = simulation.state_hash();
@@ -1842,8 +1872,8 @@ fn coaster_colours_start_from_the_model_and_change_the_state_hash() {
 
     simulation.construction_start(120, 120, 40, 0);
     assert_eq!(
-        simulation.construction_colors(),
-        "{\"track\":\"timber\",\"supports\":\"timber\",\"trains\":\"slate\"}"
+        render_entry(&simulation, simulation.editing_coaster_id().unwrap().0)["colors"],
+        serde_json::json!({"track":"timber", "supports":"timber", "trains":"slate"})
     );
 }
 
@@ -1859,7 +1889,7 @@ fn train_layouts_name_each_model_and_its_train_shape() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     assert_eq!(simulation.construction_train_layout(), "null");
     assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&simulation.coaster_train_layout()).unwrap(),
+        render_entry(&simulation, u32::MAX)["trainLayout"],
         serde_json::json!({"model": "hybrid", "trackMaterial": "hybrid", "carsPerTrain": 6, "rowsPerCar": 2, "seatsPerRow": 2, "lengthMetres": 18.0})
     );
     for (model, key, material, cars, rows) in [
@@ -1869,9 +1899,9 @@ fn train_layouts_name_each_model_and_its_train_shape() {
     ] {
         simulation.construction_select(model);
         simulation.construction_start(100, 100, 40, 0);
+        let coaster_id = simulation.editing_coaster_id().unwrap().0;
         assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&simulation.construction_train_layout())
-                .unwrap(),
+            render_entry(&simulation, coaster_id)["trainLayout"],
             serde_json::json!({"model": key, "trackMaterial": material, "carsPerTrain": cars, "rowsPerCar": rows, "seatsPerRow": 2, "lengthMetres": 18.0}),
             "{model}"
         );
@@ -1994,17 +2024,14 @@ fn opening_after_a_completed_test_keeps_the_report_for_the_ride_info_window() {
                     .construction_test_report_json()
                     .contains("\"rating\"")
             );
-            let report_before_opening = ride_info(&simulation, "player")["report"].clone();
+            let report_before_opening = ride_info(&simulation, 0)["report"].clone();
             assert!(report_before_opening["rating"]["excitement"].is_number());
             assert!(simulation.construction_set_open(true));
             assert_eq!(simulation.construction_test_report_json(), "null");
-            assert_eq!(
-                ride_info(&simulation, "player")["report"],
-                report_before_opening
-            );
+            assert_eq!(ride_info(&simulation, 0)["report"], report_before_opening);
             simulation.construction_set_open(false);
             simulation.construction_undo();
-            assert_eq!(ride_info(&simulation, "player")["report"], Value::Null);
+            assert_eq!(ride_info(&simulation, 0)["report"], Value::Null);
             return;
         }
         if simulation

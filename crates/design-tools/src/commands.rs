@@ -339,9 +339,6 @@ pub(crate) fn inline_park_ride_files(
         .get_mut("coasters")
         .and_then(Value::as_array_mut)
         .ok_or_else(|| "park description field `coasters` must be an array".to_owned())?;
-    if coasters.len() > 1 {
-        return Err("this build supports one player coaster per park".into());
-    }
 
     for (coaster_index, coaster) in coasters.iter_mut().enumerate() {
         let ride_reference = coaster.get("ride").and_then(Value::as_str).ok_or_else(|| {

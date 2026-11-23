@@ -18,7 +18,7 @@ async function findDemoCoaster(page: Page): Promise<CoasterPick> {
     for (let y = 0; y < canvas.height; y += 4) {
       for (let x = 0; x < canvas.width; x += 4) {
         const picked = window.gameTest.pick(x, y);
-        if (picked?.kind === "track" && "id" in picked && /^track-\d+$/.test(picked.id)) return { id: picked.id, x, y };
+        if (picked?.kind === "track" && "id" in picked && /^track-4294967295-\d+$/.test(picked.id)) return { id: picked.id, x, y };
       }
     }
     return null;
@@ -110,7 +110,7 @@ test("the builder's Ride info button and a click on the built coaster open the s
   await openTool(page, "Coaster");
   await page.getByRole("button", { name: "Ride info", exact: true }).click();
   const rideWindow = page.getByTestId("ride-window");
-  await expect(rideWindow).toHaveAttribute("data-ride", "player");
+  await expect(rideWindow).toHaveAttribute("data-ride", "0");
   await expect(rideWindow.getByTestId("ride-name")).toHaveText("Timber Tumbler");
   // The recorded session ends with a finished test run, so the window shows its report at once.
   await expect(rideWindow.getByTestId("ride-report")).toBeVisible();
@@ -128,14 +128,14 @@ test("the builder's Ride info button and a click on the built coaster open the s
     for (let y = 4; y < canvas.height; y += 4) {
       for (let x = 4; x < canvas.width; x += 4) {
         const picked = window.gameTest.pick(x, y);
-        if (picked?.kind === "track" && "id" in picked && picked.id.startsWith("construction-track-")) return { id: picked.id, x, y };
+        if (picked?.kind === "track" && "id" in picked && /^track-0-\d+$/.test(picked.id)) return { id: picked.id, x, y };
       }
     }
     return null;
   });
   if (!target) throw new Error("The built coaster's track could not be picked");
   await clickCanvas(page, target);
-  await expect(rideWindow).toHaveAttribute("data-ride", "player");
+  await expect(rideWindow).toHaveAttribute("data-ride", "0");
   await expect(rideWindow.getByTestId("ride-report")).toBeVisible();
   await expect(rideWindow.locator('[data-score="excitement"] .testing-score__value')).toHaveText(report.rating.excitement.toFixed(1));
 });

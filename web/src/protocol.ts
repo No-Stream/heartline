@@ -12,6 +12,7 @@ import type { TrainLayout } from "./train-layout";
 import type { WorkerRecording } from "./session-recording";
 
 export type { PathPosition };
+export const DEMO_COASTER_ID = 0xffff_ffff;
 export type PathAction = PathToolCommand;
 export type WorkerAction =
   | { type: "init"; seed: bigint; park: "new" | "demo"; guestCount: number; frozen: boolean; manualBlockAnalysis: boolean }
@@ -33,8 +34,39 @@ export type WorkerAction =
   | { type: "test-advance-block-placement"; budget: number }
   | { type: "facility-price"; id: number; price: number };
 
-export type CoasterWorldMessage = WorldSnapshot & { coasterGeometry?: Float32Array; coasterRails?: Float32Array; coasterTies?: Float32Array; coasterSupports: Float32Array; coasterColors?: CoasterColorScheme | null; coasterTrain?: TrainLayout | null };
-export type CoasterSnapshot = GuestSnapshot & { tickCount: number; trainPoses: Float32Array; constructionTrainPoses: Float32Array; trainStates: Float32Array; constructionTrainStates: Float32Array; constructionRiders: Uint32Array };
+export interface CoasterRenderManifest {
+  readonly id: number;
+  readonly trackRevision: string;
+  readonly colors: CoasterColorScheme | null;
+  readonly trainLayout: TrainLayout | null;
+}
+
+export interface CoasterRenderData extends CoasterRenderManifest {
+  readonly geometry: Float32Array;
+  readonly rails: Float32Array;
+  readonly ties: Float32Array;
+  readonly supports: Float32Array;
+}
+
+export type CoasterWorldUpdate = CoasterRenderManifest & {
+  readonly supports?: Float32Array;
+  readonly geometry?: Float32Array;
+  readonly rails?: Float32Array;
+  readonly ties?: Float32Array;
+};
+
+export interface CoasterSnapshotData {
+  readonly id: number;
+  readonly trainPoses: Float32Array;
+  readonly trainStates: Float32Array;
+  readonly riders: Uint32Array;
+}
+
+export type CoasterWorldMessage = WorldSnapshot & {
+  readonly editingCoasterId: number | null;
+  readonly coasters: readonly CoasterWorldUpdate[];
+};
+export type CoasterSnapshot = GuestSnapshot & { tickCount: number; coasters: readonly CoasterSnapshotData[] };
 export type WorkerMessage =
   | { type: "construction-input-barrier" }
   | { type: "session-export"; requestId: number; recording?: WorkerRecording; error?: string }

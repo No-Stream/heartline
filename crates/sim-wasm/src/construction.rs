@@ -926,6 +926,23 @@ pub(crate) fn colors_json(colors: Option<CoasterColors>) -> String {
     serde_json::to_string(&colors).expect("coaster colors serialize")
 }
 
+pub(crate) fn colors_value(colors: Option<CoasterColors>) -> serde_json::Value {
+    colors.map_or(serde_json::Value::Null, |colors| {
+        serde_json::json!({
+            "track": colors.track.name(),
+            "supports": colors.supports.name(),
+            "trains": colors.trains.name(),
+        })
+    })
+}
+
+pub(crate) fn train_layout_value(
+    model: &CoasterModel,
+    train: &TrainConfiguration,
+) -> serde_json::Value {
+    serde_json::to_value(train_layout(model, train)).expect("serialize train layout")
+}
+
 fn element_representative(element: &ElementChoice) -> &Piece {
     element
         .geometry
@@ -2888,48 +2905,45 @@ impl WasmSimulation {
 
     /// Rates one coaster immediately and stores its report.
     pub fn coaster_test(&mut self, id: u32) -> String {
+        let ride = if id == crate::guests::DEMO_COASTER_RENDER_ID {
+            RideKey::Demo
+        } else if self.park.coaster(CoasterId(id)).is_some() {
+            RideKey::Player
+        } else {
+            return "No coaster has that id.".into();
+        };
         self.park
-            .run_ride_test(RideKey::Player, CoasterId(id))
+            .run_ride_test(ride, CoasterId(id))
             .err()
             .unwrap_or_default()
     }
 
-    /// Test report and model facts for the ride info window; `ride` is "demo" or "player".
-    pub fn ride_info_json(&self, ride: &str) -> String {
-        let (ride, model, report) = match ride {
-            "demo" => {
-                let coaster = self
-                    .park
-                    .demo_coaster
-                    .as_ref()
-                    .expect("park has a demo coaster");
-                let report = self
-                    .park
-                    .demo_report
-                    .as_ref()
-                    .map(|report| testing_report(report, &coaster.circuit));
-                ("demo", theme_park_sim::track::hybrid_model(), report)
-            }
-            "player" => {
-                let coaster_id = self
-                    .editing_coaster_id()
-                    .expect("park has an edited coaster");
-                let coaster = self
-                    .park
-                    .coaster(coaster_id)
-                    .expect("edited coaster exists");
-                let construction = &coaster.construction;
-                let report = coaster
-                    .construction_report
-                    .as_ref()
-                    .zip(construction.circuit().ok())
-                    .map(|(report, circuit)| testing_report(report, &circuit));
-                ("player", construction.model().clone(), report)
-            }
-            other => panic!("unknown ride: {other}"),
+    /// Test report and model facts for one coaster, addressed by its stable park id.
+    pub fn coaster_ride_info_json(&self, id: u32) -> String {
+        let (model, report) = if id == crate::guests::DEMO_COASTER_RENDER_ID {
+            let coaster = self
+                .park
+                .demo_coaster
+                .as_ref()
+                .expect("park has a demo coaster");
+            let report = self
+                .park
+                .demo_report
+                .as_ref()
+                .map(|report| testing_report(report, &coaster.circuit));
+            (theme_park_sim::track::hybrid_model(), report)
+        } else {
+            let coaster = self.park.coaster(CoasterId(id)).expect("coaster id exists");
+            let construction = &coaster.construction;
+            let report = coaster
+                .construction_report
+                .as_ref()
+                .zip(construction.circuit().ok())
+                .map(|(report, circuit)| testing_report(report, &circuit));
+            (construction.model().clone(), report)
         };
         serde_json::to_string(&crate::reports::RideInfoReport {
-            ride,
+            ride: id,
             model_name: model.name.to_owned(),
             manufacturer: model.manufacturer.to_owned(),
             limits: force_limits_wire(model.design_force_targets, model.name),
@@ -2938,13 +2952,24 @@ impl WasmSimulation {
         .expect("serialize ride info")
     }
 
-    /// Rates the ride at once and stores its report; returns an empty string on success, otherwise why not.
+    /// Legacy builder and recorded-session entry point, retained for version 1 session playback.
+    pub fn ride_info_json(&self, ride: &str) -> String {
+        let id = match ride {
+            "demo" => crate::guests::DEMO_COASTER_RENDER_ID,
+            "player" => {
+                self.editing_coaster_id()
+                    .expect("park has an edited coaster")
+                    .0
+            }
+            other => panic!("unknown ride: {other}"),
+        };
+        self.coaster_ride_info_json(id)
+    }
+
+    /// Legacy builder and recorded-session entry point, retained for version 1 session playback.
     pub fn ride_test(&mut self, ride: &str) -> String {
         match ride {
-            "demo" => match self.park.run_ride_test(RideKey::Demo, CoasterId(0)) {
-                Ok(()) => String::new(),
-                Err(message) => message,
-            },
+            "demo" => self.coaster_test(crate::guests::DEMO_COASTER_RENDER_ID),
             "player" => self.editing_coaster_id().map_or_else(
                 || "No coaster is being edited.".into(),
                 |id| self.coaster_test(id.0),

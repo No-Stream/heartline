@@ -10,7 +10,7 @@ import { clipGeometryAboveLevel, SHAPE_PAGES, type Atlas, type GeometryQuad, typ
 
 /** A soft additive light, in canvas pixels, drawn into the low-resolution glow layer. */
 export interface Glow { x: number; y: number; radius: number; color: Rgb; intensity: number; height: number }
-export interface CrestBurst { x: number; y: number; z: number; tick: number }
+export interface CrestBurst { x: number; y: number; z: number; tick: number; coasterId?: number }
 export type CrestTracker =
   | { climbing: false; climbStartZ: number; peak: null }
   | { climbing: true; climbStartZ: number; peak: CrestBurst };
