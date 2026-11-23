@@ -1,6 +1,5 @@
 use super::*;
 use serde::Serialize;
-use theme_park_sim::park::ride_test::RideKey;
 use theme_park_sim::physics::{
     Circuit, ForcePeakValues, PhysicsConfig, PieceForcePeaks, PreviewForceSample, PreviewStatus,
     TestRun,
@@ -2896,43 +2895,25 @@ impl WasmSimulation {
 
     /// Rates one coaster immediately and stores its report.
     pub fn coaster_test(&mut self, id: u32) -> String {
-        let ride = if id == crate::guests::DEMO_COASTER_RENDER_ID {
-            RideKey::Demo
-        } else if self.park.coaster(CoasterId(id)).is_some() {
-            RideKey::Player
-        } else {
+        if self.park.coaster(CoasterId(id)).is_none() {
             return "No coaster has that id.".into();
-        };
+        }
         self.park
-            .run_ride_test(ride, CoasterId(id))
+            .run_ride_test(CoasterId(id))
             .err()
             .unwrap_or_default()
     }
 
     /// Test report and model facts for one coaster, addressed by its stable park id.
     pub fn coaster_ride_info_json(&self, id: u32) -> String {
-        let (model, report) = if id == crate::guests::DEMO_COASTER_RENDER_ID {
-            let coaster = self
-                .park
-                .demo_coaster
-                .as_ref()
-                .expect("park has a demo coaster");
-            let report = self
-                .park
-                .demo_report
-                .as_ref()
-                .map(|report| testing_report(report, &coaster.circuit));
-            (theme_park_sim::track::hybrid_model(), report)
-        } else {
-            let coaster = self.park.coaster(CoasterId(id)).expect("coaster id exists");
-            let construction = &coaster.construction;
-            let report = coaster
-                .construction_report
-                .as_ref()
-                .zip(construction.circuit().ok())
-                .map(|(report, circuit)| testing_report(report, &circuit));
-            (construction.model().clone(), report)
-        };
+        let coaster = self.park.coaster(CoasterId(id)).expect("coaster id exists");
+        let construction = &coaster.construction;
+        let report = coaster
+            .construction_report
+            .as_ref()
+            .zip(construction.circuit().ok())
+            .map(|(report, circuit)| testing_report(report, &circuit));
+        let model = construction.model();
         serde_json::to_string(&crate::reports::RideInfoReport {
             ride: id,
             model_name: model.name.to_owned(),
@@ -2941,32 +2922,6 @@ impl WasmSimulation {
             report,
         })
         .expect("serialize ride info")
-    }
-
-    /// Legacy builder and recorded-session entry point, retained for version 1 session playback.
-    pub fn ride_info_json(&self, ride: &str) -> String {
-        let id = match ride {
-            "demo" => crate::guests::DEMO_COASTER_RENDER_ID,
-            "player" => {
-                self.editing_coaster_id()
-                    .expect("park has an edited coaster")
-                    .0
-            }
-            other => panic!("unknown ride: {other}"),
-        };
-        self.coaster_ride_info_json(id)
-    }
-
-    /// Legacy builder and recorded-session entry point, retained for version 1 session playback.
-    pub fn ride_test(&mut self, ride: &str) -> String {
-        match ride {
-            "demo" => self.coaster_test(crate::guests::DEMO_COASTER_RENDER_ID),
-            "player" => self.editing_coaster_id().map_or_else(
-                || "No coaster is being edited.".into(),
-                |id| self.coaster_test(id.0),
-            ),
-            other => panic!("unknown ride: {other}"),
-        }
     }
 
     pub fn construction_test_report_json(&self) -> String {

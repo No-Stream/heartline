@@ -15,6 +15,8 @@ mod save;
 mod save_v6;
 #[path = "save_v7.rs"]
 mod save_v7;
+#[path = "save_v8.rs"]
+mod save_v8;
 pub use save::SaveLoadError;
 #[cfg(test)]
 mod save_tests;
@@ -29,18 +31,15 @@ use command_errors::CommandError;
 #[cfg(test)]
 use std::collections::HashMap;
 
-use theme_park_sim::demo_world::demo_world;
 use theme_park_sim::facilities::{
     FacilityKind, ParkFacilities, facility_access_direction, station_positions,
 };
 use theme_park_sim::guests::{AgeGroup, GuestId};
-use theme_park_sim::park::{Coaster, CoasterId, DemoCoaster, Park};
+use theme_park_sim::park::{Coaster, CoasterId, Park};
 use theme_park_sim::park_guests::ParkGuests;
 #[cfg(test)]
 use theme_park_sim::physics::BlockOperation;
-use theme_park_sim::physics::{
-    Circuit, ConstructionTestRunRecorder, PhysicsConfig, Train, demo_circuit,
-};
+use theme_park_sim::physics::{Circuit, ConstructionTestRunRecorder, PhysicsConfig, Train};
 #[cfg(test)]
 use theme_park_sim::track::blocks::ThroughputEstimator;
 use theme_park_sim::track::blocks::{BlockLayout, BlockManualSearch, BlockPlacementSearch};
@@ -273,14 +272,10 @@ fn default_construction_piece_from_choices(
 use theme_park_sim::park::block_analysis::block_physics_config;
 #[cfg(test)]
 use theme_park_sim::park::tick::{
-    COASTER_PLACE_ID, block_boundary_fingerprint, block_layout_fingerprint,
+    block_boundary_fingerprint, block_layout_fingerprint,
 };
 
 impl WasmSimulation {
-    pub(crate) fn demo_coaster(&self) -> Option<&DemoCoaster> {
-        self.park.demo_coaster.as_ref()
-    }
-
     fn block_reasons(&self) -> Vec<String> {
         self.editing_coaster()
             .into_iter()
@@ -319,12 +314,6 @@ impl WasmSimulation {
                 }
             })
             .collect();
-        if let Some(coaster) = &self.park.demo_coaster {
-            obstacles.extend(track_support_obstacles(
-                coaster.circuit.pieces(),
-                &coaster.train_configuration,
-            ));
-        }
         for (&id, coaster) in &self.park.coasters {
             if Some(id) == excluded_coaster {
                 continue;
@@ -667,6 +656,7 @@ fn facility_height(kind: FacilityKind) -> f64 {
     }
 }
 
+#[cfg(test)]
 fn facility_intersects_track(
     kind: FacilityKind,
     position: Position,
@@ -908,10 +898,6 @@ fn render_ties(pieces: &[Piece], _world: &World) -> Vec<f32> {
     result
 }
 
-fn render_supports(pieces: &[Piece], world: &World) -> Vec<f32> {
-    try_render_supports(pieces, world).expect("demo support cannot be routed")
-}
-
 fn render_preview_supports(
     piece: &Piece,
     obstacles: &[SupportObstacle],
@@ -1046,6 +1032,7 @@ fn generate_supports(
     }
 }
 
+#[cfg(test)]
 fn try_render_supports(
     pieces: &[Piece],
     world: &World,

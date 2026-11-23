@@ -3,16 +3,19 @@ use std::fmt::{self, Display, Formatter};
 use wasm_bindgen::prelude::*;
 
 use crate::WasmSimulation;
+use theme_park_sim::park_guests::ParkGuests;
 use theme_park_sim::track::shaped::GeometryDigestMismatch;
 
 use crate::save_v6;
 use crate::save_v7;
+use crate::save_v8;
 
 const SAVE_HEADER_V4: &[u8] = b"TPSAVE\x04";
 const SAVE_HEADER_V5: &[u8] = b"TPSAVE\x05";
 const SAVE_HEADER_V6: &[u8] = b"TPSAVE\x06";
 const SAVE_HEADER_V7: &[u8] = b"TPSAVE\x07";
 const SAVE_HEADER_V8: &[u8] = b"TPSAVE\x08";
+const SAVE_HEADER_V9: &[u8] = b"TPSAVE\x09";
 const MAX_SAVE_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,6 +25,7 @@ pub(super) enum SaveVersion {
     V6,
     V7,
     V8,
+    V9,
 }
 
 #[derive(Debug)]
@@ -126,7 +130,9 @@ pub(crate) fn save_state_v6_for_test(simulation: &WasmSimulation) -> Vec<u8> {
 }
 
 pub(super) fn checked_payload(bytes: &[u8]) -> Result<(SaveVersion, &[u8]), SaveLoadError> {
-    let (version, data) = if let Some(data) = bytes.strip_prefix(SAVE_HEADER_V8) {
+    let (version, data) = if let Some(data) = bytes.strip_prefix(SAVE_HEADER_V9) {
+        (SaveVersion::V9, data)
+    } else if let Some(data) = bytes.strip_prefix(SAVE_HEADER_V8) {
         (SaveVersion::V8, data)
     } else if let Some(data) = bytes.strip_prefix(SAVE_HEADER_V7) {
         (SaveVersion::V7, data)
@@ -154,6 +160,16 @@ impl WasmSimulation {
             .map_err(|error| JsValue::from_str(&error))
     }
 
+    #[wasm_bindgen(js_name = from_park_save)]
+    pub fn from_park_save_wasm(
+        seed: u64,
+        guest_count: usize,
+        bytes: &[u8],
+    ) -> Result<WasmSimulation, JsValue> {
+        Self::from_park_save_native(seed, guest_count, bytes)
+            .map_err(|error| JsValue::from_str(&error))
+    }
+
     pub fn load_state(bytes: &[u8]) -> Result<WasmSimulation, JsValue> {
         Self::load_state_native(bytes).map_err(|error| JsValue::from_str(&error))
     }
@@ -164,8 +180,36 @@ impl WasmSimulation {
         self.save_state_native_with_limit(MAX_SAVE_BYTES as usize)
     }
 
+    pub fn from_park_save_native(
+        seed: u64,
+        guest_count: usize,
+        bytes: &[u8],
+    ) -> Result<Self, String> {
+        let mut simulation = Self::load_state_native(bytes)?;
+        let entrance = simulation
+            .park
+            .facilities
+            .entrance(&simulation.park.world)
+            .ok_or_else(|| "Park save has no connected entrance path".to_owned())?;
+        let guest_facilities = simulation
+            .park
+            .facilities
+            .guest_facilities(&simulation.park.world);
+        let mut guests = ParkGuests::new(
+            seed,
+            guest_count,
+            &simulation.park.world,
+            entrance,
+            guest_count.max(1),
+        );
+        guests.open_with_guests(&guest_facilities);
+        simulation.park.simulation = guests;
+        simulation.coaster_stop_editing();
+        Ok(simulation)
+    }
+
     fn save_state_native_with_limit(&self, limit: usize) -> Result<Vec<u8>, String> {
-        let mut bytes = SAVE_HEADER_V8.to_vec();
+        let mut bytes = SAVE_HEADER_V9.to_vec();
         let payload = theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
             postcard::serialize_with_flavor(self, LimitedBytes::new(limit))
         })
@@ -189,6 +233,11 @@ impl WasmSimulation {
         let decode_v7 = || {
             theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
                 postcard::take_from_bytes::<save_v7::WasmSimulationV7>(payload)
+            })
+        };
+        let decode_v8 = || {
+            theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
+                postcard::take_from_bytes::<save_v8::WasmSimulationV8>(payload)
             })
         };
         let decode_current = || {
@@ -256,6 +305,20 @@ impl WasmSimulation {
                 (decoded, mismatch)
             }
             SaveVersion::V8 => {
+                let (decoded, mismatch) =
+                    theme_park_sim::track::shaped::with_current_save_decode_context(decode_v8);
+                let decoded =
+                    decoded
+                        .map_err(SaveLoadError::Decode)
+                        .and_then(|(simulation, remaining)| {
+                            simulation
+                                .into_current()
+                                .map(|simulation| (simulation, remaining))
+                                .map_err(SaveLoadError::InvalidLegacyState)
+                        });
+                (decoded, mismatch)
+            }
+            SaveVersion::V9 => {
                 let (decoded, mismatch) =
                     theme_park_sim::track::shaped::with_current_save_decode_context(decode_current);
                 (decoded.map_err(SaveLoadError::Decode), mismatch)

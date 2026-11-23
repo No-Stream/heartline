@@ -1,10 +1,12 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use theme_park_sim::demo_world::demo_world;
 use theme_park_sim::physics::{CoasterRun, PhysicsConfig, TIME_STEP, Train, demo_circuit};
 use theme_park_sim::track::hybrid_model;
 use theme_park_sim::track::proximity::{TrainPosition, scan_proximity};
+
+#[path = "support/park_world.rs"]
+mod park_world;
 
 const PHYSICS_STEPS: usize = 40_000;
 const SCANS: usize = 10;
@@ -12,7 +14,7 @@ const REPORTS: usize = 1000;
 const GAME_TICK_SECONDS: f64 = 1.0 / 30.0;
 
 fn main() {
-    let world = demo_world();
+    let world = park_world::starter_park_world();
     let circuit = demo_circuit();
     let model = hybrid_model();
     let configuration = model.train.clone();

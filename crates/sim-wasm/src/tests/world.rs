@@ -5,6 +5,7 @@ use super::{
 use theme_park_sim::facilities::{FacilityKind, ParkFacilities};
 use theme_park_sim::guests::GuestId;
 use theme_park_sim::park::CoasterId;
+use theme_park_sim::park::tick::coaster_place_id;
 use theme_park_sim::park_guests::ParkGuests;
 use theme_park_sim::physics::{Circuit, TIME_STEP, demo_circuit};
 use theme_park_sim::track::clearance::ClearanceCollision;
@@ -33,28 +34,52 @@ fn new_park_starts_flat_with_an_entrance_and_two_path_tiles() {
         simulation.park.facilities.buildings()[0].kind,
         FacilityKind::Entrance
     );
-    assert!(simulation.demo_coaster().is_none());
-    assert!(simulation.coaster_geometry(u32::MAX).is_empty());
-    assert!(simulation.coaster_rails(u32::MAX).is_empty());
-    assert!(simulation.coaster_ties(u32::MAX).is_empty());
-    assert!(simulation.coaster_supports(u32::MAX).is_empty());
-    assert!(simulation.coaster_train_poses(u32::MAX).is_empty());
+    assert!(simulation.park.coasters.is_empty());
+    assert!(simulation.coaster_geometry(0).is_empty());
+    assert!(simulation.coaster_rails(0).is_empty());
+    assert!(simulation.coaster_ties(0).is_empty());
+    assert!(simulation.coaster_supports(0).is_empty());
+    assert!(simulation.coaster_train_poses(0).is_empty());
 }
 
 #[test]
-fn demo_park_keeps_its_coaster_and_facilities() {
+fn demo_park_loads_its_closed_starter_coaster_and_facilities() {
     let simulation = WasmSimulation::new(17, 12, String::from("demo"));
 
-    assert!(simulation.demo_coaster().is_some());
+    assert_eq!(simulation.park.coasters.len(), 1);
+    assert_eq!(simulation.editing_coaster_id_value(), None);
     assert!(simulation.park.facilities.buildings().len() > 1);
-    assert!(!simulation.coaster_rails(u32::MAX).is_empty());
+    assert!(!simulation.coaster_rails(0).is_empty());
+    let initial_train_states = simulation.coaster_train_states(0);
+    assert_eq!(initial_train_states.len(), 6);
+    assert_eq!(initial_train_states[1], 0.0, "parked train speed");
+    assert_eq!(initial_train_states[2], 4.0, "station track kind");
+    assert_eq!(initial_train_states[5], 0.0, "station train occupancy");
+    let initial_train_poses = simulation.coaster_train_poses(0);
+    assert!(!initial_train_poses.is_empty());
+    assert!(
+        initial_train_poses
+            .chunks_exact(11)
+            .all(|pose| pose[10] == 0.0)
+    );
+    let mut simulation = simulation;
+    for _ in 0..60 {
+        simulation.tick();
+    }
+    assert_eq!(
+        simulation.coaster_train_poses(0),
+        initial_train_poses,
+        "a closed starter coaster displays its train at the station"
+    );
 }
 
 #[test]
-fn new_construction_cannot_tunnel_through_the_existing_demo_coaster() {
+fn new_construction_cannot_tunnel_through_the_existing_starter_coaster() {
     let simulation = WasmSimulation::new(17, 0, String::from("demo"));
-    let demo_coaster = simulation.demo_coaster().expect("demo coaster exists");
-    let station_entry = demo_coaster.circuit.pieces()[0].entry;
+    let coaster = simulation
+        .coaster(CoasterId(0))
+        .expect("starter coaster exists");
+    let station_entry = coaster.construction.pieces()[0].entry;
     let construction = Construction::new(station_entry, hybrid_model());
 
     assert_eq!(
@@ -208,7 +233,7 @@ fn ensure_editing_coaster(simulation: &mut WasmSimulation) {
     }
 }
 
-fn build_block_test_construction(simulation: &mut WasmSimulation) {
+fn build_block_test_construction(simulation: &mut WasmSimulation) -> CoasterId {
     simulation.construction_start(100, 100, 40, 0);
     for (piece, chain) in [
         ("Straight", false),
@@ -235,6 +260,9 @@ fn build_block_test_construction(simulation: &mut WasmSimulation) {
     assert!(simulation.construction_can_close());
     simulation.construction_close();
     assert!(simulation.construction_can_test());
+    simulation
+        .editing_coaster_id()
+        .expect("block test construction is selected for editing")
 }
 
 fn apply_automatic_blocks_after_finding(simulation: &mut WasmSimulation, minimum_brakes: usize) {
@@ -502,9 +530,9 @@ fn connect_station_to_park_paths(simulation: &mut WasmSimulation) {
 #[test]
 fn automatic_block_search_reuses_completed_results_until_track_changes() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
-    build_block_test_construction(&mut simulation);
+    let coaster_id = build_block_test_construction(&mut simulation);
     let (circuit, train) = simulation
-        .construction_circuit_and_train(CoasterId(0))
+        .construction_circuit_and_train(coaster_id)
         .unwrap();
     let config = super::PhysicsConfig {
         powered_sections: false,
@@ -514,7 +542,7 @@ fn automatic_block_search_reuses_completed_results_until_track_changes() {
     search.advance(2_000);
     assert!(search.is_complete());
     let work = search.work_completed();
-    simulation.install_block_layout(CoasterId(0), search.best().clone(), false);
+    simulation.install_block_layout(coaster_id, search.best().clone(), false);
     simulation
         .editing_coaster_mut()
         .unwrap()
@@ -671,9 +699,9 @@ fn completed_automatic_search_installs_its_result() {
 fn block_candidates_are_sorted_exact_distances_accepted_by_manual_search() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     assert!(simulation.construction_block_candidates().is_empty());
-    build_block_test_construction(&mut simulation);
+    let coaster_id = build_block_test_construction(&mut simulation);
     let (circuit, train) = simulation
-        .construction_circuit_and_train(CoasterId(0))
+        .construction_circuit_and_train(coaster_id)
         .unwrap();
     let mut expected: Vec<_> =
         theme_park_sim::track::blocks::brake_runs(&circuit, train.length_metres)
@@ -693,12 +721,12 @@ fn block_candidates_are_sorted_exact_distances_accepted_by_manual_search() {
 #[test]
 fn manual_block_validation_preserves_layout_and_reports_rejection() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
-    build_block_test_construction(&mut simulation);
+    let coaster_id = build_block_test_construction(&mut simulation);
     let (circuit, train) = simulation
-        .construction_circuit_and_train(CoasterId(0))
+        .construction_circuit_and_train(coaster_id)
         .unwrap();
     let original = BlockLayout::new(&circuit, &train, block_physics_config(), Vec::new()).unwrap();
-    simulation.install_block_layout(CoasterId(0), original, false);
+    simulation.install_block_layout(coaster_id, original, false);
     let old_boundaries = simulation
         .editing_coaster()
         .unwrap()
@@ -775,7 +803,7 @@ fn manual_block_validation_preserves_layout_and_reports_rejection() {
 
 #[test]
 fn baseline_report_distinguishes_unverified_from_observed_stall() {
-    let circuit = super::demo_circuit();
+    let circuit = demo_circuit();
     let train = hybrid_model().train;
     let config = super::PhysicsConfig {
         powered_sections: false,
@@ -895,12 +923,12 @@ fn applying_an_unfinished_placement_does_not_claim_a_search_limit_was_reached() 
 #[test]
 fn automatic_placement_is_incremental_and_preserves_installed_layout_while_searching() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
-    build_block_test_construction(&mut simulation);
+    let coaster_id = build_block_test_construction(&mut simulation);
     let (circuit, train) = simulation
-        .construction_circuit_and_train(CoasterId(0))
+        .construction_circuit_and_train(coaster_id)
         .unwrap();
     let original = BlockLayout::new(&circuit, &train, block_physics_config(), Vec::new()).unwrap();
-    simulation.install_block_layout(CoasterId(0), original, false);
+    simulation.install_block_layout(coaster_id, original, false);
     let old_boundaries = simulation
         .editing_coaster()
         .unwrap()
@@ -1297,7 +1325,7 @@ fn automatic_search_publishes_baseline_verification_without_recovering_train() {
 
 #[test]
 fn stalled_baseline_waits_for_active_train_before_reducing_capacity() {
-    let circuit = super::demo_circuit();
+    let circuit = demo_circuit();
     let train = hybrid_model().train;
     let config = super::PhysicsConfig {
         powered_sections: false,
@@ -1305,8 +1333,8 @@ fn stalled_baseline_waits_for_active_train_before_reducing_capacity() {
     };
     let baseline = super::block_layout_for_open(&circuit, &train, config).unwrap();
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
-    build_block_test_construction(&mut simulation);
-    simulation.install_block_layout(CoasterId(0), baseline.clone(), false);
+    let coaster_id = build_block_test_construction(&mut simulation);
+    simulation.install_block_layout(coaster_id, baseline.clone(), false);
     simulation.editing_coaster_mut().unwrap().coaster_operation =
         Some(super::BlockOperation::new(baseline, &hybrid_model()));
     simulation.editing_coaster_mut().unwrap().coaster_open = true;
@@ -1328,11 +1356,11 @@ fn stalled_baseline_waits_for_active_train_before_reducing_capacity() {
         .block_baseline_validation = true;
     for _ in 0..10 {
         simulation.construction_advance_block_analysis(1_000);
-        if simulation.block_layout_change_pending(CoasterId(0)) {
+        if simulation.block_layout_change_pending(coaster_id) {
             break;
         }
     }
-    assert!(simulation.block_layout_change_pending(CoasterId(0)));
+    assert!(simulation.block_layout_change_pending(coaster_id));
     assert_eq!(
         simulation
             .editing_coaster()
@@ -1411,8 +1439,8 @@ fn baseline_validation_waits_to_adopt_powered_holds_until_the_train_completes() 
     let baseline = super::block_layout_for_open(&circuit, &train, config).unwrap();
     assert!(!baseline.capacity_search_complete());
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
-    build_block_test_construction(&mut simulation);
-    simulation.install_block_layout(CoasterId(0), baseline.clone(), false);
+    let coaster_id = build_block_test_construction(&mut simulation);
+    simulation.install_block_layout(coaster_id, baseline.clone(), false);
     simulation.editing_coaster_mut().unwrap().coaster_operation =
         Some(super::BlockOperation::new(baseline, &hybrid_model()));
     simulation.editing_coaster_mut().unwrap().coaster_open = true;
@@ -1441,7 +1469,7 @@ fn baseline_validation_waits_to_adopt_powered_holds_until_the_train_completes() 
             break;
         }
     }
-    assert!(simulation.block_layout_change_pending(CoasterId(0)));
+    assert!(simulation.block_layout_change_pending(coaster_id));
     assert!(
         !simulation
             .editing_coaster()
@@ -1758,6 +1786,11 @@ fn simulation_with_two_occupied_coaster_trains() -> WasmSimulation {
     assert_eq!(simulation.construction_train_count(), 1);
     assert!(simulation.construction_set_train_count(2));
     connect_station_to_park_paths(&mut simulation);
+    let ride_place_id = coaster_place_id(
+        simulation
+            .editing_coaster_id()
+            .expect("the constructed coaster remains selected"),
+    );
     simulation.refresh_construction_support_rendering();
     assert!(!simulation.construction_placed_supports().is_empty());
     assert!(
@@ -1827,7 +1860,7 @@ fn simulation_with_two_occupied_coaster_trains() -> WasmSimulation {
             .filter(|guest| guest
                 .known_places()
                 .iter()
-                .any(|place| place.id == super::COASTER_PLACE_ID))
+                .any(|place| place.id == ride_place_id))
             .count(),
         simulation.simulation.revenue(),
         simulation
@@ -1861,7 +1894,11 @@ fn v6_live_coaster_fixture_loads_and_keeps_running() {
         original.editing_coaster().unwrap().coaster_open,
         "fixture coaster is open"
     );
-    assert!(original.demo_coaster.is_none(), "fixture is a new park");
+    assert_eq!(
+        original.park.coasters.len(),
+        1,
+        "fixture contains its built coaster without a migrated starter coaster"
+    );
     assert!(
         original.editing_coaster().is_some(),
         "fixture coaster is built"
@@ -1972,11 +2009,16 @@ fn save_round_trip_preserves_a_live_park_with_riders_and_a_queue() {
     use theme_park_sim::guests::ActivityKind;
 
     let mut original = simulation_with_two_occupied_coaster_trains();
+    let ride_place_id = coaster_place_id(
+        original
+            .editing_coaster_id()
+            .expect("the ridden coaster remains selected"),
+    );
     let has_queued_guest = |simulation: &WasmSimulation| {
         simulation.simulation.walking().traits().ids().any(|guest| {
             let activity = simulation.simulation.behaviors().activity_detail(guest);
             activity.kind == ActivityKind::Queuing
-                && activity.place_id == Some(super::COASTER_PLACE_ID)
+                && activity.place_id == Some(ride_place_id)
         })
     };
     for _ in 0..10_000 {
@@ -2087,6 +2129,9 @@ fn deleting_coaster_track_recovers_passengers_from_two_live_trains() {
 #[test]
 fn automatic_improvement_waits_for_passengers_before_installing() {
     let mut simulation = simulation_with_two_occupied_coaster_trains();
+    let coaster_id = simulation
+        .editing_coaster_id()
+        .expect("the passenger coaster remains selected");
     let riders: Vec<_> = simulation
         .editing_coaster()
         .unwrap()
@@ -2237,7 +2282,7 @@ fn automatic_improvement_waits_for_passengers_before_installing() {
                 .as_ref()
                 .is_some_and(|search| search.best().capacity() > 2)
         {
-            assert!(simulation.block_layout_change_pending(CoasterId(0)));
+            assert!(simulation.block_layout_change_pending(coaster_id));
             saw_empty_dispatch_pause = true;
         }
         if tick % 1_000 == 0 {
@@ -2296,7 +2341,7 @@ fn automatic_improvement_waits_for_passengers_before_installing() {
             .unwrap()
             .capacity(),
         simulation.editing_coaster().unwrap().coaster_open,
-        simulation.block_layout_change_pending(CoasterId(0)),
+        simulation.block_layout_change_pending(coaster_id),
         circuit_length,
         station_distance,
         train_history,
@@ -2412,11 +2457,11 @@ fn block_commands_keep_valid_layout_after_rejected_edit() {
 }
 
 #[test]
-fn demo_exports_wooden_lattice_diagonals() {
+fn starter_coaster_exports_wooden_lattice_diagonals() {
     let simulation = WasmSimulation::new(42, 0, String::from("demo"));
     assert!(
         simulation
-            .coaster_supports(u32::MAX)
+            .coaster_supports(0)
             .chunks_exact(7)
             .any(|segment| {
                 (segment[1] != segment[4] || segment[2] != segment[5]) && segment[3] != segment[6]
@@ -2427,26 +2472,19 @@ fn demo_exports_wooden_lattice_diagonals() {
 #[test]
 fn coaster_exports_rails_and_evenly_spaced_ties_from_circuit_curves() {
     let simulation = WasmSimulation::new(42, 0, String::from("demo"));
-    let rails = simulation.coaster_rails(u32::MAX);
-    let ties = simulation.coaster_ties(u32::MAX);
+    let circuit = simulation
+        .coaster(CoasterId(0))
+        .expect("starter coaster")
+        .construction
+        .circuit()
+        .expect("starter circuit is closed");
+    let rails = simulation.coaster_rails(0);
+    let ties = simulation.coaster_ties(0);
     assert!(!rails.is_empty() && rails.len() % 19 == 0);
-    assert_eq!(
-        ties.len() / 13,
-        (simulation
-            .demo_coaster()
-            .expect("demo park")
-            .circuit
-            .length()
-            / 2.0)
-            .ceil() as usize
-    );
+    assert_eq!(ties.len() / 13, (circuit.length() / 2.0).ceil() as usize);
     assert_eq!(ties.len() % 13, 0);
     for (index, tie) in ties.chunks_exact(13).enumerate() {
-        let sample = simulation
-            .demo_coaster()
-            .expect("demo park")
-            .circuit
-            .sample(index as f64 * 2.0);
+        let sample = circuit.sample(index as f64 * 2.0);
         for axis in 0..3 {
             let expected = [sample.position.x, sample.position.y, sample.position.z][axis] / 4.0;
             let midpoint = (f64::from(tie[1 + axis]) + f64::from(tie[4 + axis])) / 2.0;
@@ -2457,12 +2495,7 @@ fn coaster_exports_rails_and_evenly_spaced_ties_from_circuit_curves() {
         let dz = tie[3] - tie[6];
         assert!(((dx * dx + dy * dy + dz * dz).sqrt() - 0.44).abs() < 0.0001);
     }
-    let first = simulation
-        .demo_coaster()
-        .expect("demo park")
-        .circuit
-        .pieces()[0]
-        .sample(0.0);
+    let first = circuit.pieces()[0].sample(0.0);
     let lateral = first.up.cross(first.tangent);
     for (rail, sign) in rails.chunks_exact(19).take(2).zip([-1.0, 1.0]) {
         let expected = (first.position + lateral * (sign * 0.72)) / 4.0;
@@ -2528,25 +2561,23 @@ fn supports_reroute_around_another_sampled_track() {
 }
 
 #[test]
-fn demo_train_state_reports_lift_and_valley_forces() {
+fn a_closed_starter_coaster_keeps_its_train_stopped_at_the_station() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
-    let lift_speed = 5.0;
-    let mut saw_lift = false;
-    let mut saw_valley = false;
+    let initial_poses = simulation.coaster_train_poses(0);
+    let initial_states = simulation.coaster_train_states(0);
+    assert!(!initial_poses.is_empty());
+    assert_eq!(initial_states.len(), 6);
+    assert_eq!(initial_states[0], 0.0);
+    assert_eq!(initial_states[1], 0.0);
+    assert_eq!(initial_states[2], 4.0);
+    assert_eq!(initial_states[5], 0.0);
+
     for _ in 0..20_000 {
         simulation.tick();
-        let state = simulation.coaster_train_states(u32::MAX);
-        assert_eq!(state.len(), 6);
-        assert_eq!(state[0], 0.0);
-        assert_eq!(state[5], 1.0);
-        saw_lift |= state[2] == 1.0 && (state[1] - lift_speed).abs() < 1e-4;
-        saw_valley |= saw_lift && state[2] == 0.0 && state[3] > 1.1;
-        if saw_valley {
-            break;
-        }
     }
-    assert!(saw_lift, "train never reached lift speed on the lift");
-    assert!(saw_valley, "train never reached a valley after the lift");
+
+    assert_eq!(simulation.coaster_train_poses(0), initial_poses);
+    assert_eq!(simulation.coaster_train_states(0), initial_states);
 }
 
 #[test]
@@ -2582,20 +2613,14 @@ fn construction_train_states_follow_block_operation_trains() {
 }
 
 #[test]
-fn coaster_snapshots_contain_stable_geometry_and_moving_train_poses() {
+fn starter_coaster_snapshots_keep_geometry_and_parked_train_poses_stable() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
-    let geometry = simulation.coaster_geometry(u32::MAX);
-    let supports = simulation.coaster_supports(u32::MAX);
-    let initial_poses = simulation.coaster_train_poses(u32::MAX);
+    let geometry = simulation.coaster_geometry(0);
+    let supports = simulation.coaster_supports(0);
+    let initial_poses = simulation.coaster_train_poses(0);
     assert!(!geometry.is_empty() && geometry.len() % 11 == 0);
     assert!(!supports.is_empty() && supports.len() % 7 == 0);
     assert!(!initial_poses.is_empty() && initial_poses.len() % 11 == 0);
-    let coaster = simulation.demo_coaster().expect("demo park");
-    let tangent = coaster.circuit.sample(coaster.train.distance()).tangent;
-    assert_eq!(
-        &initial_poses[4..7],
-        &[tangent.x as f32, tangent.y as f32, tangent.z as f32]
-    );
     assert!(
         geometry
             .iter()
@@ -2606,51 +2631,9 @@ fn coaster_snapshots_contain_stable_geometry_and_moving_train_poses() {
     for _ in 0..30 {
         simulation.tick();
     }
-    assert_ne!(simulation.coaster_train_poses(u32::MAX), initial_poses);
-    assert_eq!(simulation.coaster_geometry(u32::MAX), geometry);
-    assert_eq!(simulation.coaster_supports(u32::MAX), supports);
-}
-
-#[test]
-fn demo_train_completes_a_circuit_on_simulation_ticks() {
-    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
-    let circuit_length = simulation
-        .demo_coaster()
-        .expect("demo park")
-        .circuit
-        .length();
-    let mut maximum_distance: f64 = 0.0;
-    for _ in 0..9000 {
-        simulation.tick();
-        maximum_distance = maximum_distance.max(
-            simulation
-                .demo_coaster()
-                .expect("demo park")
-                .train
-                .distance(),
-        );
-        if simulation
-            .demo_coaster()
-            .expect("demo park")
-            .train
-            .distance()
-            >= circuit_length
-        {
-            return;
-        }
-    }
-    panic!(
-        "demo train failed to complete circuit: distance={}, maximum={}, speed={}, length={}, notes={:?}",
-        simulation
-            .demo_coaster()
-            .expect("demo park")
-            .train
-            .distance(),
-        maximum_distance,
-        simulation.demo_coaster().expect("demo park").train.speed(),
-        circuit_length,
-        simulation.demo_coaster().expect("demo park").train.notes()
-    );
+    assert_eq!(simulation.coaster_train_poses(0), initial_poses);
+    assert_eq!(simulation.coaster_geometry(0), geometry);
+    assert_eq!(simulation.coaster_supports(0), supports);
 }
 
 #[test]

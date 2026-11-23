@@ -165,8 +165,53 @@ fn removing_a_path_recovers_at_the_nearest_remaining_tile() {
 }
 
 #[test]
-fn demo_flow_field_connects_surface_to_underground_loop() {
-    let world = crate::demo_world::demo_world();
+fn flow_field_connects_surface_paths_to_an_underground_loop() {
+    let mut world = crate::world::starter_terrain();
+    for y in 250..=256 {
+        world.place_path(Path {
+            position: Position {
+                x: 218,
+                y,
+                height: 8,
+            },
+            slope: None,
+        });
+    }
+    world.set_surface(
+        219,
+        250,
+        crate::world::Surface {
+            corners: [8, 7, 7, 8],
+            water: None,
+        },
+    );
+    world.place_path(Path {
+        position: Position {
+            x: 219,
+            y: 250,
+            height: 7,
+        },
+        slope: Some(Direction::West),
+    });
+    for x in 220..224 {
+        let height = 226 - x as i16;
+        world.carve(x, 250, height, height + 2);
+        world.place_path(Path {
+            position: Position { x, y: 250, height },
+            slope: Some(Direction::West),
+        });
+    }
+    for y in 250..=254 {
+        for x in 224..=228 {
+            if x == 224 || x == 228 || y == 250 || y == 254 {
+                world.carve(x, y, 3, 5);
+                world.place_path(Path {
+                    position: Position { x, y, height: 3 },
+                    slope: None,
+                });
+            }
+        }
+    }
     let mut graph = crate::guests::pathfinding::Graph::with_entrance(&world, None);
     let start = graph.indices[&Position {
         x: 218,

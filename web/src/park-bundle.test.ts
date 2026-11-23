@@ -13,6 +13,21 @@ describe("bundled park descriptions", () => {
     });
   });
 
+  it("bundles the closed starter coaster from the ordinary demo ride file", () => {
+    const bundledPark = JSON.parse(bundledParkDescriptionJson("starter")) as {
+      version: number;
+      terrain: { preset: string };
+      coasters: { ride: { name: string }; open: boolean; queue?: unknown; exit?: unknown }[];
+    };
+
+    expect(bundledPark.version).toBe(2);
+    expect(bundledPark.terrain.preset).toBe("starter");
+    expect(bundledPark.coasters).toHaveLength(1);
+    expect(bundledPark.coasters[0]).toMatchObject({ ride: { name: "Demo" }, open: false });
+    expect(bundledPark.coasters[0]).not.toHaveProperty("queue");
+    expect(bundledPark.coasters[0]).not.toHaveProperty("exit");
+  });
+
   it("preserves full precision for shaped geometry digests in the embedded park", () => {
     const bundledPark = JSON.parse(bundledParkDescriptionJson("horizon-hawk")) as {
       coasters: {

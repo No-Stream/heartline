@@ -1,5 +1,4 @@
 use super::{Construction, ConstructionError, PieceChoice};
-use crate::demo_world::demo_world;
 use crate::track::{
     CoasterModel, PieceId, TrackState, hybrid_model, multi_launch_model, wooden_twister_model,
 };
@@ -35,7 +34,7 @@ fn worlds() -> Vec<(&'static str, World, i32, i32)> {
     }
     vec![
         ("open", World::new(128, 128, flat), 32, 128),
-        ("demo", demo_world(), 100, 100),
+        ("starter", crate::world::starter_terrain(), 100, 100),
         ("cramped", cramped, 40, 32),
     ]
 }

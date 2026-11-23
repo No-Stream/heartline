@@ -11,7 +11,9 @@ mod construction;
 #[cfg(test)]
 mod scenery_tests;
 pub use construction::{PathBuildError, PathKind, PathMetadata, PathPreviewTile};
+mod starter_terrain;
 mod terrain;
+pub use starter_terrain::starter_terrain;
 use std::sync::atomic::{AtomicUsize, Ordering};
 pub use terrain::{
     Brush, Corner, TerrainCommand, TerrainEditError, TerrainEditResult, TerrainTile,

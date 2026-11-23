@@ -256,6 +256,21 @@ async function selectCoasterById(page: Page, coasterId: number): Promise<void> {
   await expect(page.getByTestId("ride-window")).toHaveAttribute("data-ride", String(coasterId));
 }
 
+/** Start a builder test lap for an existing coaster and return its stable park id. */
+export async function startCoasterTestLap(page: Page, requestedCoasterId?: number): Promise<number> {
+  const coasterId = requestedCoasterId ?? await page.evaluate(() => window.gameTest.coasters()[0]?.id);
+  if (coasterId === undefined) throw new Error("The park has no coaster to test");
+  await selectCoasterById(page, coasterId);
+  await clickVisibleButton(page.getByTestId("ride-edit"));
+  await expect.poll(() => page.evaluate(() => window.gameTest.editingCoasterId())).toBe(coasterId);
+  const editor = page.locator("[data-editor]");
+  await expect(editor).toBeVisible();
+  await expect(editor).toHaveAttribute("aria-busy", "false");
+  await clickVisibleButton(page.getByRole("button", { name: /^Test coaster(?:\s|$)/ }));
+  await expect(page.locator("[data-message]")).toHaveText("Test train running.");
+  return coasterId;
+}
+
 /** Select a rendered track piece from the world so the ride window follows its coaster. */
 export async function selectCoasterFromWorld(page: Page, coasterId: number, camera: { centerX: number; centerY: number }): Promise<void> {
   await page.evaluate(({ centerX, centerY }) => window.gameTest.setCamera({ centerX, centerY, zoom: 1.5, rotation: 0 }), camera);

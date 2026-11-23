@@ -57,16 +57,12 @@ fn scenery_identity_includes_height() {
 #[test]
 fn demo_scenery_does_not_intersect_track_or_facilities() {
     let simulation = WasmSimulation::new(1, 0, String::from("demo"));
+    let coaster = simulation
+        .coaster(theme_park_sim::park::CoasterId(0))
+        .expect("starter coaster");
     let track = super::track_support_obstacles(
-        simulation
-            .demo_coaster()
-            .expect("demo park")
-            .circuit
-            .pieces(),
-        &simulation
-            .demo_coaster()
-            .expect("demo park")
-            .train_configuration,
+        coaster.construction.pieces(),
+        &coaster.construction.model().train,
     );
     for scenery in simulation.world.scenery() {
         let bounds = scenery.clearance_box();

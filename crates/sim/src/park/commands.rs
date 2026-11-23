@@ -7,13 +7,12 @@ use crate::facilities::{
     FacilityKind, PathOpening, PlacementError, coaster_access_openings,
     validate_facility_path_access,
 };
-use crate::physics::Circuit;
 use crate::track::clearance::{
     ClearanceBox, ClearanceCollision, TunnelPlan, check_clearance, check_track_clearance,
 };
 use crate::track::construction::{Construction, ConstructionError, track_support_obstacles};
 use crate::track::supports::SupportObstacle;
-use crate::track::{Piece, PieceId, TrainConfiguration, hybrid_model};
+use crate::track::{Piece, PieceId, TrainConfiguration};
 use crate::world::{
     CellEditError, Direction, Ground, PathBuildError, PathKind, PathPreviewTile, Position, Scenery,
     SceneryPlacementError, TerrainCommand, TerrainEditError, TerrainEditResult, TerrainTile, World,
@@ -75,10 +74,7 @@ impl Park {
         candidate: &Piece,
         excluded_coaster: Option<CoasterId>,
     ) -> Result<(), ConstructionError> {
-        let mut other_tracks = self
-            .demo_coaster
-            .as_ref()
-            .map_or_else(Vec::new, |coaster| coaster.circuit.pieces().to_vec());
+        let mut other_tracks = Vec::new();
         for (&id, coaster) in &self.coasters {
             if Some(id) == excluded_coaster {
                 continue;
@@ -101,15 +97,7 @@ impl Park {
         position: Position,
         direction: Direction,
     ) -> Result<u32, ParkCommandError> {
-        if self.demo_coaster.as_ref().is_some_and(|coaster| {
-            facility_intersects_track(
-                kind,
-                position,
-                direction,
-                coaster.circuit.pieces(),
-                &coaster.train_configuration,
-            )
-        }) || self.coasters.values().any(|coaster| {
+        if self.coasters.values().any(|coaster| {
             construction_intersects_facility(kind, position, direction, &coaster.construction)
         }) {
             return Err(ParkCommandError::FacilityIntersectsTrack);
@@ -245,13 +233,7 @@ impl Park {
         {
             return Err(ParkCommandError::SceneryIntersectsFacility);
         }
-        if self.demo_coaster.as_ref().is_some_and(|coaster| {
-            coaster
-                .circuit
-                .pieces()
-                .iter()
-                .any(|piece| scenery_intersects_track(bounds, piece, &coaster.train_configuration))
-        }) || self.coasters.values().any(|coaster| {
+        if self.coasters.values().any(|coaster| {
             coaster.construction.pieces().iter().any(|piece| {
                 scenery_intersects_track(bounds, piece, &coaster.construction.model().train)
             }) || coaster
@@ -458,24 +440,6 @@ impl Park {
                 Err(ClearanceCollision::Terrain)
             )
         };
-        if self.demo_coaster.as_ref().is_some_and(|coaster| {
-            coaster
-                .circuit
-                .pieces()
-                .iter()
-                .any(|piece| clearance_worsened(piece, &coaster.train_configuration))
-        }) {
-            return Err(ParkCommandError::TerrainTrackClearance);
-        }
-        if self.demo_coaster.as_ref().is_some_and(|coaster| {
-            circuit_support_route(&coaster.circuit, &self.world, &coaster.train_configuration)
-                .is_ok()
-                && circuit_support_route(&coaster.circuit, candidate, &coaster.train_configuration)
-                    .is_err()
-        }) {
-            return Err(ParkCommandError::TerrainSupportRoute);
-        }
-
         for (&coaster_id, coaster) in &self.coasters {
             let construction = &coaster.construction;
             let construction_train = &construction.model().train;
@@ -550,14 +514,6 @@ impl Park {
     }
 
     fn support_route_worsened(&self, candidate: &World) -> bool {
-        if self.demo_coaster.as_ref().is_some_and(|coaster| {
-            circuit_support_route(&coaster.circuit, &self.world, &coaster.train_configuration)
-                .is_ok()
-                && circuit_support_route(&coaster.circuit, candidate, &coaster.train_configuration)
-                    .is_err()
-        }) {
-            return true;
-        }
         self.coasters.iter().any(|(&id, coaster)| {
             let construction = &coaster.construction;
             let support_obstacles = self.construction_support_obstacles(id);
@@ -607,30 +563,6 @@ fn render_construction_supports(
         &mut cache,
     )
     .map(|_| ())
-}
-
-fn circuit_support_route(
-    circuit: &Circuit,
-    world: &World,
-    train: &TrainConfiguration,
-) -> Result<(), crate::track::supports::SupportError> {
-    let model = hybrid_model();
-    for (index, piece) in circuit.pieces().iter().enumerate() {
-        let obstacles = circuit
-            .pieces()
-            .iter()
-            .enumerate()
-            .filter(|(other_index, _)| *other_index != index)
-            .flat_map(|(_, other)| track_support_obstacles(std::slice::from_ref(other), train))
-            .collect::<Vec<_>>();
-        generate_supports(
-            piece,
-            world,
-            &obstacles,
-            model.support_style.for_piece(piece),
-        )?;
-    }
-    Ok(())
 }
 
 fn construction_intersects_facility(

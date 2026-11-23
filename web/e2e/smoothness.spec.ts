@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
-import { DEMO_COASTER_ID } from "../src/protocol";
 import type { FrameLogEntry, SnapshotArrivalEntry } from "../src/game-test";
+import { startCoasterTestLap } from "./game-page";
 
 test.use({ viewport: { width: 160, height: 90 } });
 
@@ -108,24 +108,25 @@ function coefficientOfVariation(values: number[]): number {
   return Math.sqrt(variance) / mean;
 }
 
-test("demo coaster render progress stays smooth on the production build @slow", async ({ page }) => {
+test("builder test coaster render progress stays smooth on the production build @slow", async ({ page }) => {
   test.setTimeout(90_000);
-  await page.addInitScript((demoCoasterId: number) => {
+  await page.addInitScript(() => {
     const scope = window as Window & { smoothnessRails?: number[] };
     const NativeWorker = window.Worker;
     window.Worker = class extends NativeWorker {
       constructor(scriptURL: string | URL, options?: WorkerOptions) {
         super(scriptURL, options);
         this.addEventListener("message", (event: MessageEvent<{ type?: string; coasters?: { id: number; rails?: Float32Array }[] }>) => {
-          const rails = event.data.coasters?.find(({ id }) => id === demoCoasterId)?.rails;
+          const rails = event.data.coasters?.[0]?.rails;
           if (event.data.type === "world" && rails) scope.smoothnessRails = Array.from(rails);
         });
       }
     };
-  }, DEMO_COASTER_ID);
+  });
 
   await page.goto("/?frameLog=1");
   await page.waitForFunction(() => window.smoothnessRails !== undefined && window.gameTest.frameLog().length > 0);
+  await startCoasterTestLap(page);
   await page.waitForTimeout(3_000);
   const measurementStart = await page.evaluate(() => ({
     now: performance.now(),

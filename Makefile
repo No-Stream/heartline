@@ -8,12 +8,12 @@ PARK ?= content/parks/horizon-hawk.park.json
 SHELL := tools/run-in-budget.sh
 .SHELLFLAGS := bash -c
 
-.PHONY: install build check test test-rust test-rated-windows test-force-rule test-construction-cache test-inversion-compile test-threads test-web test-design-json-harness test-canvas-sizing test-flexibility lint serve e2e e2e-feature e2e-journey e2e-smoothness e2e-slow e2e-feature-docker e2e-feature-docker-update-snapshots e2e-journey-docker e2e-journey-docker-update-snapshots journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-builder-updates bench-builder-updates-browser bench-finish bench-player-circuits bench-player-force-preview bench-shaped-elements bench-shaped-elements-cold check-shaped-turn-arc-parity generate-report-types check-report-types generate-profiles generate-rated-windows ride-agreement design-tools agreement-wasm test-agreement test-design-tools park-report
+.PHONY: install build check test test-rust test-rated-windows test-force-rule test-construction-cache test-inversion-compile test-threads test-web test-design-json-harness test-canvas-sizing test-flexibility lint serve e2e e2e-feature e2e-journey e2e-smoothness e2e-slow e2e-feature-docker e2e-feature-docker-update-snapshots e2e-journey-docker e2e-journey-docker-update-snapshots journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-builder-updates bench-builder-updates-browser bench-finish bench-player-circuits bench-player-force-preview bench-shaped-elements bench-shaped-elements-cold check-shaped-turn-arc-parity generate-report-types check-report-types generate-profiles generate-rated-windows ride-agreement design-tools starter-park-save agreement-wasm test-agreement test-design-tools park-report
 
 install:
 	npm ci
 
-build: wasm-bindgen art check-report-types
+build: wasm-bindgen art check-report-types starter-park-save
 	$(CARGO) build --release --target wasm32-unknown-unknown -p theme-park-sim-wasm
 	$(WASM_BINDGEN) target/wasm32-unknown-unknown/release/theme_park_sim_wasm.wasm --target web --out-dir web/src/wasm
 	npm run build
@@ -27,6 +27,9 @@ check-report-types:
 
 design-tools:
 	$(CARGO) build --release -p theme-park-design-tools
+
+starter-park-save: art design-tools
+	THEME_PARK_DESIGN_TOOLS_PREBUILT=1 tools/design park build content/parks/starter.park.json --save web/art/atlas/starter.park.save
 
 # The browser's release WASM build without the art and web bundle, for tools/design agree.
 agreement-wasm: wasm-bindgen
@@ -105,7 +108,7 @@ lint:
 	$(CARGO) clippy -p theme-park-sim --all-targets --features threads -- -D clippy::disallowed_methods -D warnings
 	npm run typecheck
 
-serve:
+serve: starter-park-save
 	npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 
 e2e: build

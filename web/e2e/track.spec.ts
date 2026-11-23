@@ -37,12 +37,12 @@ for (const rotation of [0, 1, 2, 3] as const) {
 }
 
 for (const rotation of [0, 1, 2, 3] as const) {
-  test(`worker demo coaster at rotation ${rotation}`, async ({ page }) => {
+  test(`worker starter coaster at rotation ${rotation}`, async ({ page }) => {
     test.setTimeout(90_000);
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto(fixtureUrl);
-    const trackPoints = await page.evaluate(() => window.demoTrackPoints());
+    const trackPoints = await page.evaluate(() => window.starterTrackPoints());
     expect(trackPoints.length).toBeGreaterThan(0);
     await page.goto("/?test=1");
     await page.waitForFunction(() => window.gameTest?.ready);

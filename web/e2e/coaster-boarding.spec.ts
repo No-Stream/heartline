@@ -19,6 +19,8 @@ test("guests ride a player-built coaster and can be selected @slow", async ({ pa
   const choices = page.getByRole("radiogroup", { name: "Next piece" });
   const track = page.locator("[data-track]");
   await expect(track.locator("li")).toHaveCount(1);
+  const playerCoasterId = await page.evaluate(() => window.gameTest.editingCoasterId());
+  if (playerCoasterId === null) throw new Error("The new coaster is not selected for editing");
   const pieces = ["LevelToGentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUpToLevel", "Straight", "OneTileStraight", "OneTileStraight", "OffsetLeft", "TurnLargeEntry", "TurnLargeExit", "LevelToGentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDownToLevel", "Loop", "OffsetRight", "TurnLargeEntry", "TurnLargeExit", "OneTileStraight"];
   for (const [index, piece] of pieces.entries()) {
     if (index === 0 || index === 8) {
@@ -84,7 +86,7 @@ test("guests ride a player-built coaster and can be selected @slow", async ({ pa
   await entrancePrice.press("Tab");
   await expect.poll(() => page.evaluate((id) => window.gameTest.facilities().find(({ id: currentId }) => currentId === id)?.price, entrance.id)).toBe(8);
   await openTool(page, "Coaster");
-  await page.locator('[data-coaster-id="0"]').click();
+  await page.locator(`[data-coaster-id="${playerCoasterId}"]`).click();
   const coasterPrice = rideWindow.getByTestId("ride-price");
   await coasterPrice.fill("9");
   await coasterPrice.press("Tab");
@@ -142,6 +144,7 @@ test("guests ride a player-built coaster and can be selected @slow", async ({ pa
   }, riderId);
   if (!pick) throw new Error(`Rider ${riderId} was not visible and pickable`);
   await page.locator("canvas").scrollIntoViewIfNeeded();
+  await page.mouse.move(0, 0);
   await expect(page.locator("canvas")).toHaveScreenshot("coaster-boarding.png", { animations: "disabled" });
   await clickCanvas(page, pick);
   await expect(page.locator("canvas")).toHaveAttribute("data-selection", new RegExp(`"id":"${riderId}"`));
@@ -153,10 +156,10 @@ test("guests ride a player-built coaster and can be selected @slow", async ({ pa
   }
   expect(exited).toBe(true);
   await page.evaluate((id) => window.gameTest.requestGuestDetail(id), riderId);
-  await expect.poll(() => page.evaluate((id) => {
+  await expect.poll(() => page.evaluate(({ id, coasterId }) => {
     const detail = window.gameTest.guestDetail();
-    return detail?.id === id && detail.memories.some((memory) => memory.kind === "ride" && memory.rideId === 0xffff_ffff);
-  }, riderId)).toBe(true);
+    return detail?.id === id && detail.memories.some((memory) => memory.kind === "ride" && memory.rideId === 0xffff_ffff - coasterId);
+  }, { id: riderId, coasterId: playerCoasterId })).toBe(true);
 });
 
 async function advanceTicksAndRender(page: Page, count: number, camera: Camera): Promise<void> {

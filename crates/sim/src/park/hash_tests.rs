@@ -1,4 +1,3 @@
-use super::ride_test::RideKey;
 use super::{CoasterId, Park};
 use crate::facilities::ParkFacilities;
 use crate::guests::park::ParkGuests;
@@ -41,24 +40,8 @@ fn empty_park() -> Park {
         },
         slope: None,
     });
-    let train_configuration = hybrid_model().train;
-    let circuit = demo_circuit();
-    let train = Train::new(
-        &circuit,
-        &train_configuration,
-        PhysicsConfig::default(),
-        0.0,
-        0.0,
-    );
     let simulation = ParkGuests::new(42, 1, &world, entrance, 1);
-    Park::new(
-        world,
-        ParkFacilities::new(),
-        simulation,
-        circuit,
-        train,
-        train_configuration,
-    )
+    Park::new_empty(world, ParkFacilities::new(), simulation)
 }
 
 #[test]
@@ -104,9 +87,32 @@ fn state_hash_is_reproducible_and_covers_live_park_state() {
     assert_ne!(baseline_hash, behavior_changed.state_hash());
 
     let mut train_changed = empty_park();
-    let coaster = train_changed.demo_coaster.as_mut().unwrap();
-    coaster.train.step(&coaster.circuit);
-    assert_ne!(baseline_hash, train_changed.state_hash());
+    train_changed.replace_coaster(
+        CoasterId(0),
+        Construction::new(
+            TrackState {
+                x: 4,
+                y: 4,
+                z: 0,
+                ..TrackState::origin()
+            },
+            hybrid_model(),
+        ),
+    );
+    let baseline_with_coaster = train_changed.state_hash();
+    let circuit = demo_circuit();
+    let train = Train::new(
+        &circuit,
+        &hybrid_model().train,
+        PhysicsConfig::default(),
+        0.0,
+        0.0,
+    );
+    train_changed
+        .coaster_mut(CoasterId(0))
+        .unwrap()
+        .construction_train = Some((circuit, train));
+    assert_ne!(baseline_with_coaster, train_changed.state_hash());
 
     let mut construction_changed = empty_park();
     construction_changed.replace_coaster(
@@ -122,13 +128,6 @@ fn state_hash_is_reproducible_and_covers_live_park_state() {
         ),
     );
     assert_ne!(baseline_hash, construction_changed.state_hash());
-
-    let mut demo_report_changed = empty_park();
-    demo_report_changed
-        .run_ride_test(RideKey::Demo, CoasterId(0))
-        .unwrap();
-    assert!(demo_report_changed.demo_report.is_some());
-    assert_ne!(baseline_hash, demo_report_changed.state_hash());
 
     let mut nausea_rating_changed = empty_park();
     nausea_rating_changed.replace_coaster(
@@ -152,14 +151,12 @@ fn state_hash_is_reproducible_and_covers_live_park_state() {
 }
 
 #[test]
-fn park_without_demo_coaster_ticks_and_has_distinct_state() {
-    let demo_park = empty_park();
-    let demo_hash = demo_park.state_hash();
-    let mut park = Park::new_empty(demo_park.world, demo_park.facilities, demo_park.simulation);
-    assert!(park.demo_coaster.is_none());
-    assert_ne!(park.state_hash(), demo_hash);
+fn park_without_coasters_ticks_and_has_distinct_state() {
+    let mut park = empty_park();
+    let initial_hash = park.state_hash();
     park.tick();
-    assert!(park.demo_coaster.is_none());
+    assert!(park.coasters.is_empty());
+    assert_ne!(park.state_hash(), initial_hash);
 }
 
 #[test]

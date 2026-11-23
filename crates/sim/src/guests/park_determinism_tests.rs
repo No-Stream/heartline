@@ -6,7 +6,7 @@ use crate::guests::GuestId;
 use crate::guests::park::ParkGuests;
 use crate::park::tick::COASTER_PLACE_ID;
 use crate::park::{CoasterId, Park};
-use crate::physics::{BlockOperation, PhysicsConfig, Train, demo_circuit};
+use crate::physics::{BlockOperation, PhysicsConfig};
 use crate::track::blocks::BlockLayout;
 use crate::track::hybrid_model;
 use crate::world::Surface;
@@ -28,7 +28,6 @@ struct CoasterEvent {
 struct Replay {
     park: Park,
     park_state_hash: u64,
-    demo_train_state: u64,
     train_states: Vec<(u64, u64)>,
     events: Vec<CoasterEvent>,
     boarded_guest_count: usize,
@@ -81,22 +80,7 @@ fn replay<E: Executor<WalkingGuest>>(executor: &E) -> Replay {
             .place_on_path(GuestId(guest_index as u32), queue_entry);
     }
 
-    let demo_circuit = demo_circuit();
-    let demo_train = Train::new(
-        &demo_circuit,
-        &train_configuration,
-        physics_config,
-        0.0,
-        0.0,
-    );
-    let mut park = Park::new(
-        world,
-        ParkFacilities::new(),
-        simulation,
-        demo_circuit,
-        demo_train,
-        train_configuration,
-    );
+    let mut park = Park::new_empty(world, ParkFacilities::new(), simulation);
     let coaster_id = CoasterId(0);
     park.replace_coaster(coaster_id, construction);
     let coaster = park.coaster_mut(coaster_id).expect("coaster was inserted");
@@ -190,7 +174,6 @@ fn replay<E: Executor<WalkingGuest>>(executor: &E) -> Replay {
         .collect();
     Replay {
         park_state_hash: park.state_hash(),
-        demo_train_state: park.demo_coaster.as_ref().unwrap().train.state_hash(),
         park,
         train_states,
         events,
@@ -237,10 +220,6 @@ fn coaster_guests_and_trains_replay_identically_across_thread_counts() {
         );
         assert_eq!(
             baseline.maximum_occupied_trains, actual.maximum_occupied_trains,
-            "thread count {count}"
-        );
-        assert_eq!(
-            baseline.demo_train_state, actual.demo_train_state,
             "thread count {count}"
         );
         assert_eq!(

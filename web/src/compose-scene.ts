@@ -16,7 +16,7 @@ import { buildSceneryGhostQuads, scenerySprites, type Scenery, type SceneryPrevi
 import { buildProximityMarkers, buildTestingRibbon, overlaySamples, type TestingMetric, type TestingSample } from "./coaster-testing";
 import type { Atlas, GeometryQuad, WorldSprite, WorldView } from "./render/scene";
 import type { AtmospherePass, GeometryPass } from "./render/index";
-import { DEMO_COASTER_ID, type CoasterRenderData, type CoasterSnapshot } from "./protocol";
+import type { CoasterRenderData, CoasterSnapshot } from "./protocol";
 import type { PathToolPreview } from "./path-tool";
 import type { Theme } from "./theme";
 import type { Tool } from "./toolbar";
@@ -109,7 +109,7 @@ export function composeScene(input: ComposeSceneInput): SceneComposition {
     }));
   }
 
-  const trainPoses = renderedCoastersById.get(DEMO_COASTER_ID)?.trainPoses ?? renderedCoasters[0]?.trainPoses ?? noGeometry;
+  const trainPoses = renderedCoasters[0]?.trainPoses ?? noGeometry;
   const testingSamples = overlaySamples(
     input.construction?.testingReport?.samples ?? null,
     input.construction?.constructionForcePreview?.forceEnvelopeSamples ?? null,
@@ -124,11 +124,7 @@ export function composeScene(input: ComposeSceneInput): SceneComposition {
   const backdrop = BACKDROPS[input.theme];
   const { lighting, paper } = printOnBackdrop(lightingAt(input.dayPhase), backdrop);
   const sun = sunAt(input.dayPhase);
-  const orderedCoasters = [...input.world.coasters].sort((first, second) => {
-    if (first.id === DEMO_COASTER_ID) return -1;
-    if (second.id === DEMO_COASTER_ID) return 1;
-    return first.id - second.id;
-  });
+  const orderedCoasters = [...input.world.coasters].sort((first, second) => first.id - second.id);
   const atmospherePass: AtmospherePass = (camera, viewport, atlas, scale) => {
     const rails = orderedCoasters.map((coaster) => coaster.id === input.world.editingCoasterId && input.construction
       ? input.construction.placedRails

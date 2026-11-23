@@ -6,7 +6,7 @@ import { createFacilityTool } from "./facility-tool";
 import { stationToolAdapter, facilityToolAdapter, pathToolAdapter, landscapingToolAdapter, sceneryToolAdapter, coasterToolAdapter } from "./tool-adapters";
 import { createRenderRevision, shouldSkipRenderFrame } from "./render-revision";
 import { composeScene } from "./compose-scene";
-import { sendWorkerAction as postWorkerAction, assertNever, DEMO_COASTER_ID, type WorkerAction, type WorkerMessage, type CoasterListEntry, type CoasterSnapshot, type CoasterRenderData } from "./protocol";
+import { sendWorkerAction as postWorkerAction, assertNever, type WorkerAction, type WorkerMessage, type CoasterListEntry, type CoasterSnapshot, type CoasterRenderData } from "./protocol";
 import { createAutosaveScheduler, getAutosaveSettings, type AutosaveScheduler } from "./autosave";
 import "./print-modern.css";
 import "./app.css";
@@ -38,7 +38,7 @@ import { nearestBlockBoundaryMetres } from "./render/track/blocks";
 import { createGuestPanel } from "./guest-panel/guest-panel";
 import { createRideWindow } from "./ride-window/ride-window";
 import { rideFromPick } from "./ride-window/picking";
-import type { RideInfo, RideKey } from "./ride-window/protocol";
+import type { RideInfo } from "./ride-window/protocol";
 import type { GuestDetail } from "./guest-panel/protocol";
 import { createPathTool, type PathTile, type PathToolMessage } from "./path-tool";
 import { createPathPanel } from "./path-panel";
@@ -227,7 +227,7 @@ const FORCE_HOVER_PIXELS = 14;
 if (!atlas.themeStyle) throw new Error("Atlas theme style is missing");
 let selectedGuestId: string | undefined;
 const guestPanel = createGuestPanel(gameCanvas, { dispatch });
-let selectedRide: RideKey | undefined;
+let selectedRide: number | undefined;
 let latestRideInfoJson = "";
 let latestRideInfo: RideInfo | null = null;
 const rideWindow = createRideWindow(gameCanvas, { dispatch, onHighlightChange: () => renderRevision.invalidate() });
@@ -430,7 +430,7 @@ const gameTest: GameTest = {
   editingCoasterId() { return world?.editingCoasterId ?? null; },
   trainStates() {
     return {
-      coaster: parseTrainStates(current?.coasters.find(({ id }) => id === 0xffff_ffff)?.trainStates ?? new Float32Array()),
+      coaster: parseTrainStates(current?.coasters[0]?.trainStates ?? new Float32Array()),
       construction: parseTrainStates(current?.coasters.find(({ id }) => id === world?.editingCoasterId)?.trainStates ?? new Float32Array()),
     };
   },
@@ -866,8 +866,13 @@ if (!/^\d+$/.test(seedText) || BigInt(seedText) > 18446744073709551615n) throw n
 const park = params.get("park") ?? "demo";
 const guestCount = testAgents === null ? 12 : Number(testAgents);
 if (!Number.isInteger(guestCount) || guestCount < 1 || guestCount > 500) throw new RangeError("Invalid test guest count");
-if (park === "new" || park === "demo") {
+if (park === "new") {
   sendWorkerAction(worker, { type: "init", seed: BigInt(seedText), park, guestCount, frozen, manualBlockAnalysis });
+} else if (park === "demo") {
+  const response = await fetch(new URL("./starter.park.save", document.baseURI));
+  if (!response.ok) throw new Error(`Could not load generated starter park save: ${response.status}`);
+  const saveBytes = new Uint8Array(await response.arrayBuffer());
+  sendWorkerAction(worker, { type: "init", seed: BigInt(seedText), park: "save", saveBytes, guestCount, frozen, manualBlockAnalysis });
 } else {
   const descriptionJson = bundledParkDescriptionJson(park);
   loadedPark = true;
@@ -962,7 +967,7 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     if (message.message) facilityPanel.message(message.message);
     renderRevision.invalidate();
   } else if (message.type === "coasters") {
-    coasterQueueLengths = message.coasters.filter(({ id }) => id !== DEMO_COASTER_ID).map(({ id, queueLength }) => ({ id, queueLength }));
+    coasterQueueLengths = message.coasters.map(({ id, queueLength }) => ({ id, queueLength }));
     coasterList.update(message.coasters);
   } else if (message.type === "coaster-action-result") {
     if (message.success && message.action === "edit") {
