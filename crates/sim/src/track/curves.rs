@@ -399,6 +399,7 @@ pub enum PieceId {
     ShapedHill,
     ShapedTurnLeft,
     ShapedTurnRight,
+    GigaSixtyDownToLevel,
     ShapedLoopLeft,
     ShapedLoopRight,
     ShapedZeroGRollLeft,

@@ -1,5 +1,5 @@
 import { projectWorld, type Camera, type Viewport, type WorldPoint } from "../camera";
-import type { CoasterSnapshot } from "../protocol";
+import type { CoasterRenderData, CoasterSnapshot } from "../protocol";
 import type { TrainLayout } from "../train-layout";
 import type { CrestBurst } from "../render/effects";
 import { BRIDGE_LAYOUTS } from "../bridge-layouts";
@@ -7,10 +7,10 @@ import { parseTrainStates, type TrainState } from "../train-states";
 
 export type TrackMaterial = TrainLayout["trackMaterial"];
 export interface TrainSound {
-  train: number; pan: number; audibility: number; distance?: number; speed: number; material: TrackMaterial;
+  train: string; pan: number; audibility: number; distance?: number; speed: number; material: TrackMaterial;
   onLift: boolean; clackRate: number; launch: boolean; brake: number; depart: boolean; arrive: boolean;
 }
-export interface ScreamEvent { train: number; pan: number; audibility: number; intensity: number }
+export interface ScreamEvent { train: string; pan: number; audibility: number; intensity: number }
 /** `place` is a coaster track piece, `build` a path, scenery or facility, `undo` an undo or removal. */
 export type UiSound = "place" | "build" | "undo" | "error" | "finish";
 export type UiEvent = { readonly sound: "place"; readonly material: TrackMaterial } | { readonly sound: Exclude<UiSound, "place"> };
@@ -24,8 +24,8 @@ export interface SoundFrame {
   paused?: boolean;
 }
 export interface MappingInput {
-  snapshot: CoasterSnapshot | undefined; interpolation: number; camera: Camera; viewport: Viewport;
-  dayPhase: number; gameSpeed: number; demoTrain: TrainLayout | null; constructionTrain: TrainLayout | null;
+  snapshot: CoasterSnapshot | undefined; coasters: readonly CoasterRenderData[]; interpolation: number; camera: Camera; viewport: Viewport;
+  dayPhase: number; gameSpeed: number;
   crestBursts: readonly CrestBurst[]; paused: boolean; timeSeconds: number;
   /** Builder and tool events collected since the previous frame, already debounced. */
   ui: readonly UiEvent[];
@@ -54,7 +54,7 @@ export const SOUND_TUNING = {
 } as const;
 /** `stopped` has hysteresis: it sets at or below `stopSpeed` and clears only at `departSpeed`, so a held train creeping in the station cannot repeat the departure sound. */
 interface TrainMemory { state: TrainState; screamTime: number; brake: number; stopped: boolean }
-export interface MappingMemory { trains: Map<number, TrainMemory>; tick: number; crowd: SoundFrame["crowd"]; crowdFrame: number }
+export interface MappingMemory { trains: Map<string, TrainMemory>; tick: number; crowd: SoundFrame["crowd"]; crowdFrame: number }
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
 function forceEdge(old: TrainState, state: TrainState): boolean {
   return (old.verticalG >= SOUND_TUNING.airtimeG && state.verticalG < SOUND_TUNING.airtimeG)
@@ -77,7 +77,9 @@ export function soundFrame(input: MappingInput, previous: MappingMemory = { trai
   if (previous.crowdFrame % 4 === 0) {
     let weightedCount = 0, weightedPan = 0;
     const ridingGuests = new Set<number>();
-    for (let offset = 0; offset < snapshot.constructionRiders.length; offset += BRIDGE_LAYOUTS.RIDER.length) ridingGuests.add(snapshot.constructionRiders[offset + 2]);
+    for (const coaster of snapshot.coasters) {
+      for (let offset = 0; offset < coaster.riders.length; offset += BRIDGE_LAYOUTS.RIDER.length) ridingGuests.add(coaster.riders[offset + 2]);
+    }
     for (let offset = 0; offset < snapshot.guests.length; offset += BRIDGE_LAYOUTS.GUEST.length) {
       if (ridingGuests.has(snapshot.guestIds[offset / BRIDGE_LAYOUTS.GUEST.length])) continue;
       const position = spatialise(input.camera, input.viewport, { x: snapshot.guests[offset], y: snapshot.guests[offset + 1], z: snapshot.guests[offset + 2] });
@@ -87,21 +89,20 @@ export function soundFrame(input: MappingInput, previous: MappingMemory = { trai
     memory.crowd = { level: 0.25 * Math.min(1, Math.log1p(weightedCount) / Math.log1p(SOUND_TUNING.crowdSaturation)), pan: weightedCount ? weightedPan / weightedCount : 0 };
   }
   frame.crowd = memory.crowd;
-  const coasters = [
-    { layout: input.demoTrain, states: snapshot.trainStates, poses: snapshot.trainPoses, coaster: 0 },
-    { layout: input.constructionTrain, states: snapshot.constructionTrainStates, poses: snapshot.constructionTrainPoses, coaster: 1 },
-  ];
-  for (const { layout, states, poses, coaster } of coasters) {
+  const coasterLayouts = new Map(input.coasters.map((coaster) => [coaster.id, coaster.trainLayout]));
+  for (const coaster of snapshot.coasters) {
+    const layout = coasterLayouts.get(coaster.id);
+    if (layout === undefined) throw new Error(`Snapshot contains unknown coaster ${coaster.id}`);
     if (!layout) continue;
-    for (const state of parseTrainStates(states)) {
-      const train = state.trainIndex * 2 + coaster;
+    for (const state of parseTrainStates(coaster.trainStates)) {
+      const train = `${coaster.id}:${state.trainIndex}`;
       const old = previous.trains.get(train);
       let offset = 0;
-      while (offset < poses.length && poses[offset] !== state.trainIndex * layout.carsPerTrain) offset += BRIDGE_LAYOUTS.TRAIN_POSE.length;
-      if (offset === poses.length) continue;
-      const point = { x: poses[offset + 1], y: poses[offset + 2], z: poses[offset + 3] };
+      while (offset < coaster.trainPoses.length && coaster.trainPoses[offset] !== state.trainIndex * layout.carsPerTrain) offset += BRIDGE_LAYOUTS.TRAIN_POSE.length;
+      if (offset === coaster.trainPoses.length) continue;
+      const point = { x: coaster.trainPoses[offset + 1], y: coaster.trainPoses[offset + 2], z: coaster.trainPoses[offset + 3] };
       const position = spatialise(input.camera, input.viewport, point);
-      const crest = input.crestBursts.filter((burst) => burst.tick > previous.tick && burst.tick <= snapshot.tickCount && Math.hypot(burst.x - point.x, burst.y - point.y, burst.z - point.z) < SOUND_TUNING.crestDistance).at(-1);
+      const crest = input.crestBursts.filter((burst) => (burst.coasterId === undefined || burst.coasterId === coaster.id) && burst.tick > previous.tick && burst.tick <= snapshot.tickCount && Math.hypot(burst.x - point.x, burst.y - point.y, burst.z - point.z) < SOUND_TUNING.crestDistance).at(-1);
       let screamTime = old?.screamTime ?? -Infinity;
       if (!eventsMuted && state.occupied && old && input.timeSeconds - screamTime >= SOUND_TUNING.screamCooldown && (forceEdge(old.state, state) || crest)) {
         frame.screams.push({ train, pan: position.pan, audibility: position.audibility, intensity: clamp01(Math.max((SOUND_TUNING.airtimeG - state.verticalG), (state.verticalG - SOUND_TUNING.highG) / 2, (Math.abs(state.lateralG) - SOUND_TUNING.lateralG) / 2, crest ? 0.5 : 0)) });

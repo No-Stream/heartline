@@ -19,7 +19,7 @@ use theme_park_sim::track::shaped::{
 };
 use theme_park_sim::track::{
     CoasterModel, Hand, Heading as TrackHeading, Heartlining, HillFeel, Inversion, PieceId,
-    coaster_models,
+    RatedSpeeds, coaster_models, rated_speed_margin,
 };
 use theme_park_sim_wasm::WasmSimulation;
 use theme_park_sim_wasm::builder_session::{BuilderEstimates, BuilderSession};
@@ -40,9 +40,10 @@ use crate::brake_report::{
 use crate::finish_report::{check_completion, finish_options_json, render_finish_options};
 use crate::report::{
     ForceRatings, RidePieceEstimate, ShapedElementReportRow, default_physics_test_run,
-    element_physics_report_rows, force_headroom_results, format_force_headroom_results,
-    rated_speed_margin_failures, rated_speed_margin_report, render_element_physics_table,
-    render_ride_report_with_margins, render_shaped_elements_table, shaped_element_entry_speeds,
+    design_rated_speeds, element_physics_report_rows, force_headroom_results,
+    format_force_headroom_results, rated_speed_margin_failures, rated_speed_margin_report,
+    render_element_physics_table, render_ride_report_with_margins, render_shaped_elements_table,
+    shaped_element_entry_speeds,
 };
 
 #[derive(Debug)]
@@ -380,9 +381,6 @@ pub(crate) fn inline_park_ride_files(
         .get_mut("coasters")
         .and_then(Value::as_array_mut)
         .ok_or_else(|| "park description field `coasters` must be an array".to_owned())?;
-    if coasters.len() > 1 {
-        return Err("this build supports one player coaster per park".into());
-    }
 
     for (coaster_index, coaster) in coasters.iter_mut().enumerate() {
         let ride_reference = coaster.get("ride").and_then(Value::as_str).ok_or_else(|| {
@@ -1245,8 +1243,7 @@ fn execute_command(
                 .map(|request| {
                     let model = session
                         .simulation()
-                        .construction
-                        .as_ref()
+                        .editing_construction()
                         .ok_or_else(|| "shaped placement requires active construction".to_owned())?
                         .model();
                     Ok::<ElementIntent, String>(request.into_intent(model))
@@ -1332,7 +1329,13 @@ fn execute_command(
                     )
                 })?;
                 (
-                    candidate_value(&selection.selected_id, candidate, None, geometry),
+                    candidate_value(
+                        &selection.selected_id,
+                        candidate,
+                        rated_window_for_id(session.simulation(), &selection.selected_id),
+                        None,
+                        geometry,
+                    ),
                     format!(
                         "{} m/s entry, {}",
                         optional_number(candidate.entry_speed),
@@ -1360,8 +1363,7 @@ fn execute_command(
                 Some(
                     session
                         .simulation()
-                        .construction
-                        .as_ref()
+                        .editing_construction()
                         .and_then(|construction| construction.pieces().last())
                         .and_then(|piece| piece.element_spec())
                         .cloned()
@@ -1849,8 +1851,7 @@ fn state_value_with_estimates(
     );
     let simulation = session.simulation();
     let construction = simulation
-        .construction
-        .as_ref()
+        .editing_construction()
         .ok_or_else(|| "there is no active construction".to_owned())?;
     let end = construction.end();
     let start = construction.start();
@@ -1993,8 +1994,7 @@ fn placed_construction_pieces(
 ) -> Result<Vec<theme_park_sim::track::Piece>, String> {
     Ok(session
         .simulation()
-        .construction
-        .as_ref()
+        .editing_construction()
         .ok_or_else(|| "ride has no construction".to_owned())?
         .pieces()
         .to_vec())
@@ -2205,8 +2205,7 @@ fn render_shaped_choices(session: &mut BuilderSession) -> Result<CommandReply, S
     let (model_key, vertical_limits, lateral_limit, profile, allowed_inversions) = {
         let construction = session
             .simulation()
-            .construction
-            .as_ref()
+            .editing_construction()
             .ok_or_else(|| "there is no active construction".to_owned())?;
         let model = construction.model();
         (
@@ -2515,7 +2514,14 @@ fn candidate_for(session: &mut BuilderSession, id: &str) -> Result<Value, String
             "method": "closed-form hill inspector prediction",
         }));
     let geometry = candidate_geometry_value(session);
-    let mut value = candidate_value(&selection.selected_id, candidate, hill, geometry);
+    let rated_window = rated_window_for_id(session.simulation(), &selection.selected_id);
+    let mut value = candidate_value(
+        &selection.selected_id,
+        candidate,
+        rated_window,
+        hill,
+        geometry,
+    );
     let choice = estimates
         .choices
         .iter()
@@ -2653,10 +2659,11 @@ fn unavailable_candidate_value(
     json!({
         "id": id,
         "entrySpeed": null,
-        "ratedWindow": choice.and_then(|choice| choice.hill_estimate.as_ref())
-            .and_then(|estimate| estimate.rated_speed.as_ref())
+        "ratedWindow": rated_window_for_id(simulation, id)
             .map(|window| json!([window.minimum_entry, window.maximum_entry]))
-            .or_else(|| rated_window_for_id(simulation, id).map(|window| json!(window))),
+            .or_else(|| choice.and_then(|choice| choice.hill_estimate.as_ref())
+                .and_then(|estimate| estimate.rated_speed.as_ref())
+                .map(|window| json!([window.minimum_entry, window.maximum_entry]))),
         "margin": null,
         "peaks": null,
         "ratings": null,
@@ -2685,7 +2692,7 @@ fn candidate_preview_unavailable(
         if !preview_reason.is_empty() {
             return format!("candidate preview is unavailable for {id}: {preview_reason}");
         }
-        let Some(construction) = simulation.construction.as_ref() else {
+        let Some(construction) = simulation.editing_construction() else {
             return format!(
                 "candidate preview is unavailable for {id}: there is no active construction"
             );
@@ -2715,8 +2722,8 @@ fn candidate_geometry_value(session: &BuilderSession) -> Option<Value> {
     }))
 }
 
-fn rated_window_for_id(simulation: &WasmSimulation, id: &str) -> Option<[f64; 2]> {
-    let construction = simulation.construction.as_ref()?;
+fn rated_window_for_id(simulation: &WasmSimulation, id: &str) -> Option<RatedSpeeds> {
+    let construction = simulation.editing_construction()?;
     let model = construction.model();
     let piece = theme_park_sim::track::catalog()
         .iter()
@@ -2724,15 +2731,17 @@ fn rated_window_for_id(simulation: &WasmSimulation, id: &str) -> Option<[f64; 2]
     if !model.allows_piece(piece) {
         return None;
     }
-    let window = theme_park_sim::track::rated_speeds(model, piece)?;
-    Some([window.minimum_entry, window.maximum_entry])
+    design_rated_speeds(model, piece)
 }
 
 fn candidate_window(session: &BuilderSession, preview: &Value, id: &str) -> Value {
-    preview["ratedWindow"]
-        .as_array()
-        .map(|_| preview["ratedWindow"].clone())
-        .or_else(|| rated_window_for_id(session.simulation(), id).map(|window| json!(window)))
+    rated_window_for_id(session.simulation(), id)
+        .map(|window| json!([window.minimum_entry, window.maximum_entry]))
+        .or_else(|| {
+            preview["ratedWindow"]
+                .as_array()
+                .map(|_| preview["ratedWindow"].clone())
+        })
         .unwrap_or(Value::Null)
 }
 
@@ -2751,6 +2760,7 @@ fn optional_rating<'a>(ratings: &'a Value, key: &str) -> &'a str {
 fn candidate_value(
     id: &str,
     candidate: &ConstructionCandidateForcePreviewWire,
+    rated_window: Option<RatedSpeeds>,
     hill: Option<Value>,
     geometry: Option<Value>,
 ) -> Value {
@@ -2763,14 +2773,10 @@ fn candidate_value(
             "maximumLongitudinalG": peaks.maximum_absolute_longitudinal_g,
         })
     });
-    let rated_window = candidate
-        .rated_speed
-        .as_ref()
-        .map(|window| [window.minimum_entry, window.maximum_entry]);
     let margin = candidate
         .entry_speed
-        .zip(candidate.rated_speed.as_ref())
-        .map(|(speed, window)| (speed - window.minimum_entry).min(window.maximum_entry - speed));
+        .zip(rated_window)
+        .map(|(speed, window)| rated_speed_margin(window, speed));
     let ratings = candidate.peaks.as_ref().map(|peaks| {
         json!({
             "airtime": classify_rating(&candidate.limits.rating_bands.airtime, -peaks.minimum_vertical_g),
@@ -2782,7 +2788,8 @@ fn candidate_value(
     let mut value = json!({
         "id": id,
         "entrySpeed": candidate.entry_speed,
-        "ratedWindow": rated_window,
+        "ratedWindow": rated_window
+            .map(|window| [window.minimum_entry, window.maximum_entry]),
         "margin": margin,
         "peaks": peaks,
         "ratings": ratings,
@@ -2906,8 +2913,7 @@ fn format_peaks(peaks: Option<&ConstructionLastPlacedForceWire>) -> String {
 fn render_map(session: &BuilderSession) -> Result<CommandReply, String> {
     let construction = session
         .simulation()
-        .construction
-        .as_ref()
+        .editing_construction()
         .ok_or_else(|| "there is no active construction".to_owned())?;
     let mut samples = Vec::new();
     for (piece_index, piece) in construction.pieces().iter().enumerate() {
@@ -3013,9 +3019,13 @@ fn test_ride_with_margins(
     String,
 > {
     let (mut session, estimates, _) = replay_with_estimates(ride, false)?;
+    let coaster_id = session
+        .simulation()
+        .editing_coaster_id()
+        .ok_or_else(|| "rated entry margins require an edited coaster".to_owned())?;
     let (circuit, _) = session
         .simulation()
-        .construction_circuit_and_train()
+        .construction_circuit_and_train(coaster_id)
         .ok_or_else(|| "rated entry margins require a closed circuit".to_owned())?;
     let model = coaster_models()
         .into_iter()
@@ -3304,9 +3314,13 @@ fn test_ride_with_browser_estimates(
 > {
     let (mut session, estimates, browser_estimates) = replay_with_estimates(ride, true)?;
     let test_run = finish_test_run(&mut session)?;
+    let coaster_id = session
+        .simulation()
+        .editing_coaster_id()
+        .ok_or_else(|| "ride test completed without an edited coaster".to_owned())?;
     let (circuit, _) = session
         .simulation()
-        .construction_circuit_and_train()
+        .construction_circuit_and_train(coaster_id)
         .ok_or_else(|| "ride test completed without a construction circuit".to_owned())?;
     Ok((test_run, estimates, browser_estimates, circuit))
 }
@@ -3315,8 +3329,8 @@ fn finish_test_run(session: &mut BuilderSession) -> Result<TestRun, String> {
     session.test().map_err(|error| error.to_string())?;
     session
         .simulation()
-        .construction_report
-        .as_ref()
+        .editing_coaster()
+        .and_then(|coaster| coaster.construction_report.as_ref())
         .cloned()
         .ok_or_else(|| "ride test completed without a native report".to_owned())
 }
@@ -3366,8 +3380,7 @@ pub(crate) fn replay_with_estimates(
             RideStep::Place(place) => {
                 let construction_before = session
                     .simulation()
-                    .construction
-                    .as_ref()
+                    .editing_construction()
                     .ok_or_else(|| "there is no active construction".to_owned())?;
                 let first_piece_index = construction_before.pieces().len();
                 let start_distance = construction_before
@@ -3414,8 +3427,7 @@ pub(crate) fn replay_with_estimates(
                 }
                 let construction_after = session
                     .simulation()
-                    .construction
-                    .as_ref()
+                    .editing_construction()
                     .ok_or_else(|| "there is no active construction".to_owned())?;
                 let track_after = construction_track(&session)?;
                 let pieces = construction_after.pieces();
@@ -3475,8 +3487,7 @@ pub(crate) fn replay_with_estimates(
             RideStep::Shape(shape) => {
                 let construction_before = session
                     .simulation()
-                    .construction
-                    .as_ref()
+                    .editing_construction()
                     .ok_or_else(|| "there is no active construction".to_owned())?;
                 let piece_index = construction_before.pieces().len();
                 let start_distance = construction_before
@@ -3501,8 +3512,7 @@ pub(crate) fn replay_with_estimates(
                     })?;
                 let construction_after = session
                     .simulation()
-                    .construction
-                    .as_ref()
+                    .editing_construction()
                     .ok_or_else(|| "there is no active construction".to_owned())?;
                 if construction_after.pieces().len() != piece_index + 1 {
                     return Err(format_replay_piece_error(
@@ -3863,8 +3873,7 @@ fn finished_track_estimates(
         .collect();
     let construction = session
         .simulation()
-        .construction
-        .as_ref()
+        .editing_construction()
         .ok_or_else(|| "there is no active construction".to_owned())?;
     let pieces = construction.pieces();
     let mut piece_starts = Vec::with_capacity(pieces.len());
@@ -4205,142 +4214,172 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<CliResponse, String> {
     if paths.is_empty() {
         return Err("usage: tools/design check <ride file> ...".into());
     }
+    let ride_checks: Vec<Result<RideCheck, String>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = paths
+            .iter()
+            .map(|path| scope.spawn(|| check_ride(path)))
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("ride check thread panicked"))
+            .collect()
+    });
     let mut rows = Vec::new();
     let mut text = String::new();
     let mut failed_ride_summaries = Vec::new();
-    for path in paths {
-        let bytes = fs::read(path).map_err(|error| format!("read ride {path}: {error}"))?;
-        let ride = RideFile::from_json_slice(&bytes)
-            .map_err(|error| format!("parse ride {path}: {error}"))?;
-        let model = validate_model(&ride.model)?;
-        theme_park_sim::track::saved_shape_check::check_saved_shaped_geometry(&ride)
-            .map_err(|error| format!("{path}: stale shaped geometry: {error}"))?;
-        let (test_run, estimates, browser_estimates, circuit) =
-            test_ride_with_browser_estimates(&ride).map_err(|error| format!("{path}: {error}"))?;
-        let agreement = compare_estimates(&ride, &test_run, &estimates)?;
-        let rated_speed_margins = crate::report::rated_speed_margins(&circuit, &model)
-            .map_err(|error| format!("{path}: {error}"))?;
-        let rated_speed_failures = rated_speed_margin_failures(&rated_speed_margins);
-        let default_test_run = default_physics_test_run(&circuit, &model);
-        let force_headroom = [
-            force_headroom_results(
-                &default_test_run,
-                model.design_force_targets,
-                "default physics",
-            ),
-            force_headroom_results(
-                &test_run,
-                model.design_force_targets,
-                "construction-test physics",
-            ),
-        ]
-        .concat();
-        let force_headroom_failures: Vec<_> = force_headroom
-            .iter()
-            .filter(|result| !result.passed)
-            .map(|result| result.failure())
-            .collect();
-        let expectation_results = evaluate_expectations(&ride, &test_run, &model, &circuit)?;
-        let default_expectation_results =
-            evaluate_expectations(&ride, &default_test_run, &model, &circuit)?;
-        let failures: Vec<_> = expectation_results
-            .iter()
-            .filter(|result| !result.passed)
-            .map(ExpectationResult::format)
-            .collect();
-        let default_expectation_failures: Vec<_> = default_expectation_results
-            .iter()
-            .filter(|result| !result.passed)
-            .map(|result| format!("default physics: {}", result.format()))
-            .collect();
-        let design_margins_required = ride
-            .expect
-            .as_ref()
-            .and_then(|expectation| expectation.design_margins)
-            .unwrap_or(false);
-        let failed_gates = check_failed_gates(
-            &failures,
-            &default_expectation_failures,
-            &agreement,
-            &rated_speed_failures,
-            &force_headroom_failures,
-            design_margins_required,
-        );
-        if !failed_gates.is_empty() {
-            failed_ride_summaries.push(format!("{}: {}", ride.name, failed_gates.join(", ")));
-        }
-        writeln!(
-            text,
-            "{}: expectations {}; native agreement {}",
-            ride.name,
-            if failures.is_empty() && default_expectation_failures.is_empty() {
-                "pass"
-            } else {
-                "fail"
-            },
-            if agreement.passed { "pass" } else { "fail" }
-        )
-        .unwrap();
-        text.push_str(&crate::report::format_rated_speed_margins(
-            &rated_speed_margins,
-        ));
-        text.push_str(&format_force_headroom_results(&force_headroom));
-        for result in &expectation_results {
-            writeln!(text, "  {}", result.format()).unwrap();
-        }
-        for result in &default_expectation_results {
-            writeln!(text, "  default physics {}", result.format()).unwrap();
-        }
-        for failure in &rated_speed_failures {
-            writeln!(text, "  rated speed margin failure: {failure}").unwrap();
-        }
-        for failure in &force_headroom_failures {
-            writeln!(text, "  force headroom failure: {failure}").unwrap();
-        }
-        for failure in &agreement.failures {
-            writeln!(
-                text,
-                "  piece {} {:?} {}: {}",
-                failure.piece_index, failure.check, failure.metric, failure.reason
-            )
-            .unwrap();
-        }
-        rows.push(json!({
-            "path": path,
-            "name": ride.name,
-            "agreementGate": "enabled; finished-track agreement failures exit nonzero",
-            "ratedSpeedMargins": rated_speed_margins.iter().map(|margin| json!({
-                "pieceIndex": margin.piece_index,
-                "pieceId": margin.piece_id,
-                "carIndex": margin.car_index,
-                "entrySpeed": margin.entry_speed,
-                "ratedWindow": [margin.window.0, margin.window.1],
-                "ruleMargin": margin.rule_margin,
-                "status": if margin.unavailable_reason.is_some() {
-                    "UNAVAILABLE"
-                } else {
-                    match margin.rule_margin {
-                        Some(rule_margin) if rule_margin >= 0.0 => "PASS",
-                        Some(_) => "FAIL",
-                        None => "UNAVAILABLE",
-                    }
-                },
-                "unavailableReason": margin.unavailable_reason,
-                "physicsConfiguration": if margin.construction_test { "construction-test" } else { "default" },
-            })).collect::<Vec<_>>(),
-            "expectations": expectation_results.iter().map(ExpectationResult::json).collect::<Vec<_>>(),
-            "expectationFailures": failures,
-            "defaultPhysicsExpectations": default_expectation_results.iter().map(ExpectationResult::json).collect::<Vec<_>>(),
-            "defaultPhysicsExpectationFailures": default_expectation_failures,
-            "ratedSpeedMarginFailures": rated_speed_failures,
-            "forceHeadroom": force_headroom,
-            "forceHeadroomFailures": force_headroom_failures,
-            "agreement": agreement_json(&agreement),
-            "browserEstimates": browser_estimates,
-            "reportSamples": test_run.samples,
-        }));
+    for ride_check in ride_checks {
+        let ride_check = ride_check?;
+        rows.push(ride_check.row);
+        text.push_str(&ride_check.text);
+        failed_ride_summaries.extend(ride_check.failed_summary);
     }
     check_response(json_mode, rows, text, &failed_ride_summaries)
+}
+
+struct RideCheck {
+    row: Value,
+    text: String,
+    failed_summary: Option<String>,
+}
+
+fn check_ride(path: &String) -> Result<RideCheck, String> {
+    let mut text = String::new();
+    let mut failed_summary = None;
+    let bytes = fs::read(path).map_err(|error| format!("read ride {path}: {error}"))?;
+    let ride =
+        RideFile::from_json_slice(&bytes).map_err(|error| format!("parse ride {path}: {error}"))?;
+    let model = validate_model(&ride.model)?;
+    theme_park_sim::track::saved_shape_check::check_saved_shaped_geometry(&ride)
+        .map_err(|error| format!("{path}: stale shaped geometry: {error}"))?;
+    let (test_run, estimates, browser_estimates, circuit) =
+        test_ride_with_browser_estimates(&ride).map_err(|error| format!("{path}: {error}"))?;
+    let agreement = compare_estimates(&ride, &test_run, &estimates)?;
+    let rated_speed_margins = crate::report::rated_speed_margins(&circuit, &model)
+        .map_err(|error| format!("{path}: {error}"))?;
+    let rated_speed_failures = rated_speed_margin_failures(&rated_speed_margins);
+    let default_test_run = default_physics_test_run(&circuit, &model);
+    let force_headroom = [
+        force_headroom_results(
+            &default_test_run,
+            model.design_force_targets,
+            "default physics",
+        ),
+        force_headroom_results(
+            &test_run,
+            model.design_force_targets,
+            "construction-test physics",
+        ),
+    ]
+    .concat();
+    let force_headroom_failures: Vec<_> = force_headroom
+        .iter()
+        .filter(|result| !result.passed)
+        .map(|result| result.failure())
+        .collect();
+    let expectation_results = evaluate_expectations(&ride, &test_run, &model, &circuit)?;
+    let default_expectation_results =
+        evaluate_expectations(&ride, &default_test_run, &model, &circuit)?;
+    let failures: Vec<_> = expectation_results
+        .iter()
+        .filter(|result| !result.passed)
+        .map(ExpectationResult::format)
+        .collect();
+    let default_expectation_failures: Vec<_> = default_expectation_results
+        .iter()
+        .filter(|result| !result.passed)
+        .map(|result| format!("default physics: {}", result.format()))
+        .collect();
+    let design_margins_required = ride
+        .expect
+        .as_ref()
+        .and_then(|expectation| expectation.design_margins)
+        .unwrap_or(false);
+    let failed_gates = check_failed_gates(
+        &failures,
+        &default_expectation_failures,
+        &agreement,
+        &rated_speed_failures,
+        &force_headroom_failures,
+        design_margins_required,
+    );
+    if !failed_gates.is_empty() {
+        failed_summary = Some(format!("{}: {}", ride.name, failed_gates.join(", ")));
+    }
+    writeln!(
+        text,
+        "{}: expectations {}; native agreement {}",
+        ride.name,
+        if failures.is_empty() && default_expectation_failures.is_empty() {
+            "pass"
+        } else {
+            "fail"
+        },
+        if agreement.passed { "pass" } else { "fail" }
+    )
+    .unwrap();
+    text.push_str(&crate::report::format_rated_speed_margins(
+        &rated_speed_margins,
+    ));
+    text.push_str(&format_force_headroom_results(&force_headroom));
+    for result in &expectation_results {
+        writeln!(text, "  {}", result.format()).unwrap();
+    }
+    for result in &default_expectation_results {
+        writeln!(text, "  default physics {}", result.format()).unwrap();
+    }
+    for failure in &rated_speed_failures {
+        writeln!(text, "  rated speed margin failure: {failure}").unwrap();
+    }
+    for failure in &force_headroom_failures {
+        writeln!(text, "  force headroom failure: {failure}").unwrap();
+    }
+    for failure in &agreement.failures {
+        writeln!(
+            text,
+            "  piece {} {:?} {}: {}",
+            failure.piece_index, failure.check, failure.metric, failure.reason
+        )
+        .unwrap();
+    }
+    let row = json!({
+        "path": path,
+        "name": ride.name,
+        "agreementGate": "enabled; finished-track agreement failures exit nonzero",
+        "ratedSpeedMargins": rated_speed_margins.iter().map(|margin| json!({
+            "pieceIndex": margin.piece_index,
+            "pieceId": margin.piece_id,
+            "carIndex": margin.car_index,
+            "entrySpeed": margin.entry_speed,
+            "ratedWindow": [margin.window.0, margin.window.1],
+            "ruleMargin": margin.rule_margin,
+            "status": if margin.unavailable_reason.is_some() {
+                "UNAVAILABLE"
+            } else {
+                match margin.rule_margin {
+                    Some(rule_margin) if rule_margin >= 0.0 => "PASS",
+                    Some(_) => "FAIL",
+                    None => "UNAVAILABLE",
+                }
+            },
+            "unavailableReason": margin.unavailable_reason,
+            "physicsConfiguration": if margin.construction_test { "construction-test" } else { "default" },
+        })).collect::<Vec<_>>(),
+        "expectations": expectation_results.iter().map(ExpectationResult::json).collect::<Vec<_>>(),
+        "expectationFailures": failures,
+        "defaultPhysicsExpectations": default_expectation_results.iter().map(ExpectationResult::json).collect::<Vec<_>>(),
+        "defaultPhysicsExpectationFailures": default_expectation_failures,
+        "ratedSpeedMarginFailures": rated_speed_failures,
+        "forceHeadroom": force_headroom,
+        "forceHeadroomFailures": force_headroom_failures,
+        "agreement": agreement_json(&agreement),
+        "browserEstimates": browser_estimates,
+        "reportSamples": test_run.samples,
+    });
+    Ok(RideCheck {
+        row,
+        text,
+        failed_summary,
+    })
 }
 
 /// Names the check gates a ride failed; rated-margin and force-headroom failures only gate
@@ -5736,8 +5775,7 @@ mod shaped_replay_estimate_tests {
         spec_session.place().unwrap();
         let spec = spec_session
             .simulation()
-            .construction
-            .as_ref()
+            .editing_construction()
             .unwrap()
             .pieces()
             .last()
@@ -5784,8 +5822,7 @@ mod shaped_replay_estimate_tests {
         let (mut session, estimates, _) = replay_with_estimates(&ride, false).unwrap();
         let piece_index = session
             .simulation()
-            .construction
-            .as_ref()
+            .editing_construction()
             .unwrap()
             .pieces()
             .len()

@@ -104,7 +104,7 @@ fn historical_timber_report_preserves_its_speed_window_and_force_regressions() {
     let mut session = BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
     session.replay_ride(&ride).unwrap();
 
-    let construction = session.simulation().construction.as_ref().unwrap();
+    let construction = session.simulation().editing_construction().unwrap();
     let pieces = construction.pieces().to_vec();
     let model = construction.model().clone();
     let circuit = Circuit::open(pieces.clone()).unwrap();

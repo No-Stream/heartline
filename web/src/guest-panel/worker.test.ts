@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { validateBlockAnalysisBudget } from "../game-test";
 import type { ConstructionState } from "../construction-protocol";
-import type { WorkerAction, WorkerMessage } from "../protocol";
+import { DEMO_COASTER_ID, type CoasterWorldMessage, type WorkerAction, type WorkerMessage } from "../protocol";
 import { replaySessionIntoWorker } from "../session-replay-worker";
 import type { ReplaySession } from "../session-replay";
 
@@ -35,7 +35,18 @@ const wasmMock = vi.hoisted(() => ({
   finishSearchStart: vi.fn(),
   finishSearchAdvance: vi.fn(() => true),
   constructionTrainPoses: vi.fn(() => new Float32Array()),
-  coasterTrainStates: vi.fn(() => new Float32Array()),
+  coasterRenderList: vi.fn(() => JSON.stringify([{ id: 4294967295, trackRevision: "demo-1", colors: { track: "coral", supports: "timber", trains: "sage" }, trainLayout: { model: "hybrid", trackMaterial: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 } }])),
+  coasterIds: vi.fn(() => Uint32Array.of(4294967295)),
+  editingCoasterId: vi.fn(() => null as number | null),
+  coasterGeometry: vi.fn((id: number) => Float32Array.of(id)),
+  coasterRails: vi.fn((id: number) => Float32Array.of(id, 1)),
+  coasterTies: vi.fn((id: number) => Float32Array.of(id, 2)),
+  coasterSupports: vi.fn((id: number) => Float32Array.of(id, 3)),
+  coasterTrainPoses: vi.fn((_id: number) => new Float32Array()),
+  coasterTrainStates: vi.fn((_id: number) => new Float32Array()),
+  coasterRiders: vi.fn((_id: number) => new Uint32Array()),
+  rideInfo: vi.fn((id: number) => JSON.stringify({ ride: id })),
+  rideTest: vi.fn((_id: number) => ""),
   constructionTrainStates: vi.fn(() => new Float32Array()),
   advanceBlockAnalysis: vi.fn((_budget: number) => false),
   advanceBlockPlacement: vi.fn((_budget: number) => {}),
@@ -106,14 +117,20 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     guest_detail_json(id: number) { return JSON.stringify({ id: `guest-${id}`, name: `Guest ${id}` }); }
     snapshot() { return new Float32Array(); }
     guest_appearances() { return new Uint8Array(); }
-    coaster_geometry() { return new Float32Array(); }
-    coaster_rails() { return new Float32Array(); }
-    coaster_ties() { return new Float32Array(); }
-    coaster_supports() { return new Float32Array(); }
+    coaster_render_list_json() { return wasmMock.coasterRenderList(); }
+    coaster_ids() { return wasmMock.coasterIds(); }
+    editing_coaster_id_value() { return wasmMock.editingCoasterId(); }
+    coaster_geometry(id: number) { return wasmMock.coasterGeometry(id); }
+    coaster_rails(id: number) { return wasmMock.coasterRails(id); }
+    coaster_ties(id: number) { return wasmMock.coasterTies(id); }
+    coaster_supports(id: number) { return wasmMock.coasterSupports(id); }
+    coaster_train_poses(id: number) { return wasmMock.coasterTrainPoses(id); }
+    coaster_train_states(id: number) { return wasmMock.coasterTrainStates(id); }
+    coaster_riders(id: number) { return wasmMock.coasterRiders(id); }
+    coaster_ride_info_json(id: number) { return wasmMock.rideInfo(id); }
+    coaster_test(id: number) { return wasmMock.rideTest(id); }
     coaster_colors() { return JSON.stringify({ track: "coral", supports: "timber", trains: "sage" }); }
     coaster_train_layout() { return JSON.stringify({ model: "hybrid", trackMaterial: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 }); }
-    coaster_train_poses() { return new Float32Array(); }
-    coaster_train_states() { return wasmMock.coasterTrainStates(); }
     construction_riders() { return new Uint32Array(); }
     construction_message() { return ""; }
     construction_coaster_price() { return 0; }
@@ -191,7 +208,18 @@ afterEach(() => {
   wasmMock.pathBuild.mockReset();
   wasmMock.pathRemove.mockReset();
   wasmMock.constructionTrainPoses.mockReset().mockReturnValue(new Float32Array());
+  wasmMock.coasterRenderList.mockReset().mockReturnValue(JSON.stringify([{ id: 4294967295, trackRevision: "demo-1", colors: { track: "coral", supports: "timber", trains: "sage" }, trainLayout: { model: "hybrid", trackMaterial: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 } }]));
+  wasmMock.coasterIds.mockReset().mockReturnValue(Uint32Array.of(4294967295));
+  wasmMock.editingCoasterId.mockReset().mockReturnValue(null);
+  wasmMock.coasterGeometry.mockReset().mockImplementation((id: number) => Float32Array.of(id));
+  wasmMock.coasterRails.mockReset().mockImplementation((id: number) => Float32Array.of(id, 1));
+  wasmMock.coasterTies.mockReset().mockImplementation((id: number) => Float32Array.of(id, 2));
+  wasmMock.coasterSupports.mockReset().mockImplementation((id: number) => Float32Array.of(id, 3));
+  wasmMock.coasterTrainPoses.mockReset().mockReturnValue(new Float32Array());
   wasmMock.coasterTrainStates.mockReset().mockReturnValue(new Float32Array());
+  wasmMock.coasterRiders.mockReset().mockReturnValue(new Uint32Array());
+  wasmMock.rideInfo.mockReset().mockImplementation((id: number) => JSON.stringify({ ride: id }));
+  wasmMock.rideTest.mockReset().mockReturnValue("");
   wasmMock.constructionTrainStates.mockReset().mockReturnValue(new Float32Array());
   wasmMock.advanceBlockAnalysis.mockReset().mockReturnValue(false);
   wasmMock.advanceBlockPlacement.mockReset();
@@ -628,7 +656,7 @@ it("refreshes the world after facilities are placed or removed", async () => {
   expect(postMessage.mock.calls.some(([message]) => message.type === "world")).toBe(true);
 });
 
-it("does not request construction train poses or states before a coaster is under construction", async () => {
+it("includes every coaster's train data in snapshots without construction-specific arrays", async () => {
   vi.useFakeTimers();
   wasmMock.initialize.mockResolvedValue(undefined);
   wasmMock.constructionTrainPoses.mockImplementation(() => { throw new Error("Construction train does not exist"); });
@@ -643,18 +671,20 @@ it("does not request construction train poses or states before a coaster is unde
 
   expect(wasmMock.constructionTrainPoses).not.toHaveBeenCalled();
   expect(wasmMock.constructionTrainStates).not.toHaveBeenCalled();
-  expect(postMessage.mock.calls.some(([message]) => message.type === "snapshot" && message.constructionTrainPoses.length === 0)).toBe(true);
-  expect(postMessage.mock.calls.some(([message]) => message.type === "snapshot" && message.constructionTrainStates.length === 0)).toBe(true);
+  const snapshot = postMessage.mock.calls.find(([message]) => message.type === "snapshot")?.[0];
+  expect(snapshot.coasters).toEqual([{ id: 4294967295, trainPoses: new Float32Array(), trainStates: new Float32Array(), riders: new Uint32Array() }]);
 });
 
 it("includes per-train states in snapshots and transfers their buffers", async () => {
   vi.useFakeTimers();
   wasmMock.initialize.mockResolvedValue(undefined);
+  const coasterId = 17;
   const trainStates = new Float32Array([0, 8, 1, 1.2, 0.4, 1]);
-  wasmMock.coasterTrainStates.mockReturnValue(trainStates);
-  const constructionTrainStates = new Float32Array([0, 3, 0, 1, 0, 1]);
-  wasmMock.constructionTrainStates.mockReturnValue(constructionTrainStates);
-  wasmMock.constructionActive.mockReturnValue(true);
+  wasmMock.coasterIds.mockReturnValue(Uint32Array.of(4294967295, coasterId));
+  wasmMock.coasterTrainStates.mockImplementation((id: number) => id === coasterId ? trainStates : new Float32Array());
+  wasmMock.coasterTrainPoses.mockImplementation((id: number) => id === coasterId ? Float32Array.of(1, 2) : new Float32Array());
+  const riders = new Uint32Array([0, 3, 42]);
+  wasmMock.coasterRiders.mockImplementation((id: number) => id === coasterId ? riders : new Uint32Array());
   const postMessage = vi.fn();
   let onMessage!: (event: MessageEvent) => void;
   vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
@@ -665,10 +695,100 @@ it("includes per-train states in snapshots and transfers their buffers", async (
   await Promise.resolve();
 
   const [snapshot, transfers] = postMessage.mock.calls.find(([message]) => message.type === "snapshot")!;
-  expect(snapshot.trainStates).toBe(trainStates);
-  expect(snapshot.constructionTrainStates).toBe(constructionTrainStates);
+  expect(snapshot.coasters[1]).toEqual({ id: coasterId, trainPoses: Float32Array.of(1, 2), trainStates, riders });
   expect(transfers).toContain(trainStates.buffer);
-  expect(transfers).toContain(constructionTrainStates.buffer);
+  expect(transfers).toContain(riders.buffer);
+});
+
+it("resends track buffers only for coasters whose track revision changed", async () => {
+  wasmMock.initialize.mockResolvedValue(undefined);
+  const demoId = 4294967295;
+  const secondId = 17;
+  const demo = { id: demoId, trackRevision: "demo:1", colors: { track: "coral", supports: "timber", trains: "sage" }, trainLayout: { model: "hybrid", trackMaterial: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 } };
+  const second = { id: secondId, trackRevision: "park:1", colors: { track: "teal", supports: "cream", trains: "plum" }, trainLayout: { model: "velocity_viper", trackMaterial: "steel", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 } };
+  wasmMock.coasterRenderList.mockReturnValue(JSON.stringify([demo, second]));
+  wasmMock.coasterIds.mockReturnValue(Uint32Array.of(demoId, secondId));
+  wasmMock.editingCoasterId.mockReturnValue(secondId);
+  wasmMock.pathBuild.mockReturnValue(true);
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+
+  await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: true, manualBlockAnalysis: true } } as MessageEvent);
+  await Promise.resolve();
+  const initialWorld = postMessage.mock.calls.find(([message]) => message.type === "world")?.[0] as CoasterWorldMessage;
+  expect(initialWorld.editingCoasterId).toBe(secondId);
+  expect(initialWorld.coasters.map(({ id }) => id)).toEqual([demoId, secondId]);
+  expect(initialWorld.coasters.map(({ geometry }) => geometry instanceof Float32Array)).toEqual([true, true]);
+  expect(wasmMock.coasterGeometry.mock.calls).toEqual([[demoId], [secondId]]);
+  expect(wasmMock.coasterSupports.mock.calls).toEqual([[demoId], [secondId]]);
+
+  const buildPath = { type: "path-build", requestId: 1, kind: "normal", style: 0, start: { x: 0, y: 0, z: 0 }, end: { x: 1, y: 0, z: 0 } } as const;
+  onMessage({ data: buildPath } as MessageEvent);
+  await Promise.resolve();
+  const unchangedWorld = postMessage.mock.calls.findLast(([message]) => message.type === "world")?.[0] as CoasterWorldMessage;
+  expect(unchangedWorld.coasters.map(({ id }) => id)).toEqual([demoId, secondId]);
+  expect(unchangedWorld.coasters.every((coaster) => !("geometry" in coaster) && !("rails" in coaster) && !("ties" in coaster) && !("supports" in coaster))).toBe(true);
+  expect(wasmMock.coasterGeometry.mock.calls).toEqual([[demoId], [secondId]]);
+  expect(wasmMock.coasterSupports.mock.calls).toEqual([[demoId], [secondId]]);
+
+  wasmMock.coasterRenderList.mockReturnValue(JSON.stringify([demo, { ...second, trackRevision: "park:2" }]));
+  onMessage({ data: { ...buildPath, requestId: 2 } } as MessageEvent);
+  await Promise.resolve();
+  const changedWorld = postMessage.mock.calls.findLast(([message]) => message.type === "world")?.[0] as CoasterWorldMessage;
+  expect(changedWorld.coasters[0]).not.toHaveProperty("geometry");
+  expect(changedWorld.coasters[1]).toMatchObject({ id: secondId, trackRevision: "park:2", geometry: Float32Array.of(secondId) });
+  expect(wasmMock.coasterGeometry.mock.calls).toEqual([[demoId], [secondId], [secondId]]);
+  expect(wasmMock.coasterSupports.mock.calls).toEqual([[demoId], [secondId], [secondId]]);
+});
+
+it("routes ride information and tests through numeric coaster ID zero", async () => {
+  wasmMock.initialize.mockResolvedValue(undefined);
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "new", guestCount: 0, frozen: true, manualBlockAnalysis: true } } as MessageEvent);
+  await Promise.resolve();
+  onMessage({ data: { type: "ride-info-request", ride: 0 } } as MessageEvent);
+  await Promise.resolve();
+  expect(wasmMock.rideInfo).toHaveBeenCalledExactlyOnceWith(0);
+  expect(postMessage.mock.calls.findLast(([message]) => message.type === "ride-info")?.[0]).toMatchObject({
+    type: "ride-info",
+    info: { ride: 0 },
+  });
+
+  onMessage({ data: { type: "ride-test", ride: 0 } } as MessageEvent);
+  await Promise.resolve();
+  expect(wasmMock.rideTest).toHaveBeenCalledExactlyOnceWith(0);
+  expect(wasmMock.rideInfo).toHaveBeenCalledTimes(2);
+});
+
+it("resolves legacy player ride keys to the current edited coaster during replay", async () => {
+  wasmMock.initialize.mockResolvedValue(undefined);
+  const editingCoasterId = 42;
+  wasmMock.editingCoasterId.mockReturnValue(editingCoasterId);
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "new", guestCount: 0, frozen: true, manualBlockAnalysis: true } } as MessageEvent);
+  await Promise.resolve();
+
+  onMessage({ data: { type: "ride-test", ride: "player" } } as MessageEvent);
+  await Promise.resolve();
+  expect(wasmMock.rideTest).toHaveBeenCalledExactlyOnceWith(editingCoasterId);
+  expect(wasmMock.rideInfo).toHaveBeenCalledExactlyOnceWith(editingCoasterId);
+
+  onMessage({ data: { type: "ride-info-request", ride: "demo" } } as MessageEvent);
+  await Promise.resolve();
+  expect(wasmMock.rideInfo).toHaveBeenLastCalledWith(DEMO_COASTER_ID);
+
+  onMessage({ data: { type: "export-session", requestId: 1 } } as MessageEvent);
+  await Promise.resolve();
+  const recording = postMessage.mock.calls.findLast(([message]) => message.type === "session-export")?.[0].recording;
+  expect(recording.commands).toEqual([{ tick: 0, command: { type: "ride-test", ride: editingCoasterId } }]);
 });
 
 it("refreshes the world after coaster construction changes", async () => {
@@ -787,9 +907,9 @@ it("sends coaster colours to the simulation and publishes them parsed, with the 
   await import("../worker");
   onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: true, manualBlockAnalysis: true } } as MessageEvent);
   await Promise.resolve();
-  const world = postMessage.mock.calls.find(([message]) => message.type === "world")?.[0];
-  expect(world.coasterColors).toEqual({ track: "coral", supports: "timber", trains: "sage" });
-  expect(world.coasterTrain).toEqual({ model: "hybrid", trackMaterial: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 });
+  const world = postMessage.mock.calls.find(([message]) => message.type === "world")?.[0] as CoasterWorldMessage;
+  expect(world.coasters[0].colors).toEqual({ track: "coral", supports: "timber", trains: "sage" });
+  expect(world.coasters[0].trainLayout).toEqual({ model: "hybrid", trackMaterial: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 });
   onMessage({ data: { type: "construction-start", x: 0, y: 0, z: 0, heading: 0 } } as MessageEvent);
   await Promise.resolve();
   const construction = postMessage.mock.calls.findLast(([message]) => message.type === "construction-state")?.[0];
@@ -798,6 +918,37 @@ it("sends coaster colours to the simulation and publishes them parsed, with the 
   onMessage({ data: { type: "construction-set-colors", colors: { track: "teal", supports: "cream", trains: "plum" } } } as MessageEvent);
   await Promise.resolve();
   expect(postMessage.mock.calls.findLast(([message]) => message.type === "construction-state")?.[0].colors).toEqual({ track: "teal", supports: "cream", trains: "plum" });
+});
+
+it("publishes coaster color and train layout changes to the world", async () => {
+  wasmMock.initialize.mockResolvedValue(undefined);
+  wasmMock.constructionActive.mockReturnValue(true);
+  wasmMock.editingCoasterId.mockReturnValue(0);
+  const demo = { id: 4294967295, trackRevision: "demo:1", colors: { track: "coral", supports: "timber", trains: "sage" }, trainLayout: { model: "hybrid", trackMaterial: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 } };
+  const built = { id: 0, trackRevision: "built:1", colors: { track: "coral", supports: "timber", trains: "sage" }, trainLayout: { model: "velocity_viper", trackMaterial: "steel", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 } };
+  wasmMock.coasterRenderList.mockReturnValue(JSON.stringify([demo, built]));
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "new", guestCount: 0, frozen: true, manualBlockAnalysis: true } } as MessageEvent);
+  await Promise.resolve();
+
+  postMessage.mockClear();
+  const repainted = { ...built, trackRevision: "built:2", colors: { track: "teal", supports: "cream", trains: "plum" } };
+  wasmMock.coasterRenderList.mockReturnValue(JSON.stringify([demo, repainted]));
+  onMessage({ data: { type: "construction-set-colors", colors: repainted.colors } } as MessageEvent);
+  await Promise.resolve();
+  const colorWorld = postMessage.mock.calls.findLast(([message]) => message.type === "world")?.[0] as CoasterWorldMessage | undefined;
+  expect(colorWorld?.coasters.find(({ id }) => id === 0)?.colors).toEqual(repainted.colors);
+
+  postMessage.mockClear();
+  const changedTrain = { ...repainted, trackRevision: "built:3", trainLayout: { ...repainted.trainLayout, carsPerTrain: 4, lengthMetres: 12 } };
+  wasmMock.coasterRenderList.mockReturnValue(JSON.stringify([demo, changedTrain]));
+  onMessage({ data: { type: "construction-set-cars-per-train", cars: 4 } } as MessageEvent);
+  await Promise.resolve();
+  const trainWorld = postMessage.mock.calls.findLast(([message]) => message.type === "world")?.[0] as CoasterWorldMessage | undefined;
+  expect(trainWorld?.coasters.find(({ id }) => id === 0)?.trainLayout).toEqual(changedTrain.trainLayout);
 });
 
 

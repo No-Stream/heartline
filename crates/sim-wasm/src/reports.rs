@@ -172,8 +172,7 @@ impl From<theme_park_sim::physics::ForcePeakValues> for PieceForceValuesReport {
 #[derive(serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RideInfoReport {
-    #[ts(type = "\"demo\" | \"player\"")]
-    pub ride: &'static str,
+    pub ride: u32,
     pub model_name: String,
     pub manufacturer: String,
     pub limits: crate::construction::ConstructionForceLimitsWire,

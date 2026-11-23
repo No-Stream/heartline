@@ -65,3 +65,20 @@ test("retains quads touching the viewport boundary", () => {
   ]) expect(geometryIntersectsViewport(shape, viewport)).toBe(true);
   expect(geometryIntersectsViewport(quad([-2, -1, -1, -2], [20, 20, 30, 30]), viewport)).toBe(false);
 });
+
+test("caches local piece geometry independently for each coaster ID", () => {
+  const cache = createStaticTrackCache(atlas);
+  const rails = new Float32Array([1, 1, 2, 1, 0, 1, 0, 0, 0, 1, 3, 2, 1, 0, 1, 0, 0, 0, 1]);
+  const ties = new Float32Array();
+  const supports = new Float32Array();
+  const camera = { centerX: 2, centerY: 2, zoom: 1, rotation: 0 as const };
+  const viewport = { width: 400, height: 300 };
+  const colors = { track: "coral", supports: "timber", trains: "sage" } as const;
+  const firstCoaster = cache(rails, ties, supports, colors, camera, viewport, 7, "rev-1");
+  const secondCoaster = cache(rails, ties, supports, colors, camera, viewport, 8, "rev-1");
+
+  expect(firstCoaster).toBe(cache(rails, ties, supports, colors, { ...camera }, { ...viewport }, 7, "rev-1"));
+  expect(firstCoaster.every((quad) => quad.id === "track-7-1")).toBe(true);
+  expect(secondCoaster.every((quad) => quad.id === "track-8-1")).toBe(true);
+  expect(cache(rails, ties, supports, colors, camera, viewport, 7, "rev-2")).not.toBe(firstCoaster);
+});

@@ -302,7 +302,11 @@ fn send_world(simulation: &WasmSimulation, timings: &mut Timings) {
             simulation.world_carved(),
         )
     });
-    timings.time("world: coaster_supports", || simulation.coaster_supports());
+    timings.time("world: coaster_supports", || {
+        simulation
+            .editing_coaster_id()
+            .map_or_else(Vec::new, |id| simulation.coaster_supports(id.0))
+    });
 }
 
 fn percentile(sorted: &[Duration], fraction: f64) -> Duration {

@@ -11,6 +11,10 @@ initSync(readFileSync(wasmPath));
 const shapes = JSON.parse(piece_shapes_json()) as PieceShape[];
 
 describe("piece icons", () => {
+  it("includes the giga 60-degree pullout in the catalog shapes", () => {
+    expect(shapes.map((shape) => shape.id)).toContain("GigaSixtyDownToLevel");
+  });
+
   it("draws finite, non-empty SVG paths for every catalog shape in the UI report", () => {
     expect(shapes.length).toBeGreaterThan(0);
     for (const shape of shapes) {

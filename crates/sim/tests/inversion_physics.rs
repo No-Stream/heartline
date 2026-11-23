@@ -5,8 +5,8 @@ use theme_park_sim::physics::rated_piece::{
 use theme_park_sim::physics::{Circuit, CoasterRun, GRAVITY, PhysicsConfig, Train};
 use theme_park_sim::track::rated_windows::measured_rated_window;
 use theme_park_sim::track::{
-    Heading, Piece, PieceId, PieceKind, TrackState, catalog, coaster_models, hybrid_model,
-    multi_launch_model, rated_speeds, wooden_twister_model,
+    Heading, Piece, PieceId, PieceKind, TrackState, catalog, coaster_models, feel_rated_speeds,
+    hybrid_model, hyper_model, multi_launch_model, rated_speeds, wooden_twister_model,
 };
 
 fn circuit_with_elements(elements: &[PieceId]) -> (Circuit, f64, f64) {
@@ -337,6 +337,121 @@ fn sixty_degree_pull_profiles_keep_trains_within_force_limits() {
 #[test]
 fn wide_sixty_degree_drop_passes_full_trains_at_both_rated_endpoints() {
     assert_rated_piece_endpoints(&[PieceId::WideLevelToSixtyDown, PieceId::WideSixtyDownToLevel]);
+}
+
+#[test]
+fn giga_sixty_degree_pullout_delivers_a_giga_pullout_across_its_design_window() {
+    let model = hyper_model();
+    let piece = catalog()
+        .iter()
+        .find(|piece| piece.id == PieceId::GigaSixtyDownToLevel)
+        .expect("giga 60-degree pullout is in the catalog");
+    assert!(model.allows_piece(piece));
+
+    // A 90-100 m drop (wide crest, two 60-degree straights, this pullout) brings the front car in at about
+    // 29 m/s and the rear car of an eight-car train about 4.7 m/s faster, so the design window must reach past
+    // 35 m/s for every car to keep the 1.5 m/s rated-window margin.
+    let design_window = feel_rated_speeds(&model, piece).expect("giga pullout has a design window");
+    assert!(
+        design_window.maximum_entry >= 35.2,
+        "design window: {design_window:?}"
+    );
+    let rate = |entry_speed: f64| {
+        rate_piece(&model, model.train.cars, piece, entry_speed, unpowered())
+            .expect("giga pullout force rating completes")
+    };
+
+    let giga_drop_rating = rate(29.0);
+    let giga_drop_peak_g = giga_drop_rating.maximum_filtered_force[0];
+    assert!(giga_drop_rating.passed, "{giga_drop_rating:?}");
+    assert!(
+        (3.0..=3.75).contains(&giga_drop_peak_g),
+        "a giga drop's pullout should pull 3.0 to 3.75 g, got {giga_drop_peak_g:.3} g"
+    );
+    let window_edge_rating = rate(design_window.maximum_entry);
+    assert!(window_edge_rating.passed, "{window_edge_rating:?}");
+}
+
+#[test]
+fn giga_pullout_finishes_a_roughly_95_metre_full_train_drop_at_ride_speed() {
+    use PieceId::*;
+
+    let model = hyper_model();
+    let templates = catalog();
+    let template = |id| templates.iter().find(|piece| piece.id == id).unwrap();
+    let mut state = TrackState::origin();
+    let mut pieces = Vec::new();
+    let append = |id, lifted, state: &mut TrackState, pieces: &mut Vec<Piece>| {
+        let mut piece = template(id).at(*state).unwrap();
+        if lifted {
+            piece.kind = PieceKind::Lift;
+        }
+        *state = piece.exit;
+        pieces.push(piece);
+    };
+
+    append(Station, false, &mut state, &mut pieces);
+    for id in [
+        LevelToSixtyUp,
+        SixtyUp,
+        SixtyUp,
+        SixtyUp,
+        SixtyUp,
+        SixtyUpToLevel,
+    ] {
+        append(id, true, &mut state, &mut pieces);
+    }
+    let drop_start = pieces.iter().map(Piece::length).sum::<f64>();
+    let drop_height_start = state.position().z;
+    for id in [WideLevelToSixtyDown, SixtyDown, SixtyDown] {
+        append(id, false, &mut state, &mut pieces);
+    }
+    let pullout_start = pieces.iter().map(Piece::length).sum::<f64>();
+    let giga_pullout = template(GigaSixtyDownToLevel).at(state).unwrap();
+    assert!(model.allows_piece(&giga_pullout));
+    let net_drop = drop_height_start - giga_pullout.exit.position().z;
+    assert!(
+        (90.0..=100.0).contains(&net_drop),
+        "full drop is {net_drop:.1} m"
+    );
+    state = giga_pullout.exit;
+    let giga_pullout_end = pullout_start + giga_pullout.length();
+    pieces.push(giga_pullout);
+
+    for _ in 0..4 {
+        append(Straight, false, &mut state, &mut pieces);
+    }
+    let circuit = Circuit::open(pieces).expect("giga drop track connects through the exit tail");
+    let ranges = [
+        drop_start..pullout_start,
+        pullout_start..giga_pullout_end,
+        giga_pullout_end..giga_pullout_end + template(Straight).length(),
+    ];
+    let physics = PhysicsConfig {
+        lift_speed: 5.0,
+        powered_sections: false,
+        ..PhysicsConfig::default()
+    };
+    let rating = rate_sequence(
+        &circuit,
+        &ranges,
+        &model.train,
+        physics,
+        ForceJudge::DesignTargets(model.design_force_targets),
+        drop_start - 1.0,
+        5.0,
+    );
+    assert!(
+        rating.failure.is_none() && rating.violation.is_none(),
+        "{} cars: {rating:?}",
+        model.train.cars
+    );
+    let bottom_speed = rating.minimum_speeds[2];
+    eprintln!("giga drop: {net_drop:.1} m, full-train bottom speed {bottom_speed:.2} m/s");
+    assert!(
+        (41.0..=44.0).contains(&bottom_speed),
+        "the giga drop reaches {bottom_speed:.2} m/s at the bottom, outside the hyper shaped-element range"
+    );
 }
 
 #[test]

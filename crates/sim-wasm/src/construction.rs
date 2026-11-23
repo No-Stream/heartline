@@ -1126,6 +1126,23 @@ pub(crate) fn colors_json(colors: Option<CoasterColors>) -> String {
     serde_json::to_string(&colors).expect("coaster colors serialize")
 }
 
+pub(crate) fn colors_value(colors: Option<CoasterColors>) -> serde_json::Value {
+    colors.map_or(serde_json::Value::Null, |colors| {
+        serde_json::json!({
+            "track": colors.track.name(),
+            "supports": colors.supports.name(),
+            "trains": colors.trains.name(),
+        })
+    })
+}
+
+pub(crate) fn train_layout_value(
+    model: &CoasterModel,
+    train: &TrainConfiguration,
+) -> serde_json::Value {
+    serde_json::to_value(train_layout(model, train)).expect("serialize train layout")
+}
+
 fn element_representative(element: &ElementChoice) -> &Piece {
     element
         .geometry
@@ -1155,10 +1172,49 @@ fn slope_rank(slope: Slope) -> u8 {
     }
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CoasterListEntry<'a> {
+    id: u32,
+    name: &'a str,
+    model: &'a str,
+    open: bool,
+    price: u16,
+    income: u64,
+    queue_length: usize,
+    complete: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CoasterRideInfo<'a> {
+    id: u32,
+    name: &'a str,
+    model: &'static str,
+    model_name: String,
+    manufacturer: String,
+    limits: ConstructionForceLimitsWire,
+    report: Option<crate::reports::TestingReport>,
+}
+
 #[wasm_bindgen]
 impl WasmSimulation {
     pub fn construction_start(&mut self, x: i32, y: i32, z: i32, heading: u8) {
+        self.start_coaster(x, y, z, heading, true);
+    }
+
+    /// Adds a coaster without replacing the coaster currently being edited.
+    pub fn coaster_start(&mut self, x: i32, y: i32, z: i32, heading: u8) {
+        self.start_coaster(x, y, z, heading, false);
+    }
+
+    fn start_coaster(&mut self, x: i32, y: i32, z: i32, heading: u8, replace_editing: bool) {
         self.construction_finish_invalidate();
+        let replaced_id = if replace_editing {
+            self.editing_coaster_id()
+        } else {
+            None
+        };
         let heading = match heading {
             0 => Heading::East,
             1 => Heading::NorthEast,
@@ -1183,9 +1239,20 @@ impl WasmSimulation {
             },
             coaster_model(&self.construction_model),
         );
-        let obstacles = self.facility_obstacles();
+        let obstacles = self.facility_obstacles_excluding(replaced_id);
         let station_id = construction.next_piece_id();
-        let tunnel_generation = self.park.next_construction_tunnel_generation();
+        let coaster_id = CoasterId(self.park.next_coaster_id);
+        let station_piece = construction
+            .candidate_piece(PieceId::Station)
+            .expect("station piece is in the coaster catalog");
+        if let Err(error) = self.park.validate_track_clearance(
+            &construction.model().train,
+            &station_piece,
+            replaced_id,
+        ) {
+            self.construction_message = construction_error(error);
+            return;
+        }
         let station_plan =
             match construction.tunnel_plan(PieceId::Station, &self.park.world, &obstacles) {
                 Ok(plan) => plan,
@@ -1196,47 +1263,151 @@ impl WasmSimulation {
             };
         if let Err(error) = self
             .park
-            .carve_for_construction_at(tunnel_generation, &[(station_id, station_plan)])
+            .carve_for_coaster(coaster_id, &[(station_id, station_plan)])
         {
             self.construction_message = error.to_string();
             return;
         }
         if let Err(error) = construction.append(PieceId::Station, &self.park.world, &obstacles) {
             self.park
-                .restore_tunnel_piece_at(tunnel_generation, station_id);
+                .restore_tunnel_piece_for_coaster(coaster_id, station_id);
             self.construction_message = construction_error(error);
             return;
         }
-        self.park
-            .activate_construction_tunnel_generation(tunnel_generation);
-        self.close_live_coaster();
-        self.construction = Some(construction);
-        self.construction_undo_groups.clear();
-        self.clear_block_layout();
+        let added_id = self.park.add_coaster(construction);
+        assert_eq!(
+            added_id, coaster_id,
+            "coaster ids are assigned monotonically"
+        );
+        if let Some(replaced_id) = replaced_id {
+            self.park.demolish_coaster(replaced_id);
+        }
+        self.editing = Some(added_id);
         self.selected = None;
+        self.selected_shape = None;
         self.selected_element = None;
-        self.select_compatible_piece();
-        self.construction_train = None;
         self.recovered_station = None;
-        self.park.support_render_cache.clear();
-        self.construction_outcome = None;
-        self.construction_recorder = None;
-        self.construction_report = None;
+        self.select_compatible_piece();
         self.construction_message.clear();
         self.refresh_construction_support_rendering();
     }
 
+    pub fn coaster_edit(&mut self, id: u32) -> bool {
+        let coaster_id = CoasterId(id);
+        if self.park.coaster(coaster_id).is_none() {
+            return false;
+        }
+        self.construction_finish_invalidate();
+        self.park.close_live_coaster(coaster_id);
+        self.editing = Some(coaster_id);
+        self.construction_model = self
+            .park
+            .coaster(coaster_id)
+            .expect("coaster still exists")
+            .construction
+            .model()
+            .key
+            .to_owned();
+        self.selected = None;
+        self.selected_shape = None;
+        self.selected_element = None;
+        self.recovered_station = None;
+        self.construction_message.clear();
+        self.select_compatible_piece();
+        self.refresh_construction_support_rendering();
+        true
+    }
+
+    pub fn coaster_stop_editing(&mut self) {
+        self.construction_finish_invalidate();
+        self.editing = None;
+        self.selected = None;
+        self.selected_shape = None;
+        self.selected_element = None;
+        self.recovered_station = None;
+        self.construction_message.clear();
+        self.refresh_construction_support_rendering();
+    }
+
+    pub fn coaster_demolish(&mut self, id: u32) -> bool {
+        let coaster_id = CoasterId(id);
+        if self.park.coaster(coaster_id).is_none() {
+            return false;
+        }
+        if self.editing_coaster_id() == Some(coaster_id) {
+            self.construction_finish_invalidate();
+            self.editing = None;
+            self.selected = None;
+            self.selected_shape = None;
+            self.selected_element = None;
+            self.recovered_station = None;
+        }
+        let demolished = self.park.demolish_coaster(coaster_id);
+        self.construction_message.clear();
+        self.refresh_construction_support_rendering();
+        demolished
+    }
+
+    pub fn coaster_rename(&mut self, id: u32, name: String) -> bool {
+        self.park.rename_coaster(CoasterId(id), name)
+    }
+
+    pub fn coasters_json(&self) -> String {
+        let coasters: Vec<_> = self
+            .park
+            .coasters()
+            .map(|(id, coaster)| CoasterListEntry {
+                id: id.0,
+                name: &coaster.name,
+                model: coaster.construction.model().key,
+                open: coaster.coaster_open,
+                price: coaster.coaster_price,
+                income: self.park.coaster_income(id),
+                queue_length: self.park.simulation.queue_length(u32::MAX - id.0),
+                complete: coaster.construction.circuit().is_ok(),
+            })
+            .collect();
+        serde_json::to_string(&coasters).expect("serialize coaster list")
+    }
+
+    pub fn coaster_set_open(&mut self, id: u32, open: bool) -> bool {
+        let coaster_id = CoasterId(id);
+        if self.park.coaster(coaster_id).is_none() {
+            return false;
+        }
+        match self.park.construction_set_open(coaster_id, open) {
+            Ok(()) => true,
+            Err(error) => {
+                let message = crate::command_errors::block_error_message(error);
+                if let Some(coaster) = self.park.coaster_mut(coaster_id) {
+                    coaster.block_message = message.to_owned();
+                }
+                self.park.construction_message = message.to_owned();
+                false
+            }
+        }
+    }
+
+    pub fn coaster_set_price(&mut self, id: u32, price: u16) -> bool {
+        let coaster_id = CoasterId(id);
+        if self.park.coaster(coaster_id).is_none() {
+            return false;
+        }
+        self.park.set_coaster_price(Some(coaster_id), price);
+        true
+    }
+
     pub fn construction_active(&self) -> bool {
-        self.construction.is_some()
+        self.editing_coaster().is_some()
     }
 
     pub fn construction_chain(&self) -> bool {
-        self.construction.as_ref().is_some_and(Construction::chain)
+        self.editing_construction().is_some_and(Construction::chain)
     }
 
     pub fn construction_set_chain(&mut self, enabled: bool) {
         self.construction_finish_invalidate();
-        if let Some(construction) = self.construction.as_mut() {
+        if let Some(construction) = self.editing_construction_mut() {
             construction.set_chain(enabled);
             self.construction_message.clear();
             self.refresh_construction_support_rendering();
@@ -1256,15 +1427,17 @@ impl WasmSimulation {
         target_speed: f64,
     ) -> Result<(), String> {
         self.construction_finish_invalidate();
-        self.construction
-            .as_mut()
-            .ok_or("Construction is inactive".to_owned())?
+        let coaster = self
+            .editing_coaster_mut()
+            .ok_or("Construction is inactive".to_owned())?;
+        coaster
+            .construction
             .set_launch_intensity(id, target_speed)
             .map_err(construction_error)?;
-        self.construction_recorder = None;
-        self.construction_report = None;
-        self.construction_train = None;
-        self.construction_outcome = None;
+        coaster.construction_recorder = None;
+        coaster.construction_report = None;
+        coaster.construction_train = None;
+        coaster.construction_outcome = None;
         self.construction_message.clear();
         Ok(())
     }
@@ -1275,8 +1448,7 @@ impl WasmSimulation {
     /// The coaster's track, supports and train colours, or null without a coaster.
     pub fn construction_colors(&self) -> String {
         colors_json(
-            self.construction
-                .as_ref()
+            self.editing_construction()
                 .map(|construction| construction.colors()),
         )
     }
@@ -1284,8 +1456,7 @@ impl WasmSimulation {
     /// The coaster's train layout, or null without a coaster.
     pub fn construction_train_layout(&self) -> String {
         let layout = self
-            .construction
-            .as_ref()
+            .editing_construction()
             .map(|construction| train_layout(construction.model(), &construction.model().train));
         serde_json::to_string(&layout).expect("serialize train layout")
     }
@@ -1334,7 +1505,7 @@ impl WasmSimulation {
     ) {
         self.construction_completion_available.clear();
         self.construction_completion_index = 0;
-        let search = self.construction.as_ref().map_or_else(
+        let search = self.editing_construction().map_or_else(
             || Err("Place a station before finishing the coaster.".to_owned()),
             |construction| construction.completion_search_with_judge(judge),
         );
@@ -1353,7 +1524,7 @@ impl WasmSimulation {
     }
 
     pub fn construction_force_preview(&self) -> Option<ConstructionForcePreviewWire> {
-        let construction = self.construction.as_ref()?;
+        let construction = self.editing_construction()?;
         let pieces = construction.pieces();
         let limits = ENVELOPE_DISPLAY_LIMITS;
         let preview = construction.force_preview(
@@ -1473,7 +1644,7 @@ impl WasmSimulation {
         if self.selected_shape.is_some() {
             return None;
         }
-        let construction = self.construction.as_ref()?;
+        let construction = self.editing_construction()?;
         // Undoing the station leaves an empty construction: there is no train to estimate from.
         if construction.pieces().is_empty() {
             return None;
@@ -1590,7 +1761,7 @@ impl WasmSimulation {
             self.construction_message = "Unknown coaster colour".into();
             return;
         };
-        if let Some(construction) = self.construction.as_mut() {
+        if let Some(construction) = self.editing_construction_mut() {
             construction.set_colors(colors);
             self.construction_message.clear();
         }
@@ -1598,8 +1769,7 @@ impl WasmSimulation {
 
     pub fn construction_hill_options(&self) -> String {
         let model = self
-            .construction
-            .as_ref()
+            .editing_construction()
             .map(|construction| construction.model().clone())
             .unwrap_or_else(|| coaster_model(&self.construction_model));
         let options: Vec<_> = theme_park_sim::track::catalog()
@@ -1626,7 +1796,7 @@ impl WasmSimulation {
 
     /// The model's speed-matched turns, so the builder can offer "For speed" before one is selected.
     pub fn construction_speed_turns(&self) -> String {
-        let Some(construction) = self.construction.as_ref() else {
+        let Some(construction) = self.editing_construction() else {
             return "[]".into();
         };
         let turns: Vec<_> = theme_park_sim::track::catalog()
@@ -1671,7 +1841,7 @@ impl WasmSimulation {
             self.selected_shape = None;
             let obstacles = self.facility_obstacles();
             self.selected = None;
-            self.selected_element = self.park.construction.as_ref().and_then(|construction| {
+            self.selected_element = self.editing_construction().and_then(|construction| {
                 construction
                     .element_choices(&self.world, &obstacles)
                     .into_iter()
@@ -1690,8 +1860,7 @@ impl WasmSimulation {
             self.selected = None;
             self.selected_element = None;
             let model = self
-                .construction
-                .as_ref()
+                .editing_construction()
                 .map(|construction| construction.model().clone())
                 .unwrap_or_else(|| coaster_model(&self.construction_model));
             match parse_shape_selection(id, &model) {
@@ -1731,13 +1900,18 @@ impl WasmSimulation {
         self.selected = pieceid_from_wire(id);
         if let Some(selected) = self.selected {
             let obstacles = self.facility_obstacles();
-            let park = &mut self.park;
-            if let Some(construction) = park.construction.as_mut() {
-                if theme_park_sim::track::catalog()
-                    .iter()
-                    .any(|piece| piece.id == selected && piece.family.is_some())
-                {
-                    let _ = construction.select_hill_variant(selected, &park.world, &obstacles);
+            if let Some(editing_id) = self.editing_coaster_id() {
+                let park = &mut self.park;
+                let (world, coasters) = (&park.world, &mut park.coasters);
+                if let Some(coaster) = coasters.get_mut(&editing_id) {
+                    if theme_park_sim::track::catalog()
+                        .iter()
+                        .any(|piece| piece.id == selected && piece.family.is_some())
+                    {
+                        let _ = coaster
+                            .construction
+                            .select_hill_variant(selected, world, &obstacles);
+                    }
                 }
             }
         }
@@ -1786,8 +1960,7 @@ impl WasmSimulation {
         provisional: bool,
     ) -> Result<theme_park_sim::track::shaped::SolvedElement, SolveRefusal> {
         let construction = self
-            .construction
-            .as_ref()
+            .editing_construction()
             .ok_or(SolveRefusal::InvalidContext)?;
         let prefix = construction.pieces();
         let preview = construction
@@ -1821,8 +1994,7 @@ impl WasmSimulation {
         provisional: bool,
     ) -> Result<theme_park_sim::track::shaped::SolvedElement, SolveRefusal> {
         let construction = self
-            .construction
-            .as_ref()
+            .editing_construction()
             .ok_or(SolveRefusal::InvalidContext)?;
         if provisional {
             construction.shape_candidate_preview(intent, entry_speed_mps, physics)
@@ -1837,8 +2009,7 @@ impl WasmSimulation {
     ) -> Option<ConstructionShapedElementWire> {
         let intent = self.selected_shape.as_ref()?;
         let model_name = self
-            .construction
-            .as_ref()
+            .editing_construction()
             .map_or("", |construction| construction.model().name);
         let selection = shape_selection_id(intent);
         let (kind, feel, hand) = match intent {
@@ -1904,8 +2075,7 @@ impl WasmSimulation {
     ) -> Vec<ConstructionPieceWire> {
         let obstacles = self.facility_obstacles();
         let choices: Vec<_> = self
-            .construction
-            .as_ref()
+            .editing_construction()
             .map(|construction| {
                 construction
                     .available_choices(&self.world, &obstacles)
@@ -1988,8 +2158,7 @@ impl WasmSimulation {
     pub fn construction_elements_typed(&self) -> Vec<ConstructionElementWire> {
         let obstacles = self.facility_obstacles();
         let elements: Vec<_> = self
-            .construction
-            .as_ref()
+            .editing_construction()
             .map(|construction| {
                 construction
                     .element_choices(&self.world, &obstacles)
@@ -2017,8 +2186,7 @@ impl WasmSimulation {
 impl WasmSimulation {
     pub fn construction_track(&self) -> String {
         let track: Vec<_> = self
-            .construction
-            .as_ref()
+            .editing_construction()
             .map(|construction| {
                 construction
                     .piece_ids()
@@ -2065,8 +2233,7 @@ impl WasmSimulation {
     #[cfg(feature = "shaped-benchmark")]
     pub fn construction_last_piece_arc_table_json(&self) -> String {
         let piece = self
-            .construction
-            .as_ref()
+            .editing_construction()
             .and_then(|construction| construction.pieces().last())
             .expect("construction has a placed shaped turn");
         assert!(matches!(
@@ -2085,29 +2252,50 @@ impl WasmSimulation {
     }
 
     pub fn construction_can_append(&self) -> bool {
-        let Some(construction) = self.construction.as_ref() else {
+        let Some(construction) = self.editing_construction() else {
             return false;
         };
+        let Some(editing_id) = self.editing_coaster_id() else {
+            return false;
+        };
+        let train = &construction.model().train;
         let obstacles = self.facility_obstacles();
         if let Some(intent) = self.selected_shape.as_ref() {
             let Ok(solved) = self.construction_shape_candidate(intent) else {
                 return false;
             };
-            return construction
-                .validate_shaped_piece(&solved.piece, &self.world, &obstacles)
-                .is_ok();
+            return self
+                .park
+                .validate_track_clearance(train, &solved.piece, Some(editing_id))
+                .is_ok()
+                && construction
+                    .validate_shaped_piece(&solved.piece, &self.world, &obstacles)
+                    .is_ok();
         }
         if let Some(element_id) = self.selected_element.as_deref() {
             return construction
                 .element_choices(&self.world, &obstacles)
                 .iter()
-                .any(|element| element.id == element_id);
+                .find(|element| element.id == element_id)
+                .is_some_and(|element| {
+                    element.geometry.iter().all(|piece| {
+                        self.park
+                            .validate_track_clearance(train, piece, Some(editing_id))
+                            .is_ok()
+                    })
+                });
         }
         self.selected.is_some_and(|selected| {
-            construction
+            let valid_choice = construction
                 .choices(&self.world, &obstacles)
                 .iter()
-                .any(|choice| choice.id == selected && choice.result.is_ok())
+                .any(|choice| choice.id == selected && choice.result.is_ok());
+            valid_choice
+                && construction.candidate_piece(selected).is_some_and(|piece| {
+                    self.park
+                        .validate_track_clearance(train, &piece, Some(editing_id))
+                        .is_ok()
+                })
         })
     }
 
@@ -2121,9 +2309,22 @@ impl WasmSimulation {
                 Ok(solved) => solved,
                 Err(refusal) => return solve_refusal_message(refusal),
             };
+            let editing_id = self
+                .editing_coaster_id()
+                .expect("shaped preview requires an edited coaster");
+            let train = &self
+                .editing_construction()
+                .expect("shaped preview requires construction")
+                .model()
+                .train;
+            if let Err(error) =
+                self.park
+                    .validate_track_clearance(train, &solved.piece, Some(editing_id))
+            {
+                return construction_error(error);
+            }
             return self
-                .construction
-                .as_ref()
+                .editing_construction()
                 .expect("solving shaped intent requires construction")
                 .validate_shaped_piece(&solved.piece, &self.world, &self.facility_obstacles())
                 .err()
@@ -2131,62 +2332,90 @@ impl WasmSimulation {
                 .unwrap_or_default();
         }
         if let Some(element_id) = self.selected_element.as_deref() {
-            let available = self.construction.as_ref().is_some_and(|construction| {
-                construction
-                    .element_choices(&self.world, &self.facility_obstacles())
-                    .iter()
-                    .any(|element| element.id == element_id)
-            });
-            return if available {
-                String::new()
-            } else {
-                "Element is no longer available here.".into()
+            let Some((construction, editing_id)) =
+                self.editing_construction().zip(self.editing_coaster_id())
+            else {
+                return "Construction is inactive".into();
             };
+            let Some(element) = construction
+                .element_choices(&self.world, &self.facility_obstacles())
+                .into_iter()
+                .find(|element| element.id == element_id)
+            else {
+                return "Element is no longer available here.".into();
+            };
+            for piece in &element.geometry {
+                if let Err(error) = self.park.validate_track_clearance(
+                    &construction.model().train,
+                    piece,
+                    Some(editing_id),
+                ) {
+                    return construction_error(error);
+                }
+            }
+            return String::new();
         }
-        let Some((construction, selected)) = self.construction.as_ref().zip(self.selected) else {
+        let Some((construction, editing_id, selected)) = self
+            .editing_construction()
+            .zip(self.editing_coaster_id())
+            .zip(self.selected)
+            .map(|((construction, id), selected)| (construction, id, selected))
+        else {
             return String::new();
         };
-        construction
+        let choice_result = construction
             .choices(&self.world, &self.facility_obstacles())
             .into_iter()
             .find(|choice| choice.id == selected)
             .expect("selected piece is in catalog")
             .result
+            .map_err(construction_error);
+        if let Err(message) = choice_result {
+            return message;
+        }
+        let piece = construction
+            .candidate_piece(selected)
+            .expect("selected piece is available");
+        self.park
+            .validate_track_clearance(&construction.model().train, &piece, Some(editing_id))
             .err()
             .map(construction_error)
             .unwrap_or_default()
     }
 
     pub fn construction_can_close(&self) -> bool {
-        self.construction.as_ref().is_some_and(|construction| {
+        self.editing_construction().is_some_and(|construction| {
             !construction.is_closed() && Circuit::new(construction.pieces().to_vec()).is_ok()
         })
     }
 
     pub fn construction_can_test(&self) -> bool {
-        self.park.construction_can_test()
+        self.editing_coaster_id()
+            .is_some_and(|id| self.park.construction_can_test(id))
     }
 
     pub fn construction_is_open(&self) -> bool {
-        self.coaster_open
+        self.editing_coaster()
+            .is_some_and(|coaster| coaster.coaster_open)
     }
 
     pub fn construction_coaster_price(&self) -> u16 {
-        self.coaster_price
+        self.park.coaster_price(self.editing_coaster_id())
     }
 
     pub fn construction_coaster_income(&self) -> u64 {
-        self.coaster_income()
+        self.park
+            .coaster_income(self.editing_coaster_id().unwrap_or(CoasterId(0)))
     }
 
     pub fn construction_set_coaster_price(&mut self, price: u16) {
-        self.set_coaster_price(price);
+        self.park
+            .set_coaster_price(self.editing_coaster_id(), price);
     }
 
     /// Queue entrance and exit tiles as x, y, height triples.
     pub fn construction_station_positions(&self) -> Vec<i32> {
-        self.construction
-            .as_ref()
+        self.editing_construction()
             .and_then(|construction| {
                 construction
                     .pieces()
@@ -2209,7 +2438,8 @@ impl WasmSimulation {
     }
 
     pub fn construction_train_count(&self) -> usize {
-        self.park.construction_train_count()
+        self.editing_coaster_id()
+            .map_or(0, |id| self.park.construction_train_count(id))
     }
 
     pub fn construction_set_train_count(&mut self, count: usize) -> bool {
@@ -2219,35 +2449,38 @@ impl WasmSimulation {
 
 impl WasmSimulation {
     pub fn construction_set_train_count_result(&mut self, count: usize) -> Result<(), String> {
-        self.park
-            .construction_set_train_count(count)
-            .map_err(|error| match error {
-                theme_park_sim::park::block_analysis::BlockCommandError::InvalidTrainCount => {
-                    "Train count must be positive and within the available block capacity."
-                        .to_owned()
-                }
-                error => crate::command_errors::block_error_message(error).to_owned(),
-            })
+        let result = self.editing_coaster_id().map_or(
+            Err(theme_park_sim::park::block_analysis::BlockCommandError::InvalidTrainCount),
+            |id| self.park.construction_set_train_count(id, count),
+        );
+        result.map_err(|error| match error {
+            theme_park_sim::park::block_analysis::BlockCommandError::InvalidTrainCount => {
+                "Train count must be positive and within the available block capacity.".to_owned()
+            }
+            error => crate::command_errors::block_error_message(error).to_owned(),
+        })
     }
 }
 
 #[wasm_bindgen]
 impl WasmSimulation {
     pub fn construction_min_cars_per_train(&self) -> u8 {
-        self.construction.as_ref().map_or(0, |construction| {
+        self.editing_construction().map_or(0, |construction| {
             *construction.model().cars_per_train.start()
         })
     }
 
     pub fn construction_max_cars_per_train(&self) -> u8 {
-        self.construction
-            .as_ref()
+        self.editing_construction()
             .map_or(0, |construction| *construction.model().cars_per_train.end())
     }
 
     pub fn construction_set_cars_per_train(&mut self, cars: u8) -> bool {
         self.construction_finish_invalidate();
-        match self.park.construction_set_cars_per_train(cars) {
+        let result = self
+            .editing_coaster_id()
+            .ok_or(theme_park_sim::park::block_analysis::BlockCommandError::NoConstruction);
+        match result.and_then(|id| self.park.construction_set_cars_per_train(id, cars)) {
             Ok(()) => {
                 self.refresh_construction_support_rendering();
                 self.park.construction_message.clear();
@@ -2262,7 +2495,17 @@ impl WasmSimulation {
     }
 
     pub fn construction_set_open(&mut self, open: bool) -> bool {
-        match self.park.construction_set_open(open) {
+        let result = match self.editing_coaster_id() {
+            Some(id) => self.park.construction_set_open(id, open),
+            None if open => Err(
+                theme_park_sim::park::block_analysis::BlockCommandError::CompleteCircuitRequired,
+            ),
+            None => {
+                self.park.construction_message.clear();
+                Ok(())
+            }
+        };
+        match result {
             Ok(()) => true,
             Err(error) => {
                 if matches!(
@@ -2281,12 +2524,15 @@ impl WasmSimulation {
 
     /// Car index, seat index, and guest ID for each occupied seat.
     pub fn construction_riders(&self) -> Vec<u32> {
-        let Some(construction) = &self.construction else {
+        let Some(construction) = self.editing_construction() else {
+            return Vec::new();
+        };
+        let Some(coaster) = self.editing_coaster() else {
             return Vec::new();
         };
         let seats_per_car = u32::from(construction.model().train.rows_per_car)
             * u32::from(construction.model().train.seats_per_row);
-        let mut trains: Vec<_> = self.coaster_riders.iter().collect();
+        let mut trains: Vec<_> = coaster.coaster_riders.iter().collect();
         trains.sort_by_key(|(train_id, _)| **train_id);
         trains
             .into_iter()
@@ -2316,10 +2562,14 @@ impl WasmSimulation {
         let obstacles = self.facility_obstacles();
         let selected = self.selected;
         let selected_element = self.selected_element.clone();
+        let Some(editing_id) = self.editing_coaster_id() else {
+            self.construction_message = "Construction is inactive".into();
+            return;
+        };
         let undo_group_size = selected_element
             .as_deref()
             .and_then(|element_id| {
-                self.park.construction.as_ref().and_then(|construction| {
+                self.editing_construction().and_then(|construction| {
                     construction
                         .element_choices(&self.park.world, &obstacles)
                         .into_iter()
@@ -2330,9 +2580,7 @@ impl WasmSimulation {
             .unwrap_or(1);
         let result: Result<(), String> = (|| {
             let construction = self
-                .park
-                .construction
-                .as_ref()
+                .editing_construction()
                 .ok_or_else(|| "Construction is inactive".to_string())?;
             if let Some(element_id) = selected_element.as_deref() {
                 let element = construction
@@ -2340,6 +2588,15 @@ impl WasmSimulation {
                     .into_iter()
                     .find(|element| element.id == element_id)
                     .ok_or_else(|| "Selected element is no longer available here.".to_string())?;
+                for piece in &element.geometry {
+                    self.park
+                        .validate_track_clearance(
+                            &construction.model().train,
+                            piece,
+                            Some(editing_id),
+                        )
+                        .map_err(construction_error)?;
+                }
                 let first_id = construction.next_piece_id();
                 let tunnel_plans = construction
                     .element_tunnel_plans(&element, &self.park.world, &obstacles)
@@ -2348,18 +2605,22 @@ impl WasmSimulation {
                     .map(|offset| first_id + offset)
                     .collect();
                 let ownership: Vec<_> = piece_ids.iter().copied().zip(tunnel_plans).collect();
-                if let Err(error) = self.park.carve_for_construction(&ownership) {
+                if let Err(error) = self.park.carve_for_coaster(editing_id, &ownership) {
                     return Err(error.to_string());
                 }
-                let park = &mut self.park;
-                if let Err(error) = park
-                    .construction
-                    .as_mut()
-                    .expect("construction remains active")
-                    .apply_element(&element, &park.world, &obstacles)
-                {
+                let apply_result = {
+                    let park = &mut self.park;
+                    let (world, coasters) = (&park.world, &mut park.coasters);
+                    coasters
+                        .get_mut(&editing_id)
+                        .expect("editing coaster exists")
+                        .construction
+                        .apply_element(&element, world, &obstacles)
+                };
+                if let Err(error) = apply_result {
                     for piece_id in piece_ids {
-                        self.park.restore_tunnel_piece(piece_id);
+                        self.park
+                            .restore_tunnel_piece_for_coaster(editing_id, piece_id);
                     }
                     return Err(construction_error(error));
                 }
@@ -2367,36 +2628,47 @@ impl WasmSimulation {
             }
 
             let selected = selected.ok_or_else(|| "Select a piece first".to_string())?;
+            let piece = construction
+                .candidate_piece(selected)
+                .ok_or_else(|| "Selected piece is no longer available here.".to_string())?;
+            self.park
+                .validate_track_clearance(&construction.model().train, &piece, Some(editing_id))
+                .map_err(construction_error)?;
             let piece_id = construction.next_piece_id();
             let tunnel_plan = construction
                 .tunnel_plan(selected, &self.park.world, &obstacles)
                 .map_err(construction_error)?;
-            if let Err(error) = self.park.carve_for_construction(&[(piece_id, tunnel_plan)]) {
+            if let Err(error) = self
+                .park
+                .carve_for_coaster(editing_id, &[(piece_id, tunnel_plan)])
+            {
                 return Err(error.to_string());
             }
-            let park = &mut self.park;
-            if let Err(error) = park
-                .construction
-                .as_mut()
-                .expect("construction remains active")
-                .append(selected, &park.world, &obstacles)
-            {
-                self.park.restore_tunnel_piece(piece_id);
+            let append_result = {
+                let park = &mut self.park;
+                let (world, coasters) = (&park.world, &mut park.coasters);
+                coasters
+                    .get_mut(&editing_id)
+                    .expect("editing coaster exists")
+                    .construction
+                    .append(selected, world, &obstacles)
+            };
+            if let Err(error) = append_result {
+                self.park
+                    .restore_tunnel_piece_for_coaster(editing_id, piece_id);
                 return Err(construction_error(error));
             }
             Ok(())
         })();
         let changed = result.is_ok();
         if changed {
-            self.construction_undo_groups.push(undo_group_size);
+            self.editing_coaster_mut()
+                .expect("construction remains active")
+                .construction_undo_groups
+                .push(undo_group_size);
             self.selected_element = None;
-            self.close_live_coaster();
-            self.clear_block_layout();
-            self.park.support_render_cache.clear();
-            self.construction_recorder = None;
-            self.construction_report = None;
-            self.construction_train = None;
-            self.construction_outcome = None;
+            self.close_editing_live_coaster();
+            self.invalidate_editing_track_state();
             self.select_compatible_piece();
         }
         self.construction_message = result.err().unwrap_or_default();
@@ -2412,15 +2684,19 @@ impl WasmSimulation {
     ) -> Result<(), String> {
         self.construction_finish_invalidate();
         let obstacles = self.facility_obstacles();
+        let Some(editing_id) = self.editing_coaster_id() else {
+            return Err("Construction is inactive".to_owned());
+        };
         let (first_id, tunnel_plan) = {
             let construction = self
-                .park
-                .construction
-                .as_ref()
+                .editing_construction()
                 .ok_or_else(|| "Construction is inactive".to_string())?;
             let piece = construction
                 .piece_from_resolved_spec(spec)
                 .map_err(solve_refusal_message)?;
+            self.park
+                .validate_track_clearance(&construction.model().train, &piece, Some(editing_id))
+                .map_err(construction_error)?;
             let first_id = construction.next_piece_id();
             let tunnel_plans = construction
                 .tunnel_plans_for_geometry(std::slice::from_ref(&piece), &self.park.world)
@@ -2433,29 +2709,31 @@ impl WasmSimulation {
         };
         let ownership = [(first_id, tunnel_plan)];
         self.park
-            .carve_for_construction(&ownership)
+            .carve_for_coaster(editing_id, &ownership)
             .map_err(|error| error.to_string())?;
-        let result = self
-            .park
-            .construction
-            .as_mut()
-            .expect("construction remains active")
-            .append_resolved(intent, spec, &self.park.world, &obstacles)
-            .map_err(shaped_construction_error_message);
+        let result = {
+            let park = &mut self.park;
+            let (world, coasters) = (&park.world, &mut park.coasters);
+            coasters
+                .get_mut(&editing_id)
+                .expect("editing coaster exists")
+                .construction
+                .append_resolved(intent, spec, world, &obstacles)
+        }
+        .map_err(shaped_construction_error_message);
         if let Err(error) = result {
-            self.park.restore_tunnel_piece(first_id);
+            self.park
+                .restore_tunnel_piece_for_coaster(editing_id, first_id);
             return Err(error);
         }
-        self.construction_undo_groups.push(1);
+        self.editing_coaster_mut()
+            .expect("construction remains active")
+            .construction_undo_groups
+            .push(1);
         self.selected_shape = None;
         self.selected_element = None;
-        self.close_live_coaster();
-        self.clear_block_layout();
-        self.park.support_render_cache.clear();
-        self.construction_recorder = None;
-        self.construction_report = None;
-        self.construction_train = None;
-        self.construction_outcome = None;
+        self.close_editing_live_coaster();
+        self.invalidate_editing_track_state();
         self.select_compatible_piece();
         self.refresh_construction_support_rendering();
         Ok(())
@@ -2485,19 +2763,22 @@ impl WasmSimulation {
 
     pub fn construction_undo(&mut self) {
         if self
-            .construction
-            .as_ref()
+            .editing_construction()
             .is_none_or(|construction| construction.piece_ids().is_empty())
         {
             self.construction_message = "There is no active track to undo.".into();
             return;
         }
-        let mut undo_groups = std::mem::take(&mut self.construction_undo_groups);
+        let mut undo_groups = std::mem::take(
+            &mut self
+                .editing_coaster_mut()
+                .expect("construction remains active")
+                .construction_undo_groups,
+        );
         let undo_group_size = undo_groups.pop().unwrap_or(1);
         for _ in 0..undo_group_size {
             let Some(id) = self
-                .construction
-                .as_ref()
+                .editing_construction()
                 .and_then(|construction| construction.piece_ids().last())
                 .copied()
             else {
@@ -2505,35 +2786,35 @@ impl WasmSimulation {
             };
             self.construction_delete_piece(id);
         }
-        self.construction_undo_groups = undo_groups;
+        self.editing_coaster_mut()
+            .expect("construction remains active")
+            .construction_undo_groups = undo_groups;
     }
 
     pub fn construction_delete(&mut self, index: usize) {
-        self.construction_undo_groups.clear();
+        if let Some(coaster) = self.editing_coaster_mut() {
+            coaster.construction_undo_groups.clear();
+        }
         self.construction_delete_piece(index);
     }
 
     fn construction_delete_piece(&mut self, index: usize) {
         self.construction_finish_invalidate();
         let result = self
-            .construction
-            .as_mut()
+            .editing_construction_mut()
             .ok_or("Construction is inactive".to_string())
             .and_then(|construction| construction.delete_from(index).map_err(construction_error));
         let changed = result.is_ok();
         if changed {
-            self.park.restore_tunnel_piece(index);
-            self.close_live_coaster();
-            self.clear_block_layout();
-            self.park.support_render_cache.clear();
-            self.construction_recorder = None;
-            self.construction_report = None;
+            let editing_id = self.editing_coaster_id().expect("construction active");
+            self.park
+                .restore_tunnel_piece_for_coaster(editing_id, index);
+            self.close_editing_live_coaster();
+            self.clear_editing_block_layout();
+            let editing_id = self.editing_coaster_id().expect("construction active");
+            self.park.clear_support_render_cache(editing_id);
             let (station, train_configuration) = {
-                let construction = self
-                    .park
-                    .construction
-                    .as_ref()
-                    .expect("successful deletion");
+                let construction = self.editing_construction().expect("successful deletion");
                 let station = construction
                     .pieces()
                     .iter()
@@ -2547,25 +2828,32 @@ impl WasmSimulation {
                     .cloned();
                 (station, construction.model().train.clone())
             };
-            if let (Some((circuit, train)), Some(station)) =
-                (&mut self.park.construction_train, station)
-            {
-                *train = Train::new(
-                    circuit,
-                    &train_configuration,
-                    PhysicsConfig::default(),
-                    station.length(),
-                    0.0,
-                );
-                self.recovered_station = Some(station);
-                self.construction_outcome =
-                    Some("Train recovered to the station after track deletion.".into());
-            } else {
-                self.construction_train = None;
-                self.recovered_station = None;
-                self.construction_outcome = None;
-            }
-            self.construction_slow_steps = 0;
+            let recovered_station = {
+                let coaster = self.editing_coaster_mut().expect("construction active");
+                coaster.construction_recorder = None;
+                coaster.construction_report = None;
+                let recovered_station = if let (Some((circuit, train)), Some(station)) =
+                    (&mut coaster.construction_train, station)
+                {
+                    *train = Train::new(
+                        circuit,
+                        &train_configuration,
+                        PhysicsConfig::default(),
+                        station.length(),
+                        0.0,
+                    );
+                    coaster.construction_outcome =
+                        Some("Train recovered to the station after track deletion.".into());
+                    Some(station)
+                } else {
+                    coaster.construction_train = None;
+                    coaster.construction_outcome = None;
+                    None
+                };
+                coaster.construction_slow_steps = 0;
+                recovered_station
+            };
+            self.recovered_station = recovered_station;
             self.select_compatible_piece();
         }
         self.construction_message = result.err().unwrap_or_default();
@@ -2577,13 +2865,12 @@ impl WasmSimulation {
     pub fn construction_close(&mut self) {
         self.construction_finish_invalidate();
         let result = self
-            .construction
-            .as_mut()
+            .editing_construction_mut()
             .ok_or("Construction is inactive".to_string())
             .and_then(|construction| construction.close().map_err(construction_error));
         let changed = result.is_ok();
         if changed {
-            self.clear_block_layout();
+            self.clear_editing_block_layout();
         }
         self.construction_message = result.err().unwrap_or_default();
         if changed {
@@ -2691,11 +2978,25 @@ impl WasmSimulation {
             self.construction_message = "Preview a connection first.".into();
             return;
         };
-        let obstacles = self.facility_obstacles();
-        let Some(construction) = self.park.construction.as_ref() else {
+        let Some(editing_id) = self.editing_coaster_id() else {
             self.construction_message = "Construction is inactive".into();
             return;
         };
+        let obstacles = self.facility_obstacles();
+        let Some(construction) = self.editing_construction() else {
+            self.construction_message = "Construction is inactive".into();
+            return;
+        };
+        let train = construction.model().train.clone();
+        for piece in &completion.geometry {
+            if let Err(error) = self
+                .park
+                .validate_track_clearance(&train, piece, Some(editing_id))
+            {
+                self.construction_message = construction_error(error);
+                return;
+            }
+        }
         let first_id = construction.next_piece_id();
         let tunnel_plans =
             match construction.tunnel_plans_for_geometry(&completion.geometry, &self.park.world) {
@@ -2710,21 +3011,25 @@ impl WasmSimulation {
             .map(|offset| first_id + offset)
             .collect();
         let ownership: Vec<_> = piece_ids.iter().copied().zip(tunnel_plans).collect();
-        let result = self.park.carve_for_construction(&ownership);
+        let result = self.park.carve_for_coaster(editing_id, &ownership);
         let message = match result {
             Err(error) => error.to_string(),
             Ok(()) => {
-                let apply_result = self
-                    .park
-                    .construction
-                    .as_mut()
-                    .expect("completion requires construction")
-                    .apply_completion(&completion, &self.park.world, &obstacles);
+                let apply_result = {
+                    let park = &mut self.park;
+                    let (world, coasters) = (&park.world, &mut park.coasters);
+                    coasters
+                        .get_mut(&editing_id)
+                        .expect("editing coaster exists")
+                        .construction
+                        .apply_completion(&completion, world, &obstacles)
+                };
                 match apply_result {
                     Ok(()) => String::new(),
                     Err(error) => {
                         for piece_id in &piece_ids {
-                            self.park.restore_tunnel_piece(*piece_id);
+                            self.park
+                                .restore_tunnel_piece_for_coaster(editing_id, *piece_id);
                         }
                         construction_error(error)
                     }
@@ -2734,13 +3039,8 @@ impl WasmSimulation {
         if message.is_empty() {
             // The circuit is closed now; this records that without searching.
             self.construction_finish_search_start();
-            self.close_live_coaster();
-            self.clear_block_layout();
-            self.park.support_render_cache.clear();
-            self.construction_recorder = None;
-            self.construction_report = None;
-            self.construction_train = None;
-            self.construction_outcome = None;
+            self.close_editing_live_coaster();
+            self.invalidate_editing_track_state();
             self.select_compatible_piece();
         }
         self.construction_message = message;
@@ -2748,7 +3048,10 @@ impl WasmSimulation {
     }
 
     pub fn construction_test(&mut self) {
-        if self.coaster_open {
+        if self
+            .editing_coaster()
+            .is_some_and(|coaster| coaster.coaster_open)
+        {
             self.construction_message = "Close the coaster before testing it.".into();
             return;
         }
@@ -2756,7 +3059,7 @@ impl WasmSimulation {
             self.construction_message = "A closed circuit longer than the train is required".into();
             return;
         }
-        let construction = self.construction.as_ref().expect("checked above");
+        let construction = self.editing_construction().expect("checked above");
         let circuit = construction.circuit().expect("checked above");
         let train = Train::new(
             &circuit,
@@ -2768,55 +3071,86 @@ impl WasmSimulation {
             0.0,
             2.0,
         );
-        self.construction_recorder = Some(
-            ConstructionTestRunRecorder::for_circuit_with_train_and_model(
-                &circuit,
-                &construction.model().train,
-                construction.model(),
-            ),
+        let recorder = ConstructionTestRunRecorder::for_circuit_with_train_and_model(
+            &circuit,
+            &construction.model().train,
+            construction.model(),
         );
-        self.construction_report = None;
-        self.construction_train = Some((circuit, train));
+        let coaster = self
+            .editing_coaster_mut()
+            .expect("construction remains active");
+        coaster.construction_recorder = Some(recorder);
+        coaster.construction_report = None;
+        coaster.construction_train = Some((circuit, train));
+        coaster.construction_slow_steps = 0;
+        coaster.construction_outcome = None;
+        coaster.construction_message = "Test train running.".into();
         self.recovered_station = None;
-        self.construction_slow_steps = 0;
-        self.construction_outcome = None;
-        self.construction_message = "Test train running.".into();
+        self.park.construction_message.clear();
     }
 
-    /// Test report and model facts for the ride info window; `ride` is "demo" or "player".
-    pub fn ride_info_json(&self, ride: &str) -> String {
-        let (ride, model, report) = match ride {
-            "demo" => {
-                let coaster = self
-                    .park
-                    .demo_coaster
-                    .as_ref()
-                    .expect("park has a demo coaster");
-                let report = self
-                    .park
-                    .demo_report
-                    .as_ref()
-                    .map(|report| testing_report(report, &coaster.circuit));
-                ("demo", theme_park_sim::track::hybrid_model(), report)
-            }
-            "player" => {
-                let construction = self
-                    .park
-                    .construction
-                    .as_ref()
-                    .expect("park has a player coaster");
-                let report = self
-                    .park
-                    .construction_report
-                    .as_ref()
-                    .zip(construction.circuit().ok())
-                    .map(|(report, circuit)| testing_report(report, &circuit));
-                ("player", construction.model().clone(), report)
-            }
-            other => panic!("unknown ride: {other}"),
+    /// Test report and model facts for one coaster, addressed by its stable park id.
+    pub fn coaster_info_json(&self, id: u32) -> String {
+        let coaster = self.park.coaster(CoasterId(id)).expect("coaster id exists");
+        let model = coaster.construction.model();
+        let report = coaster
+            .construction_report
+            .as_ref()
+            .zip(coaster.construction.circuit().ok())
+            .map(|(report, circuit)| testing_report(report, &circuit));
+        serde_json::to_string(&CoasterRideInfo {
+            id,
+            name: &coaster.name,
+            model: model.key,
+            model_name: model.name.to_owned(),
+            manufacturer: model.manufacturer.to_owned(),
+            limits: force_limits_wire(model.design_force_targets, model.name),
+            report,
+        })
+        .expect("serialize coaster ride info")
+    }
+
+    /// Rates one coaster immediately and stores its report.
+    pub fn coaster_test(&mut self, id: u32) -> String {
+        let ride = if id == crate::guests::DEMO_COASTER_RENDER_ID {
+            RideKey::Demo
+        } else if self.park.coaster(CoasterId(id)).is_some() {
+            RideKey::Player
+        } else {
+            return "No coaster has that id.".into();
+        };
+        self.park
+            .run_ride_test(ride, CoasterId(id))
+            .err()
+            .unwrap_or_default()
+    }
+
+    /// Test report and model facts for one coaster, addressed by its stable park id.
+    pub fn coaster_ride_info_json(&self, id: u32) -> String {
+        let (model, report) = if id == crate::guests::DEMO_COASTER_RENDER_ID {
+            let coaster = self
+                .park
+                .demo_coaster
+                .as_ref()
+                .expect("park has a demo coaster");
+            let report = self
+                .park
+                .demo_report
+                .as_ref()
+                .map(|report| testing_report(report, &coaster.circuit));
+            (theme_park_sim::track::hybrid_model(), report)
+        } else {
+            let coaster = self.park.coaster(CoasterId(id)).expect("coaster id exists");
+            let construction = &coaster.construction;
+            let report = coaster
+                .construction_report
+                .as_ref()
+                .zip(construction.circuit().ok())
+                .map(|(report, circuit)| testing_report(report, &circuit));
+            (construction.model().clone(), report)
         };
         serde_json::to_string(&crate::reports::RideInfoReport {
-            ride,
+            ride: id,
             model_name: model.name.to_owned(),
             manufacturer: model.manufacturer.to_owned(),
             limits: force_limits_wire(model.design_force_targets, model.name),
@@ -2825,22 +3159,38 @@ impl WasmSimulation {
         .expect("serialize ride info")
     }
 
-    /// Rates the ride at once and stores its report; returns an empty string on success, otherwise why not.
-    pub fn ride_test(&mut self, ride: &str) -> String {
-        let ride = match ride {
-            "demo" => RideKey::Demo,
-            "player" => RideKey::Player,
+    /// Legacy builder and recorded-session entry point, retained for version 1 session playback.
+    pub fn ride_info_json(&self, ride: &str) -> String {
+        let id = match ride {
+            "demo" => crate::guests::DEMO_COASTER_RENDER_ID,
+            "player" => {
+                self.editing_coaster_id()
+                    .expect("park has an edited coaster")
+                    .0
+            }
             other => panic!("unknown ride: {other}"),
         };
-        match self.park.run_ride_test(ride) {
-            Ok(()) => String::new(),
-            Err(message) => message,
+        self.coaster_ride_info_json(id)
+    }
+
+    /// Legacy builder and recorded-session entry point, retained for version 1 session playback.
+    pub fn ride_test(&mut self, ride: &str) -> String {
+        match ride {
+            "demo" => self.coaster_test(crate::guests::DEMO_COASTER_RENDER_ID),
+            "player" => self.editing_coaster_id().map_or_else(
+                || "No coaster is being edited.".into(),
+                |id| self.coaster_test(id.0),
+            ),
+            other => panic!("unknown ride: {other}"),
         }
     }
 
     pub fn construction_test_report_json(&self) -> String {
+        let Some(coaster) = self.editing_coaster() else {
+            return "null".into();
+        };
         let (Some(report), Some((circuit, _))) =
-            (&self.construction_report, &self.construction_train)
+            (&coaster.construction_report, &coaster.construction_train)
         else {
             return "null".into();
         };
@@ -2870,7 +3220,7 @@ impl WasmSimulation {
     }
 
     pub fn construction_rail_distances(&self) -> Vec<f32> {
-        let Some(construction) = &self.construction else {
+        let Some(construction) = self.editing_construction() else {
             return Vec::new();
         };
         let pieces = construction.pieces().iter().chain(
@@ -2904,8 +3254,11 @@ impl WasmSimulation {
 
     pub fn construction_train_states(&self) -> Vec<f32> {
         let mut result = Vec::new();
-        if let Some(operation) = &self.coaster_operation {
-            let circuit = self
+        let Some(coaster) = self.editing_coaster() else {
+            return result;
+        };
+        if let Some(operation) = &coaster.coaster_operation {
+            let circuit = coaster
                 .block_layout
                 .as_ref()
                 .expect("operation has a block layout")
@@ -2913,13 +3266,13 @@ impl WasmSimulation {
             let mut trains: Vec<_> = operation.trains().collect();
             trains.sort_by_key(|(train_id, _)| *train_id);
             for (train_id, train) in trains {
-                let occupied = self
+                let occupied = coaster
                     .coaster_riders
                     .get(&train_id)
                     .is_some_and(|riders| !riders.is_empty());
                 append_train_state(&mut result, circuit, train, train_id, occupied);
             }
-        } else if let Some((circuit, train)) = &self.construction_train {
+        } else if let Some((circuit, train)) = &coaster.construction_train {
             append_train_state(&mut result, circuit, train, 0, false);
             if let Some(station) = &self.recovered_station {
                 let sample = station.sample(station.length());
@@ -2932,15 +3285,15 @@ impl WasmSimulation {
     }
 
     pub fn construction_train_poses(&self) -> Vec<f32> {
+        let coaster = self.editing_coaster().expect("train requires construction");
         let config = &self
-            .construction
-            .as_ref()
+            .editing_construction()
             .expect("train requires construction")
             .model()
             .train;
         let mut result = Vec::new();
-        if let Some(operation) = &self.coaster_operation {
-            let circuit = self
+        if let Some(operation) = &coaster.coaster_operation {
+            let circuit = coaster
                 .block_layout
                 .as_ref()
                 .expect("operation has a block layout")
@@ -2948,7 +3301,7 @@ impl WasmSimulation {
             let mut trains: Vec<_> = operation.trains().collect();
             trains.sort_by_key(|(train_id, _)| *train_id);
             for (train_id, train) in trains {
-                let riders = self
+                let riders = coaster
                     .coaster_riders
                     .get(&train_id)
                     .map_or(&[][..], Vec::as_slice);
@@ -2957,7 +3310,7 @@ impl WasmSimulation {
             return result;
         }
 
-        let Some((circuit, train)) = &self.construction_train else {
+        let Some((circuit, train)) = &coaster.construction_train else {
             return result;
         };
         append_train_poses(
@@ -2975,7 +3328,7 @@ impl WasmSimulation {
 
 impl WasmSimulation {
     fn construction_support_entries(&self) -> Option<Vec<(&usize, &Piece)>> {
-        let construction = self.construction.as_ref()?;
+        let construction = self.editing_construction()?;
         Some(
             construction
                 .piece_ids()
@@ -2996,8 +3349,7 @@ impl WasmSimulation {
             return Ok(Vec::new());
         }
         let construction = self
-            .construction
-            .as_ref()
+            .editing_construction()
             .expect("valid preview requires construction");
         let preview = self.construction_preview();
         if preview.is_empty() {
@@ -3054,7 +3406,10 @@ impl WasmSimulation {
     }
 
     pub(crate) fn refresh_construction_support_rendering(&mut self) {
-        let placed_supports = self.park.refresh_construction_supports();
+        let placed_supports = self.editing_coaster_id().map_or_else(
+            || Ok(Vec::new()),
+            |id| self.park.refresh_construction_supports(id),
+        );
         let preview_supports = self.construction_preview_supports_geometry();
         let placed_supports_failed = placed_supports.is_err();
         let preview_supports_failed = preview_supports.is_err();
@@ -3292,6 +3647,7 @@ define_piece_id_wire_names!(
     FloaterHill24x160,
     WideLevelToSixtyDown,
     WideSixtyDownToLevel,
+    GigaSixtyDownToLevel,
     ShapedHill,
     ShapedTurnLeft,
     ShapedTurnRight,
@@ -3409,7 +3765,9 @@ mod getter_tests {
         let message_before = simulation.park.construction_message.clone();
         let preview_supports_before = simulation.construction_preview_supports_cache.clone();
         let placed_supports_before = simulation.construction_placed_supports_cache.clone();
-        let cache_entry_count = simulation.park.support_render_cache.len();
+        let cache_entry_count = simulation
+            .park
+            .support_render_cache_len(simulation.editing_coaster_id().unwrap());
 
         assert!(!simulation.construction_supports().is_empty());
         assert!(!simulation.construction_placed_supports().is_empty());
@@ -3424,7 +3782,9 @@ mod getter_tests {
             placed_supports_before
         );
         assert_eq!(
-            simulation.park.support_render_cache.len(),
+            simulation
+                .park
+                .support_render_cache_len(simulation.editing_coaster_id().unwrap()),
             cache_entry_count
         );
     }
@@ -3440,7 +3800,9 @@ mod getter_tests {
         }
         let message_before = simulation.park.construction_message.clone();
         let placed_supports_before = simulation.construction_placed_supports_cache.clone();
-        let cache_entry_count = simulation.park.support_render_cache.len();
+        let cache_entry_count = simulation
+            .park
+            .support_render_cache_len(simulation.editing_coaster_id().unwrap());
 
         assert!(simulation.construction_placed_supports().is_empty());
         assert_eq!(
@@ -3454,7 +3816,9 @@ mod getter_tests {
             placed_supports_before
         );
         assert_eq!(
-            simulation.park.support_render_cache.len(),
+            simulation
+                .park
+                .support_render_cache_len(simulation.editing_coaster_id().unwrap()),
             cache_entry_count
         );
     }
@@ -3481,7 +3845,7 @@ mod getter_tests {
 
 #[cfg(test)]
 mod shaped_candidate_mode_tests {
-    use super::WasmSimulation;
+    use super::{CoasterId, WasmSimulation};
     use crate::builder_session::BuilderSession;
     use theme_park_sim::physics::PhysicsConfig;
     use theme_park_sim::track::construction::Construction;
@@ -3530,7 +3894,9 @@ mod shaped_candidate_mode_tests {
                 .expect("hyper construction accepts chain lift track");
         }
         construction.set_chain(false);
-        simulation.park.construction = Some(construction);
+        let coaster_id = CoasterId(0);
+        simulation.park.replace_coaster(coaster_id, construction);
+        simulation.editing = Some(coaster_id);
         simulation
     }
 
@@ -3548,9 +3914,7 @@ mod shaped_candidate_mode_tests {
             size: HillSizeHint::Auto,
         };
         let prefix_piece_count = simulation
-            .park
-            .construction
-            .as_ref()
+            .editing_construction()
             .expect("test construction exists")
             .pieces()
             .len();
@@ -3561,9 +3925,7 @@ mod shaped_candidate_mode_tests {
         assert_eq!(browse.calibration_runs, 1);
         assert_eq!(
             simulation
-                .park
-                .construction
-                .as_ref()
+                .editing_construction()
                 .expect("test construction exists")
                 .pieces()
                 .len(),
@@ -3623,9 +3985,7 @@ mod shaped_candidate_mode_tests {
         assert!((rebrowsed_delivery_g - target_g).abs() > 0.1);
         assert_eq!(
             simulation
-                .park
-                .construction
-                .as_ref()
+                .editing_construction()
                 .expect("test construction exists")
                 .pieces()
                 .len(),
@@ -3660,8 +4020,7 @@ mod shaped_candidate_mode_tests {
             .expect("Horizon Hawk first turn is offered");
         let simulation = session.simulation();
         let construction = simulation
-            .construction
-            .as_ref()
+            .editing_construction()
             .expect("ride prefix leaves construction active");
         let preview = simulation
             .construction_shape_candidate_with_mode(&first_shape.intent, true)

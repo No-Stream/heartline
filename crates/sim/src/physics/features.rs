@@ -167,7 +167,7 @@ pub(super) fn ride_features(
     circuit_length: f64,
     completed: bool,
 ) -> RideFeatures {
-    let statistics = super::testing::ride_statistics(samples, circuit_length, completed);
+    let statistics = super::testing::ride_statistics(samples, pieces, circuit_length, completed);
     let frames = sample_frames(samples, pieces, circuit_length, completed);
     let ride_seconds: f64 = frames
         .iter()
@@ -177,7 +177,10 @@ pub(super) fn ride_features(
     let active_airtime_moments = active_airtime_moments(samples, &frames, completed);
     let active_inverted_seconds = frames
         .iter()
-        .filter(|frame| frame.active && samples[frame.index].inverted)
+        .filter(|frame| {
+            let sample = &samples[frame.index];
+            frame.active && sample.inverted && pieces[sample.piece_index].inversion.is_some()
+        })
         .map(|frame| frame.interval.seconds)
         .sum();
     let active_distance: f64 = frames
@@ -312,10 +315,12 @@ fn inversion_passages(
     if samples.is_empty() {
         return Vec::new();
     }
+    let is_declared_inverted =
+        |sample: &TestSample| sample.inverted && pieces[sample.piece_index].inversion.is_some();
     let mut previous_inverted = if completed {
-        samples[samples.len() - 1].inverted
+        is_declared_inverted(&samples[samples.len() - 1])
     } else {
-        samples[0].inverted
+        is_declared_inverted(&samples[0])
     };
     let first_index = usize::from(!completed);
     let mut passages = Vec::new();
@@ -325,16 +330,16 @@ fn inversion_passages(
         .skip(first_index)
         .map(|(_, sample)| sample)
     {
-        if sample.inverted && !previous_inverted {
+        let inverted = is_declared_inverted(sample);
+        if inverted && !previous_inverted {
             let piece = &pieces[sample.piece_index];
-            if let Some(inversion) = piece.inversion {
-                passages.push((
-                    inversion,
-                    piece.heartlining.unwrap_or(Heartlining::NotHeartlined),
-                ));
-            }
+            let inversion = piece.inversion.expect("declared inverted sample");
+            passages.push((
+                inversion,
+                piece.heartlining.unwrap_or(Heartlining::NotHeartlined),
+            ));
         }
-        previous_inverted = sample.inverted;
+        previous_inverted = inverted;
     }
     passages
 }
@@ -930,6 +935,84 @@ mod tests {
                 .element_classes
                 .contains(&ElementClass::HeartlineRoll)
         );
+    }
+
+    #[test]
+    fn hybrid_overbank_is_not_counted_as_an_inversion() {
+        let pieces = [
+            piece(PieceId::Straight, PieceKind::Track),
+            piece(PieceId::HybridOverbankRight, PieceKind::Track),
+        ];
+        let samples = [
+            TestSample {
+                piece_index: 0,
+                ..sample(0, 10.0)
+            },
+            TestSample {
+                piece_index: 1,
+                ..inverted_sample(1, 10.0, true)
+            },
+            TestSample {
+                piece_index: 1,
+                ..inverted_sample(2, 10.0, true)
+            },
+            TestSample {
+                piece_index: 0,
+                ..sample(3, 10.0)
+            },
+        ];
+
+        let features = ride_features(&samples, &pieces, &[], 4.0, true);
+
+        assert_eq!(features.statistics.inversions, 0);
+        assert_eq!(features.statistics.inverted_seconds, 0.0);
+        assert_eq!(features.active_inverted_seconds, 0.0);
+        assert!(features.inversion_passages.is_empty());
+    }
+
+    #[test]
+    fn declared_loop_still_counts_one_inversion_passage() {
+        let pieces = [
+            piece(PieceId::Straight, PieceKind::Track),
+            piece(PieceId::HybridOverbankRight, PieceKind::Track),
+            inversion_piece(PieceId::Loop, Inversion::VerticalLoop, None),
+        ];
+        let samples = [
+            TestSample {
+                piece_index: 0,
+                ..sample(0, 10.0)
+            },
+            TestSample {
+                piece_index: 1,
+                ..inverted_sample(1, 10.0, true)
+            },
+            TestSample {
+                piece_index: 2,
+                ..inverted_sample(2, 10.0, true)
+            },
+            TestSample {
+                piece_index: 2,
+                ..inverted_sample(3, 10.0, true)
+            },
+            TestSample {
+                piece_index: 0,
+                ..sample(4, 10.0)
+            },
+        ];
+
+        let features = ride_features(&samples, &pieces, &[], 5.0, true);
+
+        assert_eq!(features.statistics.inversions, 1);
+        assert_eq!(features.inversion_passages.len(), 1);
+        assert!((features.statistics.inverted_seconds - 0.2).abs() < 1e-12);
+        assert!((features.active_inverted_seconds - 0.2).abs() < 1e-12);
+
+        let partial_features = ride_features(&samples, &pieces, &[], 5.0, false);
+
+        assert_eq!(partial_features.statistics.inversions, 1);
+        assert_eq!(partial_features.inversion_passages.len(), 1);
+        assert!((partial_features.statistics.inverted_seconds - 0.2).abs() < 1e-12);
+        assert!((partial_features.active_inverted_seconds - 0.2).abs() < 1e-12);
     }
 
     #[test]

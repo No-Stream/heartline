@@ -169,6 +169,30 @@ impl BlockOperation {
             .map(|train| (train.id, train.run.train()))
     }
 
+    pub fn train_positions(&self) -> Vec<TrainPosition> {
+        let cars = usize::from(self.configuration.cars);
+        self.trains
+            .iter()
+            .flat_map(|operating_train| {
+                let train = operating_train.run.train();
+                (0..cars).map(move |car| {
+                    let distance = (train.distance()
+                        - car as f64 * self.configuration.length_metres
+                            / f64::from(self.configuration.cars))
+                    .rem_euclid(self.circuit.length());
+                    let sample = self.circuit.sample(distance);
+                    TrainPosition {
+                        position: sample.position,
+                        tangent: sample.tangent,
+                        piece_index: self.circuit.piece_index(distance),
+                        distance,
+                        speed: train.speed().abs(),
+                    }
+                })
+            })
+            .collect()
+    }
+
     /// A fixed-point wait exists only when every stopped train is held at a
     /// brake by a section physically occupied by another stopped train.
     pub(crate) fn is_deadlocked(&self) -> bool {
@@ -882,8 +906,19 @@ mod tests {
         assert!(distinct_layouts.len() >= 2);
     }
 
-    #[test]
-    fn seeded_different_circuits_keep_trains_separate_and_replay() {
+    fn seeded_extra_straights(requested_trains: usize) -> usize {
+        let mut random_state = 0x4f29_u64;
+        let mut extra_straights = 0;
+        for trains in 1..=requested_trains {
+            random_state = random_state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1);
+            extra_straights = ((random_state >> 32) as usize % 3) + trains;
+        }
+        extra_straights
+    }
+
+    fn assert_seeded_circuit_keeps_trains_separate_and_replays(requested_trains: usize) {
         let configuration = hybrid_model().train;
         let config = PhysicsConfig {
             lift_speed: 5.0,
@@ -905,79 +940,101 @@ mod tests {
             .map(|piece| piece.length())
             .sum();
         let straight_length = test_circuit().pieces()[1].length();
-        let mut random_state = 0x4f29_u64;
-        let mut circuit_lengths = Vec::new();
-        for requested_trains in 1..=3 {
-            random_state = random_state
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1);
-            let extra_straights = ((random_state >> 32) as usize % 3) + requested_trains;
-            let circuit = longer_oval(extra_straights);
-            circuit_lengths.push(circuit.length().to_bits());
-            let boundaries: Vec<_> = base_boundaries
-                .iter()
-                .map(|&boundary| {
-                    boundary
-                        + if boundary > first_turn_start {
-                            extra_straights as f64 * straight_length
-                        } else {
-                            0.0
-                        }
-                })
-                .collect();
-            let layout = BlockLayout::new(&circuit, &configuration, config, boundaries.clone())
-                .unwrap_or_else(|reason| panic!("extra={extra_straights}, trains={requested_trains}, boundaries={boundaries:?}: {reason}"));
-            assert!(layout.capacity() >= requested_trains);
-            let mut first = BlockOperation::new(layout.clone(), &hybrid_model());
-            let mut second = BlockOperation::new(layout, &hybrid_model());
-            let mut maximum_active = 0;
-            let mut full_train_steps = 0;
-            for _ in 0..20_000 {
-                assert_eq!(first.can_dispatch(), second.can_dispatch());
-                if first.trains.len() < requested_trains && first.can_dispatch() {
-                    assert_eq!(first.dispatch(), second.dispatch());
-                }
-                let outcomes = first.step(&[], "Timber Tumbler");
-                let replay_outcomes = second.step(&[], "Timber Tumbler");
-                assert!(outcomes.iter().all(|(_, outcome)| !outcome.recovered));
-                assert_eq!(outcomes.len(), replay_outcomes.len());
-                maximum_active = maximum_active.max(first.trains.len());
-                if first.trains.len() == requested_trains {
-                    full_train_steps += 1;
-                }
-                for (index, train) in first.trains.iter().enumerate() {
-                    assert_eq!(
-                        train.run.train().state_hash(),
-                        second.trains[index].run.train().state_hash()
-                    );
-                    for other in &first.trains[index + 1..] {
-                        assert!(first.occupied(train.run.train().distance()).iter().all(
-                            |section| {
+        let extra_straights = seeded_extra_straights(requested_trains);
+        let circuit = longer_oval(extra_straights);
+        let boundaries: Vec<_> = base_boundaries
+            .iter()
+            .map(|&boundary| {
+                boundary
+                    + if boundary > first_turn_start {
+                        extra_straights as f64 * straight_length
+                    } else {
+                        0.0
+                    }
+            })
+            .collect();
+        let layout = BlockLayout::new(&circuit, &configuration, config, boundaries.clone())
+            .unwrap_or_else(|reason| panic!("extra={extra_straights}, trains={requested_trains}, boundaries={boundaries:?}: {reason}"));
+        assert!(layout.capacity() >= requested_trains);
+        let mut first = BlockOperation::new(layout.clone(), &hybrid_model());
+        let mut second = BlockOperation::new(layout, &hybrid_model());
+        let mut maximum_active = 0;
+        let mut full_train_steps = 0;
+        for _ in 0..20_000 {
+            assert_eq!(first.can_dispatch(), second.can_dispatch());
+            if first.trains.len() < requested_trains && first.can_dispatch() {
+                assert_eq!(first.dispatch(), second.dispatch());
+            }
+            let outcomes = first.step(&[], "Timber Tumbler");
+            let replay_outcomes = second.step(&[], "Timber Tumbler");
+            assert!(outcomes.iter().all(|(_, outcome)| !outcome.recovered));
+            assert_eq!(outcomes.len(), replay_outcomes.len());
+            maximum_active = maximum_active.max(first.trains.len());
+            if first.trains.len() == requested_trains {
+                full_train_steps += 1;
+            }
+            for (index, train) in first.trains.iter().enumerate() {
+                assert_eq!(
+                    train.run.train().state_hash(),
+                    second.trains[index].run.train().state_hash()
+                );
+                for other in &first.trains[index + 1..] {
+                    assert!(
+                        first
+                            .occupied(train.run.train().distance())
+                            .iter()
+                            .all(|section| {
                                 !first
                                     .occupied(other.run.train().distance())
                                     .contains(section)
-                            }
-                        ));
-                        assert!(
-                            train
-                                .reserved
-                                .iter()
-                                .all(|section| !other.reserved.contains(section))
-                        );
-                        let separation = (train.run.train().distance()
-                            - other.run.train().distance())
+                            })
+                    );
+                    assert!(
+                        train
+                            .reserved
+                            .iter()
+                            .all(|section| !other.reserved.contains(section))
+                    );
+                    let separation = (train.run.train().distance() - other.run.train().distance())
                         .rem_euclid(circuit.length());
-                        assert!(separation >= configuration.length_metres);
-                        assert!(circuit.length() - separation >= configuration.length_metres);
-                    }
-                }
-                if full_train_steps == 3_000 {
-                    break;
+                    assert!(separation >= configuration.length_metres);
+                    assert!(circuit.length() - separation >= configuration.length_metres);
                 }
             }
-            assert_eq!(maximum_active, requested_trains);
-            assert_eq!(full_train_steps, 3_000);
+            if full_train_steps == 3_000 {
+                break;
+            }
         }
+        assert_eq!(maximum_active, requested_trains);
+        assert_eq!(full_train_steps, 3_000);
+    }
+
+    macro_rules! seeded_different_circuit_tests {
+        ($($test_name:ident => $requested_trains:literal),* $(,)?) => {
+            $(
+                #[test]
+                fn $test_name() {
+                    assert_seeded_circuit_keeps_trains_separate_and_replays($requested_trains);
+                }
+            )*
+        };
+    }
+
+    seeded_different_circuit_tests! {
+        seeded_different_circuit_keeps_one_train_separate_and_replays => 1,
+        seeded_different_circuit_keeps_two_trains_separate_and_replays => 2,
+        seeded_different_circuit_keeps_three_trains_separate_and_replays => 3,
+    }
+
+    #[test]
+    fn seeded_circuits_differ_in_length() {
+        let mut circuit_lengths: Vec<_> = (1..=3)
+            .map(|requested_trains| {
+                longer_oval(seeded_extra_straights(requested_trains))
+                    .length()
+                    .to_bits()
+            })
+            .collect();
         circuit_lengths.sort_unstable();
         circuit_lengths.dedup();
         assert!(circuit_lengths.len() >= 2);

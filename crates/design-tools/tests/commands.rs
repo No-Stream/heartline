@@ -4,6 +4,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use theme_park_design_tools::run_cli;
 use theme_park_sim::track::ride_file::{RideFile, RideStep};
+use theme_park_sim::track::{
+    catalog, feel_rated_speeds, hyper_model, rated_speed_margin, rated_speeds,
+};
 use theme_park_sim_wasm::WasmSimulation;
 use theme_park_sim_wasm::builder_session::BuilderSession;
 
@@ -347,6 +350,63 @@ fn choices_include_every_model_hill_and_speed_turn_variant_with_rated_windows() 
         assert!(row["endHeight"].as_f64().is_some(), "{id}: {row}");
         assert!(row["length"].as_f64().is_some(), "{id}: {row}");
     }
+}
+
+#[test]
+fn hyper_pullout_estimates_and_choices_use_the_rated_margin_window() {
+    let ride = TempFile::new("hyper-pullout-rated-window.ride.json");
+
+    let arguments = vec![
+        "ride".into(),
+        ride.path().into(),
+        "--json".into(),
+        "new --model hyper --station 241,249,10,north --cars 4".into(),
+        "chain on".into(),
+        "place LevelToGentleUp".into(),
+        "place GentleToSteepUp".into(),
+        "place SteepUp".into(),
+        "place SteepUp".into(),
+        "place SteepToGentleUp".into(),
+        "place GentleUpToLevel".into(),
+        "chain off".into(),
+        "place WideLevelToSixtyDown".into(),
+        "choices".into(),
+        "estimate WideSixtyDownToLevel".into(),
+    ];
+    let output = run_cli(&arguments, "").unwrap();
+    let replies: serde_json::Value = serde_json::from_str(&output).unwrap();
+    let choices = replies[replies.as_array().unwrap().len() - 2]
+        .as_array()
+        .unwrap();
+    let pullout_choice = choices
+        .iter()
+        .find(|choice| choice["id"] == "WideSixtyDownToLevel")
+        .unwrap();
+    let pullout_estimate = replies[replies.as_array().unwrap().len() - 1][0].clone();
+
+    let model = hyper_model();
+    let piece = catalog()
+        .iter()
+        .find(|piece| format!("{:?}", piece.id) == "WideSixtyDownToLevel")
+        .unwrap();
+    let rated_window = feel_rated_speeds(&model, piece)
+        .or_else(|| rated_speeds(&model, piece))
+        .unwrap();
+    let expected_window =
+        serde_json::json!([rated_window.minimum_entry, rated_window.maximum_entry]);
+    let entry_speed = pullout_estimate["entrySpeed"].as_f64().unwrap();
+    let expected_margin = rated_speed_margin(rated_window, entry_speed);
+
+    assert_eq!(pullout_estimate["ratedWindow"], expected_window);
+    assert_eq!(pullout_choice["ratedWindow"], expected_window);
+    assert!(
+        (pullout_estimate["margin"].as_f64().unwrap() - expected_margin).abs() < 1e-9,
+        "{pullout_estimate}"
+    );
+    assert!(
+        (pullout_choice["entrySpeedMargin"].as_f64().unwrap() - expected_margin).abs() < 1e-9,
+        "{pullout_choice}"
+    );
 }
 
 #[test]

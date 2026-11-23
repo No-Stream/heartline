@@ -120,4 +120,17 @@ describe("coaster trains", () => {
       expect(area(vertices)).toBeGreaterThan(1);
     }
   });
+  test("includes the coaster ID in pickable train part IDs", () => {
+    const quadIds = (coasterId: number) => new Set(buildTrainQuads(
+      new Float32Array(car(0)),
+      camera,
+      viewport,
+      paint,
+      hybrid,
+      coasterId,
+    ).map((quad) => quad.id));
+
+    expect(quadIds(7)).toEqual(new Set(["train-7-0"]));
+    expect(quadIds(8)).toEqual(new Set(["train-8-0"]));
+  });
 });

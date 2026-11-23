@@ -400,11 +400,13 @@ async function readTrainGroups(page: Page): Promise<TrainGroup[]> {
 async function findVisibleTrainIds(page: Page, cars: readonly TrainCar[]): Promise<number[]> {
   return page.evaluate((trainCars) => {
     const visible = new Set<number>();
+    const coasterId = window.gameTest.editingCoasterId();
+    if (coasterId === null) throw new Error("No coaster is being edited");
     for (const car of trainCars) {
       const center = window.gameTest.project({ x: car.x, y: car.y, z: car.z });
       for (let dy = -8; dy <= 8; dy += 2) for (let dx = -8; dx <= 8; dx += 2) {
         const pick = window.gameTest.pick(center.x + dx, center.y + dy);
-        if (pick?.kind === "train" && pick.id === `train-${car.carId}`) visible.add(Math.floor(car.carId / 6));
+        if (pick?.kind === "train" && pick.id === `train-${coasterId}-${car.carId}`) visible.add(Math.floor(car.carId / 6));
       }
     }
     return Array.from(visible);

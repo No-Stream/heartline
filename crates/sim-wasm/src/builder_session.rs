@@ -21,7 +21,7 @@ pub struct BuilderSession {
     placed_piece_bridge_ids: Vec<Vec<usize>>,
 }
 
-const BUILDER_SESSION_SNAPSHOT_HEADER: &[u8] = b"TPBUILDER\x02";
+const BUILDER_SESSION_SNAPSHOT_HEADER: &[u8] = b"TPBUILDER\x03";
 
 #[derive(Serialize, Deserialize)]
 struct BuilderSessionSnapshot {
@@ -411,14 +411,13 @@ impl BuilderSession {
         self.end_speed_cache = None;
         let previous_piece_count = self
             .simulation
-            .construction
-            .as_ref()
+            .editing_construction()
             .map(|construction| construction.piece_ids().len());
         self.simulation.construction_finish_invalidate();
         self.simulation.construction_append();
         self.check_bridge_message("place selected piece")?;
         if let (Some(previous_piece_count), Some(construction)) =
-            (previous_piece_count, self.simulation.construction.as_ref())
+            (previous_piece_count, self.simulation.editing_construction())
         {
             if let Some(piece_ids) = construction.piece_ids().get(previous_piece_count..) {
                 if !piece_ids.is_empty() {
@@ -437,14 +436,13 @@ impl BuilderSession {
         self.end_speed_cache = None;
         let previous_piece_count = self
             .simulation
-            .construction
-            .as_ref()
+            .editing_construction()
             .map(|construction| construction.piece_ids().len());
         self.simulation
             .construction_append_resolved_typed(intent, spec)
             .map_err(|message| self.bridge_error("place saved shaped element", message))?;
         if let (Some(previous_piece_count), Some(construction)) =
-            (previous_piece_count, self.simulation.construction.as_ref())
+            (previous_piece_count, self.simulation.editing_construction())
         {
             if let Some(piece_ids) = construction.piece_ids().get(previous_piece_count..) {
                 if !piece_ids.is_empty() {
@@ -575,8 +573,7 @@ impl BuilderSession {
         }
         let previous_piece_count = self
             .simulation
-            .construction
-            .as_ref()
+            .editing_construction()
             .map(|construction| construction.piece_ids().len());
         self.simulation.construction_finish_preview();
         for _ in 1..rank {
@@ -585,7 +582,7 @@ impl BuilderSession {
         self.simulation.construction_finish_confirm();
         self.check_bridge_message("confirm finished coaster")?;
         if let (Some(previous_piece_count), Some(construction)) =
-            (previous_piece_count, self.simulation.construction.as_ref())
+            (previous_piece_count, self.simulation.editing_construction())
         {
             if let Some(new_piece_ids) = construction.piece_ids().get(previous_piece_count..) {
                 self.placed_piece_bridge_ids
@@ -603,8 +600,7 @@ impl BuilderSession {
     fn close_track(&mut self) -> Result<(), BuilderSessionError> {
         if self
             .simulation
-            .construction
-            .as_ref()
+            .editing_construction()
             .is_some_and(|construction| construction.is_closed())
         {
             return Err(self.bridge_error(
@@ -757,8 +753,7 @@ impl BuilderSession {
                 RideStep::Place(place) => {
                     let piece_index = self
                         .simulation
-                        .construction
-                        .as_ref()
+                        .editing_construction()
                         .expect("ride replay has active construction")
                         .pieces()
                         .len();
@@ -789,8 +784,7 @@ impl BuilderSession {
                 RideStep::Shape(shape) => {
                     let piece_index = self
                         .simulation
-                        .construction
-                        .as_ref()
+                        .editing_construction()
                         .expect("ride replay has active construction")
                         .pieces()
                         .len();
@@ -992,8 +986,7 @@ mod tests {
         let mut initial_construction = serde_json::to_value(
             session
                 .simulation()
-                .construction
-                .as_ref()
+                .editing_construction()
                 .expect("construction started"),
         )
         .unwrap();
@@ -1004,8 +997,7 @@ mod tests {
             .expect("construction serializes its next piece id");
         let initial_next_piece_id = session
             .simulation()
-            .construction
-            .as_ref()
+            .editing_construction()
             .expect("construction started")
             .next_piece_id();
 
@@ -1017,8 +1009,7 @@ mod tests {
         session.undo().unwrap();
         let construction = session
             .simulation()
-            .construction
-            .as_ref()
+            .editing_construction()
             .expect("construction remains active");
         assert_eq!(session.simulation().construction_track(), initial_track);
         assert_eq!(construction.next_piece_id(), initial_next_piece_id + 1);
@@ -1391,44 +1382,58 @@ mod tests {
 
     #[test]
     fn session_outputs_match_the_worker_benchmark_digest_for_all_three_circuits() {
-        for (ride_name, model_key) in [
-            ("Timber Tumbler", "hybrid"),
-            ("Velocity Viper", "velocity_viper"),
-            ("Briar Blitz", "wooden_twister"),
-        ] {
-            let ride = fixture_ride_file(ride_name);
-            assert_eq!(ride.model, model_key, "{ride_name} ride model");
-            let commands = ride_commands(&ride);
-            let expected = benchmark_trace(ride_name, model_key, &commands);
-            let actual = session_trace(model_key, &commands);
-            assert_eq!(
-                trace_digest(&actual),
-                trace_digest(&expected),
-                "{ride_name}: {}",
-                first_trace_difference(&expected, &actual)
-            );
-        }
+        std::thread::scope(|scope| {
+            for (ride_name, model_key) in [
+                ("Timber Tumbler", "hybrid"),
+                ("Velocity Viper", "velocity_viper"),
+                ("Briar Blitz", "wooden_twister"),
+            ] {
+                scope.spawn(move || {
+                    let ride = fixture_ride_file(ride_name);
+                    assert_eq!(ride.model, model_key, "{ride_name} ride model");
+                    let commands = ride_commands(&ride);
+                    let expected = benchmark_trace(ride_name, model_key, &commands);
+                    let actual = session_trace(model_key, &commands);
+                    assert_eq!(
+                        trace_digest(&actual),
+                        trace_digest(&expected),
+                        "{ride_name}: {}",
+                        first_trace_difference(&expected, &actual)
+                    );
+                });
+            }
+        });
     }
 
     #[test]
     fn classic_builder_outputs_keep_the_recorded_digests() {
-        let mut mismatches = Vec::new();
-        for (ride_name, model_key, expected_digest) in [
-            ("Timber Tumbler", "hybrid", 0xc4a457b50554c017),
-            ("Velocity Viper", "velocity_viper", 0x31ecbb395bf3d36d),
-            ("Briar Blitz", "wooden_twister", 0x1c5eaef31b4a2a0c),
-        ] {
-            let commands = circuit_lines(ride_name);
-            let actual = session_trace(model_key, &commands);
-            let actual_digest = trace_digest(&actual);
-            if actual_digest != expected_digest {
-                let benchmark = benchmark_trace(ride_name, model_key, &commands);
-                mismatches.push(format!(
-                    "{ride_name}: expected {expected_digest:016x}, got {actual_digest:016x} ({})",
-                    first_trace_difference(&benchmark, &actual)
-                ));
-            }
-        }
+        let mismatches: Vec<String> = std::thread::scope(|scope| {
+            let checks: Vec<_> = [
+                ("Timber Tumbler", "hybrid", 0xc4a457b50554c017),
+                ("Velocity Viper", "velocity_viper", 0x31ecbb395bf3d36d),
+                ("Briar Blitz", "wooden_twister", 0x1c5eaef31b4a2a0c),
+            ]
+            .into_iter()
+            .map(|(ride_name, model_key, expected_digest)| {
+                scope.spawn(move || {
+                    let commands = circuit_lines(ride_name);
+                    let actual = session_trace(model_key, &commands);
+                    let actual_digest = trace_digest(&actual);
+                    (actual_digest != expected_digest).then(|| {
+                        let benchmark = benchmark_trace(ride_name, model_key, &commands);
+                        format!(
+                            "{ride_name}: expected {expected_digest:016x}, got {actual_digest:016x} ({})",
+                            first_trace_difference(&benchmark, &actual)
+                        )
+                    })
+                })
+            })
+            .collect();
+            checks
+                .into_iter()
+                .filter_map(|check| check.join().unwrap())
+                .collect()
+        });
         assert!(
             mismatches.is_empty(),
             "classic builder digest mismatches:\n{}",
@@ -1460,32 +1465,32 @@ mod tests {
             (
                 "Briar Blitz",
                 include_str!("../../../content/rides/briar-blitz.ride.json"),
-                0x3e329638e2e11605,
+                0x2f041e98bcc4db3c,
             ),
             (
                 "Browser agreement fast circuit",
                 include_str!("../../../content/rides/browser-agreement-fast.ride.json"),
-                0x3085ff1b874c26d7,
+                0x3414060cb78a3d24,
             ),
             (
                 "Daisy Dash",
                 include_str!("../../../content/rides/daisy-dash.ride.json"),
-                0xa7bc9079de11869c,
+                0x2b92b2bf56dbcae9,
             ),
             (
                 "Horizon Hawk",
                 include_str!("../../../content/rides/horizon-hawk.ride.json"),
-                0x0e2b676b7c0035c6,
+                0x40a6e5bed02c797d,
             ),
             (
                 "Timber Tumbler",
                 include_str!("../../../content/rides/timber-tumbler.ride.json"),
-                0x3c87cd475133b78a,
+                0x25b289cb5a8d252f,
             ),
             (
                 "Velocity Viper",
                 include_str!("../../../content/rides/velocity-viper.ride.json"),
-                0x89125ac1c28a0e87,
+                0x61867397a8222f69,
             ),
         ] {
             let ride: RideFile = serde_json::from_str(ride_json).unwrap();
@@ -1508,50 +1513,60 @@ mod tests {
 
     #[test]
     fn content_ride_builder_output_traces_match_recorded_baselines() {
-        let mut mismatches = Vec::new();
-        for (ride_name, ride_json, expected_digest) in [
-            (
-                "Briar Blitz",
-                include_str!("../../../content/rides/briar-blitz.ride.json"),
-                0x8984726f418c071b,
-            ),
-            (
-                "Browser agreement fast circuit",
-                include_str!("../../../content/rides/browser-agreement-fast.ride.json"),
-                0xcf80a65b2ff78523,
-            ),
-            (
-                "Daisy Dash",
-                include_str!("../../../content/rides/daisy-dash.ride.json"),
-                0xdf5864855eff5eab,
-            ),
-            (
-                "Horizon Hawk",
-                include_str!("../../../content/rides/horizon-hawk.ride.json"),
-                0x948e8076fab83fdd,
-            ),
-            (
-                "Timber Tumbler",
-                include_str!("../../../content/rides/timber-tumbler.ride.json"),
-                0x371e6a77ca33cb73,
-            ),
-            (
-                "Velocity Viper",
-                include_str!("../../../content/rides/velocity-viper.ride.json"),
-                0x210ac8589df9fa47,
-            ),
-        ] {
-            let ride: RideFile = serde_json::from_str(ride_json).unwrap();
-            assert_eq!(ride.name, ride_name);
-            let trace = content_ride_trace(&ride);
-            let actual_digest = trace_digest(&trace);
-            if actual_digest != expected_digest {
-                mismatches.push(format!(
-                    "{ride_name}: expected {expected_digest:016x}, got {actual_digest:016x} ({} trace calls)",
-                    trace.len()
-                ));
-            }
-        }
+        let mismatches: Vec<String> = std::thread::scope(|scope| {
+            let checks: Vec<_> = [
+                (
+                    "Briar Blitz",
+                    include_str!("../../../content/rides/briar-blitz.ride.json"),
+                    0x6319ddb9332ae2bf,
+                ),
+                (
+                    "Browser agreement fast circuit",
+                    include_str!("../../../content/rides/browser-agreement-fast.ride.json"),
+                    0xe5df39dec6b2014a,
+                ),
+                (
+                    "Daisy Dash",
+                    include_str!("../../../content/rides/daisy-dash.ride.json"),
+                    0x424647458a464a17,
+                ),
+                (
+                    "Horizon Hawk",
+                    include_str!("../../../content/rides/horizon-hawk.ride.json"),
+                    0x804778258ec5c6d4,
+                ),
+                (
+                    "Timber Tumbler",
+                    include_str!("../../../content/rides/timber-tumbler.ride.json"),
+                    0xf0414f79257fb302,
+                ),
+                (
+                    "Velocity Viper",
+                    include_str!("../../../content/rides/velocity-viper.ride.json"),
+                    0xa85d602e7c4c1295,
+                ),
+            ]
+            .into_iter()
+            .map(|(ride_name, ride_json, expected_digest)| {
+                scope.spawn(move || {
+                    let ride: RideFile = serde_json::from_str(ride_json).unwrap();
+                    assert_eq!(ride.name, ride_name);
+                    let trace = content_ride_trace(&ride);
+                    let actual_digest = trace_digest(&trace);
+                    (actual_digest != expected_digest).then(|| {
+                        format!(
+                            "{ride_name}: expected {expected_digest:016x}, got {actual_digest:016x} ({} trace calls)",
+                            trace.len()
+                        )
+                    })
+                })
+            })
+            .collect();
+            checks
+                .into_iter()
+                .filter_map(|check| check.join().unwrap())
+                .collect()
+        });
         assert!(
             mismatches.is_empty(),
             "content ride trace mismatches:\n{}",
@@ -2202,7 +2217,7 @@ mod tests {
         trace_call(
             trace,
             "world: coaster_supports",
-            simulation.coaster_supports(),
+            simulation.coaster_supports(crate::guests::DEMO_COASTER_RENDER_ID),
         );
     }
 

@@ -3196,6 +3196,14 @@ mod tests {
                     &ProfileSpec::pull(0.0, PI / 3.0, 38.5, 3.8).named("WideSixtyDownToLevel"),
                 ),
             ),
+            (
+                "GigaSixtyPull",
+                snap_pull(
+                    &ProfileSpec::pull(0.0, PI / 3.0, 43.5, 3.5)
+                        .with_taper_angle(0.15)
+                        .named("GigaSixtyDownToLevel"),
+                ),
+            ),
         ]
     }
 

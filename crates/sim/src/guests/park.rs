@@ -148,6 +148,10 @@ impl ParkGuests {
         self.behaviors.set_external_rides(ids);
     }
 
+    pub fn queue_length(&self, place_id: u32) -> usize {
+        self.behaviors.queue_length(place_id)
+    }
+
     pub fn board_coaster(&mut self, facility: &Facility) -> Vec<GuestId> {
         self.board_coaster_train(facility, 0)
     }

@@ -71,7 +71,7 @@ function sampledLength(shape: PieceShape): number {
 }
 
 /** Native controls keep every construction action available to keyboard and assistive technology users. */
-export function createConstructionPanel(container: HTMLElement, dispatch: (action: InputAction) => void): ConstructionPanel {
+export function createConstructionPanel(container: HTMLElement, dispatch: (action: InputAction) => void, selectEditedRide: () => void): ConstructionPanel {
   container.classList.add("tool-panel", "builder");
   container.innerHTML = `
     <header class="tool-panel__header"><div><p class="tool-panel__eyebrow">Coaster workshop</p><h2>Build a coaster</h2></div></header>
@@ -554,7 +554,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   previousFinish.addEventListener("click", () => dispatch({ type: "construction-finish-cycle", step: -1 }));
   nextFinish.addEventListener("click", () => dispatch({ type: "construction-finish-cycle", step: 1 }));
   test.addEventListener("click", () => dispatch({ type: "construction-test" }));
-  element("[data-ride-info]").addEventListener("click", () => dispatch({ type: "ride-select", ride: "player" }));
+  element("[data-ride-info]").addEventListener("click", selectEditedRide);
   open.addEventListener("click", () => dispatch({ type: "construction-open-toggle" }));
   const setCoasterPrice = (price: number): void => {
     if (!Number.isInteger(price) || price < 0 || price > 65535) throw new RangeError("Invalid coaster ticket price");

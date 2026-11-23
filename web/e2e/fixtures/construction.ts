@@ -13,7 +13,7 @@ function dispatch(action: InputAction): void {
   if (action.type === "piece-step" || action.type === "piece-group") panel.choose(action);
   if (action.type === "construction-select") setConstructionState({ selected: action.piece });
 }
-const panel = createConstructionPanel(container, dispatch);
+const panel = createConstructionPanel(container, dispatch, () => dispatch({ type: "ride-select", ride: 0 }));
 panel.setUnits("metric");
 bindKeyboard(container, dispatch, () => ({ x: 400, y: 250 }));
 

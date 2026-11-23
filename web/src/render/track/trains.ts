@@ -121,7 +121,8 @@ function rowOffsetsMetres(layout: TrainLayout): number[] {
   return Array.from({ length: layout.rowsPerCar }, (_, row) => (row - (layout.rowsPerCar - 1) / 2) * look.rowPitchMetres);
 }
 
-export function buildTrainQuads(poses: Float32Array, camera: Camera, viewport: Viewport, paint: TrackPaint, layout: TrainLayout): TrackQuad[] {
+export function buildTrainQuads(poses: Float32Array, camera: Camera, viewport: Viewport, paint: TrackPaint, layout: TrainLayout, coasterId?: number): TrackQuad[] {
+  if (coasterId !== undefined && (!Number.isInteger(coasterId) || coasterId < 0 || coasterId > 0xffff_ffff)) throw new RangeError("Invalid coaster ID");
   if (poses.length % 11) throw new Error("Invalid train snapshot");
   const look = TRAIN_LOOKS[layout.model];
   const { quads, box, solid } = createQuadBuilder(camera, viewport, paint.ink, paint.lineWeight);
@@ -144,7 +145,7 @@ export function buildTrainQuads(poses: Float32Array, camera: Camera, viewport: V
       const ring = (along: number, halfWidth: number, [bottom, top]: readonly [number, number]): Vec[] =>
         [[-1, bottom], [1, bottom], [1, top], [-1, top]].map(([across, height]) => point(along + offsetMetres, (part.across ?? 0) + across * halfWidth, height));
       const corners = [...ring(part.along[0], part.halfWidth, part.up), ...ring(part.along[1], front.halfWidth, front.up)];
-      const id = `train-${carId}`;
+      const id = coasterId === undefined ? `train-${carId}` : `train-${coasterId}-${carId}`;
       if (part.paint === "ink" || part.paint === "trim" || part.up[1] - part.up[0] < 0.05) solid(corners, "train", id, paints[part.paint]);
       else box(corners, "train", id, paints[part.paint]);
     };
