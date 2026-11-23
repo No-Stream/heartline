@@ -3,7 +3,7 @@ export const MAX_SCREAM_GROUPS = 3;
 export const MAX_UI_VOICES = 4;
 const MIN_AUDIBILITY = 0.02;
 
-export function allocateTrainVoices(previous: readonly (number | null)[], trains: readonly { train: number; audibility: number }[]): (number | null)[] {
+export function allocateTrainVoices(previous: readonly (string | null)[], trains: readonly { train: string; audibility: number }[]): (string | null)[] {
   const eligible = trains.filter((train) => train.audibility >= MIN_AUDIBILITY);
   const byId = new Map(eligible.map((train) => [train.train, train]));
   const voices = Array.from({ length: MAX_TRAIN_VOICES }, (_, index) => {

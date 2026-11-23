@@ -8,7 +8,7 @@ test("rider screams play the CC0 recordings on time, broadband, and stop when ev
   page.on("response", (response) => { if (response.url().endsWith(".mp3")) recordings.set(response.url(), response.status()); });
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
-  const scream = frame([{ train: 0, pan: 0, audibility: 1, intensity: 1 }]);
+  const scream = frame([{ train: "4294967295:0", pan: 0, audibility: 1, intensity: 1 }]);
   const results = await page.evaluate(async ({ scream, quiet }) => {
     const render = (frames: { time: number; frame: SoundFrame }[]) => window.gameTest.audio.renderOffline({ duration: 3, volume: 1, includeSamples: true, frames });
     return Promise.all([render([{ time: 0, frame: quiet }, { time: 0.2, frame: scream }]), render([{ time: 0, frame: quiet }]), render([{ time: 0, frame: scream }, { time: 0.2, frame: { ...quiet, eventsMuted: true } }])]);
@@ -31,8 +31,8 @@ test("simultaneous drops occupy separate groups and a suppressed repeat adds non
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   const drops = frame([
-    { train: 0, pan: -0.4, audibility: 1, intensity: 0.8 },
-    { train: 2, pan: 0.4, audibility: 1, intensity: 0.8 },
+    { train: "17:0", pan: -0.4, audibility: 1, intensity: 0.8 },
+    { train: "17:1", pan: 0.4, audibility: 1, intensity: 0.8 },
   ]);
   const result = await page.evaluate(({ drops, quiet }) => window.gameTest.audio.renderOffline({ duration: 3, includeVoiceTimeline: true, frames: [
     { time: 0, frame: quiet },

@@ -41,7 +41,7 @@ export function createAudioEngine(context: BaseAudioContext, recordings: SoundRe
   const crowdVoice = createCrowdVoice(context, crowd);
   const ambienceVoice = createAmbienceVoice(context, ambience);
   for (const voice of [...trainPool, ...screamPool, ...uiPool, crowd, ambience]) voice.connect(master);
-  let allocation: (number | null)[] = [];
+  let allocation: (string | null)[] = [];
   const uiSounds: (UiSoundHandle | null)[] = uiPool.map(() => null);
   const screams: (ScreamHandle | null)[] = screamPool.map(() => null);
   let nextUiSlot = 0;

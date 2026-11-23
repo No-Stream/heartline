@@ -34,11 +34,11 @@ fn new_park_starts_flat_with_an_entrance_and_two_path_tiles() {
         FacilityKind::Entrance
     );
     assert!(simulation.demo_coaster().is_none());
-    assert!(simulation.coaster_geometry().is_empty());
-    assert!(simulation.coaster_rails().is_empty());
-    assert!(simulation.coaster_ties().is_empty());
-    assert!(simulation.coaster_supports().is_empty());
-    assert!(simulation.coaster_train_poses().is_empty());
+    assert!(simulation.coaster_geometry(u32::MAX).is_empty());
+    assert!(simulation.coaster_rails(u32::MAX).is_empty());
+    assert!(simulation.coaster_ties(u32::MAX).is_empty());
+    assert!(simulation.coaster_supports(u32::MAX).is_empty());
+    assert!(simulation.coaster_train_poses(u32::MAX).is_empty());
 }
 
 #[test]
@@ -47,7 +47,7 @@ fn demo_park_keeps_its_coaster_and_facilities() {
 
     assert!(simulation.demo_coaster().is_some());
     assert!(simulation.park.facilities.buildings().len() > 1);
-    assert!(!simulation.coaster_rails().is_empty());
+    assert!(!simulation.coaster_rails(u32::MAX).is_empty());
 }
 
 #[test]
@@ -2416,7 +2416,7 @@ fn demo_exports_wooden_lattice_diagonals() {
     let simulation = WasmSimulation::new(42, 0, String::from("demo"));
     assert!(
         simulation
-            .coaster_supports()
+            .coaster_supports(u32::MAX)
             .chunks_exact(7)
             .any(|segment| {
                 (segment[1] != segment[4] || segment[2] != segment[5]) && segment[3] != segment[6]
@@ -2427,8 +2427,8 @@ fn demo_exports_wooden_lattice_diagonals() {
 #[test]
 fn coaster_exports_rails_and_evenly_spaced_ties_from_circuit_curves() {
     let simulation = WasmSimulation::new(42, 0, String::from("demo"));
-    let rails = simulation.coaster_rails();
-    let ties = simulation.coaster_ties();
+    let rails = simulation.coaster_rails(u32::MAX);
+    let ties = simulation.coaster_ties(u32::MAX);
     assert!(!rails.is_empty() && rails.len() % 19 == 0);
     assert_eq!(
         ties.len() / 13,
@@ -2535,7 +2535,7 @@ fn demo_train_state_reports_lift_and_valley_forces() {
     let mut saw_valley = false;
     for _ in 0..20_000 {
         simulation.tick();
-        let state = simulation.coaster_train_states();
+        let state = simulation.coaster_train_states(u32::MAX);
         assert_eq!(state.len(), 6);
         assert_eq!(state[0], 0.0);
         assert_eq!(state[5], 1.0);
@@ -2584,9 +2584,9 @@ fn construction_train_states_follow_block_operation_trains() {
 #[test]
 fn coaster_snapshots_contain_stable_geometry_and_moving_train_poses() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
-    let geometry = simulation.coaster_geometry();
-    let supports = simulation.coaster_supports();
-    let initial_poses = simulation.coaster_train_poses();
+    let geometry = simulation.coaster_geometry(u32::MAX);
+    let supports = simulation.coaster_supports(u32::MAX);
+    let initial_poses = simulation.coaster_train_poses(u32::MAX);
     assert!(!geometry.is_empty() && geometry.len() % 11 == 0);
     assert!(!supports.is_empty() && supports.len() % 7 == 0);
     assert!(!initial_poses.is_empty() && initial_poses.len() % 11 == 0);
@@ -2606,9 +2606,9 @@ fn coaster_snapshots_contain_stable_geometry_and_moving_train_poses() {
     for _ in 0..30 {
         simulation.tick();
     }
-    assert_ne!(simulation.coaster_train_poses(), initial_poses);
-    assert_eq!(simulation.coaster_geometry(), geometry);
-    assert_eq!(simulation.coaster_supports(), supports);
+    assert_ne!(simulation.coaster_train_poses(u32::MAX), initial_poses);
+    assert_eq!(simulation.coaster_geometry(u32::MAX), geometry);
+    assert_eq!(simulation.coaster_supports(u32::MAX), supports);
 }
 
 #[test]

@@ -1,4 +1,20 @@
 use super::*;
+use serde::Serialize;
+
+pub const DEMO_COASTER_RENDER_ID: u32 = u32::MAX;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CoasterRenderEntry {
+    id: u32,
+    track_revision: String,
+    colors: serde_json::Value,
+    train_layout: serde_json::Value,
+}
+
+fn track_revision(track_hash: u64, world_revision: u64, facility_hash: u64) -> String {
+    format!("{track_hash:016x}:{world_revision}:{facility_hash:016x}")
+}
 
 #[wasm_bindgen]
 impl WasmSimulation {
@@ -10,15 +26,62 @@ impl WasmSimulation {
         serde_json::to_string(&self.park_outcomes()).expect("park outcomes serialize")
     }
 
+    /// A reserved render id keeps the starter coaster in the same protocol as built coasters.
+    pub fn coaster_render_list_json(&self) -> String {
+        let mut entries = Vec::with_capacity(self.park.coasters.len() + 1);
+        for (id, coaster) in self.park.coasters() {
+            let model = coaster.construction.model();
+            entries.push(CoasterRenderEntry {
+                id: id.0,
+                track_revision: track_revision(
+                    coaster.construction.state_hash(),
+                    self.world.revision(),
+                    self.park.facilities.state_hash(),
+                ),
+                colors: crate::construction::colors_value(Some(coaster.construction.colors())),
+                train_layout: crate::construction::train_layout_value(model, &model.train),
+            });
+        }
+        if let Some(coaster) = self.demo_coaster() {
+            let model = hybrid_model();
+            entries.push(CoasterRenderEntry {
+                id: DEMO_COASTER_RENDER_ID,
+                track_revision: track_revision(
+                    0,
+                    self.world.revision(),
+                    self.park.facilities.state_hash(),
+                ),
+                colors: crate::construction::colors_value(Some(coaster.colors)),
+                train_layout: crate::construction::train_layout_value(
+                    &model,
+                    &coaster.train_configuration,
+                ),
+            });
+        }
+        serde_json::to_string(&entries).expect("coaster render list serializes")
+    }
+
+    pub fn coaster_ids(&self) -> Vec<u32> {
+        let mut ids: Vec<_> = self.park.coasters().map(|(id, _)| id.0).collect();
+        if self.demo_coaster().is_some() {
+            ids.push(DEMO_COASTER_RENDER_ID);
+        }
+        ids
+    }
+
+    pub fn editing_coaster_id_value(&self) -> Option<u32> {
+        self.editing_coaster_id().map(|id| id.0)
+    }
+
     /// Samples: piece index, position, lateral, up, cumulative distance. Positions and
     /// distance are in tiles (four metres); Z is up and vectors are unit length.
-    pub fn coaster_geometry(&self) -> Vec<f32> {
-        let Some(coaster) = self.demo_coaster() else {
+    pub fn coaster_geometry(&self, id: u32) -> Vec<f32> {
+        let Some(pieces) = self.coaster_track_pieces(id) else {
             return Vec::new();
         };
         let mut result = Vec::new();
         let mut start = 0.0;
-        for (index, piece) in coaster.circuit.pieces().iter().enumerate() {
+        for (index, piece) in pieces.iter().enumerate() {
             let intervals = (piece.length() / 2.0).ceil() as usize;
             for sample_index in 0..=intervals {
                 let distance = piece.length() * (sample_index as f64 / intervals as f64);
@@ -32,71 +95,157 @@ impl WasmSimulation {
 
     /// Rail segments: piece index and start/end frames (position, lateral, up).
     /// Positions are in tiles; lateral and up are unit vectors.
-    /// The demo coaster's track, supports and train colours, or null without one.
-    pub fn coaster_colors(&self) -> String {
-        crate::construction::colors_json(self.demo_coaster().map(|coaster| coaster.colors))
-    }
-
-    /// The demo coaster's train layout, or null without one.
-    pub fn coaster_train_layout(&self) -> String {
-        let layout = self
-            .demo_coaster()
-            .map(|coaster| train_layout(&hybrid_model(), &coaster.train_configuration));
-        serde_json::to_string(&layout).expect("serialize train layout")
-    }
-
-    pub fn coaster_rails(&self) -> Vec<f32> {
-        self.demo_coaster().map_or_else(Vec::new, |coaster| {
-            render_rails(coaster.circuit.pieces(), &self.world)
-        })
+    pub fn coaster_rails(&self, id: u32) -> Vec<f32> {
+        self.coaster_track_pieces(id)
+            .map_or_else(Vec::new, |pieces| render_rails(&pieces, &self.world))
     }
 
     /// Cross ties: piece index, endpoints, up, tangent. Positions are in tiles.
-    /// Ties are spaced two metres apart over the complete circuit, including joins.
-    pub fn coaster_ties(&self) -> Vec<f32> {
-        self.demo_coaster().map_or_else(Vec::new, |coaster| {
-            render_ties(coaster.circuit.pieces(), &self.world)
-        })
+    /// Ties are spaced two metres apart over the complete track, including joins.
+    pub fn coaster_ties(&self, id: u32) -> Vec<f32> {
+        self.coaster_track_pieces(id)
+            .map_or_else(Vec::new, |pieces| render_ties(&pieces, &self.world))
     }
 
-    /// Segments: piece index, start position, end position, in tiles.
-    pub fn coaster_supports(&self) -> Vec<f32> {
-        self.demo_coaster().map_or_else(Vec::new, |coaster| {
-            render_supports(coaster.circuit.pieces(), &self.world)
-        })
+    /// Support segments: piece index, start position and end position, in tiles.
+    pub fn coaster_supports(&self, id: u32) -> Vec<f32> {
+        if id == DEMO_COASTER_RENDER_ID {
+            return self.demo_coaster().map_or_else(Vec::new, |coaster| {
+                render_supports(coaster.circuit.pieces(), &self.world)
+            });
+        }
+        let Some(coaster) = self.park.coaster(CoasterId(id)) else {
+            return Vec::new();
+        };
+        let pieces = construction_pieces(&coaster.construction);
+        render_construction_supports(
+            &pieces,
+            &self.world,
+            coaster.construction.model(),
+            &self.facility_obstacles_excluding(Some(CoasterId(id))),
+        )
+        .expect("placed coaster supports must be routable")
     }
 
     /// Per-train speed, track kind, rider forces, and occupancy.
-    pub fn coaster_train_states(&self) -> Vec<f32> {
-        let Some(coaster) = self.demo_coaster() else {
+    pub fn coaster_train_states(&self, id: u32) -> Vec<f32> {
+        if id == DEMO_COASTER_RENDER_ID {
+            let Some(coaster) = self.demo_coaster() else {
+                return Vec::new();
+            };
+            let mut result = Vec::new();
+            append_train_state(&mut result, &coaster.circuit, &coaster.train, 0, true);
+            return result;
+        }
+        let Some(coaster) = self.park.coaster(CoasterId(id)) else {
             return Vec::new();
         };
         let mut result = Vec::new();
-        append_train_state(&mut result, &coaster.circuit, &coaster.train, 0, true);
+        if let Some(operation) = &coaster.coaster_operation {
+            let circuit = coaster
+                .block_layout
+                .as_ref()
+                .expect("operation has a block layout")
+                .circuit();
+            let mut trains: Vec<_> = operation.trains().collect();
+            trains.sort_by_key(|(train_id, _)| *train_id);
+            for (train_id, train) in trains {
+                let occupied = coaster
+                    .coaster_riders
+                    .get(&train_id)
+                    .is_some_and(|riders| !riders.is_empty());
+                append_train_state(&mut result, circuit, train, train_id, occupied);
+            }
+        } else if let Some((circuit, train)) = &coaster.construction_train {
+            append_train_state(&mut result, circuit, train, 0, false);
+            if self.editing_coaster_id() == Some(CoasterId(id))
+                && let Some(station) = &self.recovered_station
+            {
+                let sample = station.sample(station.length());
+                result[2] = 4.0;
+                result[3] = sample.up.z as f32;
+                result[4] = sample.up.cross(sample.tangent).z as f32;
+            }
+        }
         result
     }
 
     /// Cars: car index, position, tangent, up, occupied-seat bitmask.
-    pub fn coaster_train_poses(&self) -> Vec<f32> {
-        let Some(coaster) = self.demo_coaster() else {
+    pub fn coaster_train_poses(&self, id: u32) -> Vec<f32> {
+        if id == DEMO_COASTER_RENDER_ID {
+            let Some(coaster) = self.demo_coaster() else {
+                return Vec::new();
+            };
+            return demo_train_poses(coaster);
+        }
+        let Some(coaster) = self.park.coaster(CoasterId(id)) else {
             return Vec::new();
         };
-        let train = &coaster.train_configuration;
+        let configuration = &coaster.construction.model().train;
         let mut result = Vec::new();
-        for index in 0..usize::from(train.cars) {
-            let distance = coaster.train.distance()
-                - index as f64 * train.length_metres / f64::from(train.cars);
-            let sample = coaster.circuit.sample(distance);
-            result.push(index as f32);
-            append_vector(&mut result, sample.position / 4.0);
-            append_vector(&mut result, sample.tangent);
-            append_vector(&mut result, sample.up);
-            result.push(
-                ((1_u32 << (u32::from(train.rows_per_car) * u32::from(train.seats_per_row))) - 1)
-                    as f32,
+        if let Some(operation) = &coaster.coaster_operation {
+            let circuit = coaster
+                .block_layout
+                .as_ref()
+                .expect("operation has a block layout")
+                .circuit();
+            let mut trains: Vec<_> = operation.trains().collect();
+            trains.sort_by_key(|(train_id, _)| *train_id);
+            for (train_id, train) in trains {
+                let riders = coaster
+                    .coaster_riders
+                    .get(&train_id)
+                    .map_or(&[][..], Vec::as_slice);
+                append_train_poses(
+                    &mut result,
+                    circuit,
+                    train,
+                    configuration,
+                    train_id,
+                    riders,
+                    None,
+                );
+            }
+            return result;
+        }
+        if let Some((circuit, train)) = &coaster.construction_train {
+            let recovered_station = (self.editing_coaster_id() == Some(CoasterId(id)))
+                .then_some(self.recovered_station.as_ref())
+                .flatten();
+            append_train_poses(
+                &mut result,
+                circuit,
+                train,
+                configuration,
+                0,
+                &[],
+                recovered_station,
             );
         }
         result
+    }
+
+    /// Car index, seat index, and guest ID for each occupied seat on this coaster.
+    pub fn coaster_riders(&self, id: u32) -> Vec<u32> {
+        let Some(coaster) = self.park.coaster(CoasterId(id)) else {
+            return Vec::new();
+        };
+        let seats_per_car = u32::from(coaster.construction.model().train.rows_per_car)
+            * u32::from(coaster.construction.model().train.seats_per_row);
+        coaster
+            .coaster_riders
+            .iter()
+            .flat_map(|(train_id, guests)| {
+                guests.iter().enumerate().flat_map(move |(seat, guest)| {
+                    let car_index = rider_car_index(
+                        *train_id,
+                        coaster.construction.model().train.cars,
+                        seat / seats_per_car as usize,
+                    );
+                    [car_index, (seat as u32) % seats_per_car, guest.0]
+                })
+            })
+            .collect()
     }
 
     pub fn tick_count(&self) -> u64 {
@@ -167,6 +316,86 @@ impl WasmSimulation {
     }
 }
 
+fn construction_pieces(construction: &Construction) -> Vec<Piece> {
+    construction
+        .pieces()
+        .iter()
+        .chain(
+            construction
+                .disconnected_segments()
+                .iter()
+                .flat_map(|segment| &segment.pieces),
+        )
+        .cloned()
+        .collect()
+}
+
+impl WasmSimulation {
+    fn coaster_track_pieces(&self, id: u32) -> Option<Vec<Piece>> {
+        if id == DEMO_COASTER_RENDER_ID {
+            return self
+                .demo_coaster()
+                .map(|coaster| coaster.circuit.pieces().to_vec());
+        }
+        self.park
+            .coaster(CoasterId(id))
+            .map(|coaster| construction_pieces(&coaster.construction))
+    }
+}
+
+fn demo_train_poses(coaster: &DemoCoaster) -> Vec<f32> {
+    let train = &coaster.train_configuration;
+    let mut result = Vec::new();
+    for index in 0..usize::from(train.cars) {
+        let distance =
+            coaster.train.distance() - index as f64 * train.length_metres / f64::from(train.cars);
+        let sample = coaster.circuit.sample(distance);
+        result.push(index as f32);
+        append_vector(&mut result, sample.position / 4.0);
+        append_vector(&mut result, sample.tangent);
+        append_vector(&mut result, sample.up);
+        result.push(
+            ((1_u32 << (u32::from(train.rows_per_car) * u32::from(train.seats_per_row))) - 1)
+                as f32,
+        );
+    }
+    result
+}
+
+fn render_construction_supports(
+    pieces: &[Piece],
+    world: &World,
+    model: &CoasterModel,
+    external_obstacles: &[SupportObstacle],
+) -> Result<Vec<f32>, SupportError> {
+    let mut result = Vec::new();
+    for (index, piece) in pieces.iter().enumerate() {
+        let mut obstacles = external_obstacles.to_vec();
+        obstacles.extend(
+            pieces
+                .iter()
+                .enumerate()
+                .filter(|(other_index, _)| *other_index != index)
+                .flat_map(|(_, other)| {
+                    track_support_obstacles(std::slice::from_ref(other), &model.train)
+                }),
+        );
+        for support in generate_supports(
+            piece,
+            world,
+            &obstacles,
+            model.support_style_for_piece(piece),
+        )? {
+            if support.start != support.end {
+                result.push(index as f32);
+                append_vector(&mut result, support.start / 4.0);
+                append_vector(&mut result, support.end / 4.0);
+            }
+        }
+    }
+    Ok(result)
+}
+
 impl WasmSimulation {
     pub fn park_outcomes(&self) -> theme_park_sim::guests::ParkOutcomes {
         let mut facilities = self.facilities.guest_facilities(&self.world);
@@ -181,3 +410,7 @@ impl WasmSimulation {
         self.simulation.outcomes(&self.world, &facilities)
     }
 }
+
+#[cfg(test)]
+#[path = "tests/coaster_rendering.rs"]
+mod rendering_tests;

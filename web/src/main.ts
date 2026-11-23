@@ -6,7 +6,7 @@ import { createFacilityTool } from "./facility-tool";
 import { stationToolAdapter, facilityToolAdapter, pathToolAdapter, landscapingToolAdapter, sceneryToolAdapter, coasterToolAdapter } from "./tool-adapters";
 import { createRenderRevision, shouldSkipRenderFrame } from "./render-revision";
 import { composeScene } from "./compose-scene";
-import { sendWorkerAction as postWorkerAction, assertNever, type WorkerAction, type WorkerMessage, type CoasterSnapshot } from "./protocol";
+import { sendWorkerAction as postWorkerAction, assertNever, type WorkerAction, type WorkerMessage, type CoasterSnapshot, type CoasterRenderData } from "./protocol";
 import { createAutosaveScheduler, getAutosaveSettings, type AutosaveScheduler } from "./autosave";
 import "./print-modern.css";
 import "./app.css";
@@ -24,8 +24,7 @@ import { CONFETTI_LIFE_TICKS, createCrestTracker, detectCrest, type CrestBurst }
 import { createDayClock, type DaySpeed } from "./day-clock";
 import { fitGameBar } from "./game-bar-fit";
 import { trackStyle } from "./render/track/geometry";
-import type { TrainLayout } from "./train-layout";
-import { repaint, type CoasterColorScheme } from "./coaster-colors";
+import { repaint } from "./coaster-colors";
 import { steppedTrainCount } from "./block-panel-state";
 import { createStaticTrackCache } from "./render/track/cache";
 import { RenderClock } from "./render-clock";
@@ -146,8 +145,7 @@ function moveCamera(action: CameraAction): void {
     : action.type === "zoom" ? { ...action, anchor: { x: action.anchor.x / pixelRatio, y: action.anchor.y / pixelRatio } } : action;
   camera = applyCameraAction(camera, cssViewport(), cssAction);
 }
-/** Demo coaster geometry, paint, and train, when present. */
-type CoasterWorld = WorldView & { pathMetadata: Int32Array; coasterGeometry: Float32Array; coasterRails: Float32Array; coasterTies: Float32Array; coasterSupports: Float32Array; coasterColors: CoasterColorScheme | null; coasterTrain: TrainLayout | null };
+type CoasterWorld = WorldView & { pathMetadata: Int32Array; editingCoasterId: number | null; coasters: readonly CoasterRenderData[] };
 let world: CoasterWorld | undefined;
 let previous: CoasterSnapshot | undefined;
 let current: CoasterSnapshot | undefined;
@@ -186,7 +184,10 @@ const stationTool = createStationTool((command) => sendWorkerAction(worker, comm
 const stationAdapter = stationToolAdapter(stationTool);
 const panelContainer = document.querySelector<HTMLElement>("[data-construction]");
 if (!panelContainer) throw new Error("Construction panel is missing");
-const panel = createConstructionPanel(panelContainer, dispatch);
+const panel = createConstructionPanel(panelContainer, dispatch, () => {
+  const id = world?.editingCoasterId;
+  if (id !== null && id !== undefined) dispatch({ type: "ride-select", ride: id });
+});
 // The whole page, so builder keys keep working after a click in the panel or when a re-rendered control drops focus.
 bindKeyboard(document.body, dispatch, () => ({ x: gameCanvas.width / 2, y: gameCanvas.height / 2 }), () => activeTool === "coaster" && selectedBlock !== null);
 const constructionEffects = createConstructionEffects(trackStyle(atlas));
@@ -287,8 +288,7 @@ let daySpeed: DaySpeed = 1;
 const gamePause = createGamePauseState();
 let gameSpeed = 1;
 let dayTick: number | undefined;
-let demoCrests = createCrestTracker();
-let constructionCrests = createCrestTracker();
+let coasterCrests = new Map<number, ReturnType<typeof createCrestTracker>>();
 let crestBursts: CrestBurst[] = [];
 let soundMemory: MappingMemory | undefined;
 /** Every crest burst since the page loaded, for tests. */
@@ -368,7 +368,7 @@ const gameTest: GameTest = {
   guests() { return renderedGuests; },
   renderedRiders() { return renderedRiders; },
   riders() {
-    return current ? constructionRiderPositions(current.constructionTrainPoses, current.constructionRiders) : [];
+    return current?.coasters.flatMap(({ trainPoses, riders }) => constructionRiderPositions(trainPoses, riders)) ?? [];
   },
   facilities() { return facilities; },
   paths() {
@@ -400,11 +400,13 @@ const gameTest: GameTest = {
   testingReport() { return construction?.testingReport ?? null; },
   constructionEstimates() { return readConstructionEstimates(construction); },
   constructionForcePreview() { return construction?.constructionForcePreview ?? null; },
-  constructionTrainPoses() { return Array.from(current?.constructionTrainPoses ?? []); },
+  constructionTrainPoses() { return Array.from(current?.coasters.find(({ id }) => id === world?.editingCoasterId)?.trainPoses ?? []); },
+  coasters() { return current?.coasters ?? []; },
+  editingCoasterId() { return world?.editingCoasterId ?? null; },
   trainStates() {
     return {
-      coaster: parseTrainStates(current?.trainStates ?? new Float32Array()),
-      construction: parseTrainStates(current?.constructionTrainStates ?? new Float32Array()),
+      coaster: parseTrainStates(current?.coasters.find(({ id }) => id === 0xffff_ffff)?.trainStates ?? new Float32Array()),
+      construction: parseTrainStates(current?.coasters.find(({ id }) => id === world?.editingCoasterId)?.trainStates ?? new Float32Array()),
     };
   },
   replaySession: replayLiveSession,
@@ -605,7 +607,7 @@ function dispatch(action: InputAction): void {
     sendWorkerAction(worker, { type: "ride-info-close" });
     renderRevision.invalidate();
   } else if (action.type === "guest-select") {
-    if (selectedRide) dispatch({ type: "ride-close" });
+    if (selectedRide !== undefined) dispatch({ type: "ride-close" });
     selectedGuestId = action.guestId;
     sendWorkerAction(worker, { type: "guest-detail-request", guestId: action.guestId });
     renderRevision.invalidate();
@@ -750,20 +752,20 @@ function dispatch(action: InputAction): void {
       if (eventMatch) testingPanel.inspectProximity(Number(eventMatch[1]));
       else if (sampleMatch) testingPanel.inspect(Number(sampleMatch[1]));
     } else if (deleteMode && selection && "id" in selection) {
-      const match = /^construction-track-(\d+)$/.exec(selection.id);
-      if (match) dispatch({ type: "construction-delete", id: Number(match[1]) });
+      const match = /^track-(\d+)-(\d+)$/.exec(selection.id);
+      if (match && Number(match[1]) === world?.editingCoasterId) dispatch({ type: "construction-delete", id: Number(match[2]) });
     } else if (selection && "id" in selection && /^guest-\d+$/.test(selection.id)) {
       selectedGuestId = selection.id;
       sendWorkerAction(worker, { type: "guest-detail-request", guestId: selection.id });
       renderRevision.invalidate();
-    } else if (activeTool === "none" && rideFromPick(selection)) {
+    } else if (activeTool === "none" && rideFromPick(selection) !== null) {
       dispatch({ type: "ride-select", ride: rideFromPick(selection)! });
     }
   } else if (action.type === "builder-cancel") {
     // Escape first leaves the active input mode, then closes the open tool. An open guest panel takes Escape for itself.
     if (selectedBlock !== null && activeTool === "coaster") selectBlock(null);
     else if (inputModeActive()) endInputModes();
-    else if (!selectedGuestId && !selectedRide) openTool("none");
+    else if (!selectedGuestId && selectedRide === undefined) openTool("none");
   } else if (action.type === "pan" || action.type === "zoom" || action.type === "rotate") {
     moveCamera(action);
     if (action.type !== "rotate") followPoints = undefined;
@@ -857,14 +859,13 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     autosaveScheduler?.reset();
     snapLoadedPark = true;
     dayTick = undefined;
-    demoCrests = createCrestTracker();
-    constructionCrests = createCrestTracker();
+    coasterCrests = new Map();
     crestBursts = [];
     soundMemory = undefined;
     previous = undefined;
     current = undefined;
     if (selectedGuestId) dispatch({ type: "guest-close" });
-    if (selectedRide) dispatch({ type: "ride-close" });
+    if (selectedRide !== undefined) dispatch({ type: "ride-close" });
   } else if (message.type === "session-export") {
     const inputs = pendingSessionExports.get(message.requestId);
     if (!inputs) throw new Error("Unknown session export request");
@@ -896,13 +897,16 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     pathTool.receive(message);
     if (message.type === "path-command-result") queueUiEvent(pathUiEvent(message));
   } else if (message.type === "world") {
-    const coasterGeometry = message.coasterGeometry ?? world?.coasterGeometry;
-    const coasterRails = message.coasterRails ?? world?.coasterRails;
-    const coasterTies = message.coasterTies ?? world?.coasterTies;
-    const coasterColors = message.coasterColors !== undefined ? message.coasterColors : world?.coasterColors;
-    const coasterTrain = message.coasterTrain !== undefined ? message.coasterTrain : world?.coasterTrain;
-    if (!coasterGeometry || !coasterRails || !coasterTies || coasterColors === undefined || coasterTrain === undefined) throw new Error("Initial coaster geometry is missing");
-    world = { ...message, coasterGeometry, coasterRails, coasterTies, coasterColors, coasterTrain };
+    const coasters = message.coasters.map((update): CoasterRenderData => {
+      const previous = world?.coasters.find(({ id }) => id === update.id);
+      const geometry = update.geometry ?? previous?.geometry;
+      const rails = update.rails ?? previous?.rails;
+      const ties = update.ties ?? previous?.ties;
+      const supports = update.supports ?? previous?.supports;
+      if (!geometry || !rails || !ties || !supports) throw new Error(`Initial coaster geometry is missing for ${update.id}`);
+      return { ...update, geometry, rails, ties, supports };
+    });
+    world = { ...message, coasters };
     testingPanel.setWorld(world);
     landscapingTool.setDimensions(world.dimensions[0], world.dimensions[1]);
     renderRevision.invalidate();
@@ -968,8 +972,7 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     latestGuestDetail = message.detail;
     if (message.guestId === selectedGuestId && message.detail) guestPanel.update(message.detail);
   } else if (message.type === "snapshot") {
-    validateTrainStates(message.trainStates);
-    validateTrainStates(message.constructionTrainStates);
+    for (const coaster of message.coasters) validateTrainStates(coaster.trainStates);
     if (frameLogEnabled) snapshotArrivalEntries.push({ now: performance.now(), sentAt: message.sentAt, tickCount: message.tickCount });
     if (snapLoadedPark) {
       renderClock.snap(message);
@@ -1023,10 +1026,14 @@ function observeTick(snapshot: CoasterSnapshot): void {
 }
 
 function observeCrests(snapshot: CoasterSnapshot): void {
-  const demo = detectCrest(demoCrests, snapshot.trainPoses, snapshot.tickCount);
-  const built = detectCrest(constructionCrests, snapshot.constructionTrainPoses, snapshot.tickCount);
-  demoCrests = demo.tracker; constructionCrests = built.tracker;
-  const newBursts = [demo.burst, built.burst].filter((burst) => burst !== undefined);
+  const newBursts: CrestBurst[] = [];
+  const nextCrests = new Map<number, ReturnType<typeof createCrestTracker>>();
+  for (const coaster of snapshot.coasters) {
+    const result = detectCrest(coasterCrests.get(coaster.id) ?? createCrestTracker(), coaster.trainPoses, snapshot.tickCount);
+    nextCrests.set(coaster.id, result.tracker);
+    if (result.burst) newBursts.push({ ...result.burst, coasterId: coaster.id });
+  }
+  coasterCrests = nextCrests;
   crestHistory.push(...newBursts);
   crestBursts = [...crestBursts, ...newBursts].filter((burst) => snapshot.tickCount - burst.tick < CONFETTI_LIFE_TICKS);
 }
@@ -1246,7 +1253,7 @@ function frame(now: number): void {
     renderTick: renderFrame?.tick,
     setGuestAnchor: (point) => guestPanel.setAnchor(point),
   });
-  const sound = soundFrame({ snapshot: renderCurrent, interpolation, camera, viewport: cssViewport(), dayPhase, gameSpeed, demoTrain: world.coasterTrain, constructionTrain: construction?.trainLayout ?? null, crestBursts, ui: uiEvents.drain(), paused: gamePause.isPaused(), timeSeconds: now / 1000 }, soundMemory);
+  const sound = soundFrame({ snapshot: renderCurrent, interpolation, camera, viewport: cssViewport(), dayPhase, gameSpeed, coasters: world.coasters, crestBursts, ui: uiEvents.drain(), paused: gamePause.isPaused(), timeSeconds: now / 1000 }, soundMemory);
   soundMemory = sound.memory;
   audio.apply(sound.frame);
   renderedGuests = scene.guests;

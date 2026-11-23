@@ -81,7 +81,7 @@ test("interpolates train positions between real worker ticks", async ({ page }) 
   }
 });
 
-test("transfers static rail and tie geometry once and refreshes supports after terrain edits", async ({ page }) => {
+test("preserves coaster geometry and refreshes support data after terrain edits", async ({ page }) => {
   await page.goto(fixtureUrl);
   const result = await page.evaluate(() => window.checkCoasterTransfer());
   expect(result.rails).toBeGreaterThan(0);
@@ -90,7 +90,8 @@ test("transfers static rail and tie geometry once and refreshes supports after t
   expect(result.ties % 13).toBe(0);
   expect(result.supports).toBeGreaterThan(0);
   expect(result.shared).toBe(false);
-  expect(result.resent).toBe(false);
+  expect(result.revisionChanged).toBe(true);
+  expect(result.geometryEqual).toBe(true);
   expect(result.refreshedSupports).toBe(true);
 });
 

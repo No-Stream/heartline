@@ -28,6 +28,12 @@ function geometryId(encoded: number): { id: number; steel: boolean; woodenTrack:
   if (encoded >= 1_000_000) return { id: encoded - 1_000_000, steel: false, woodenTrack: true };
   return { id: encoded, steel: false, woodenTrack: false };
 }
+
+function coasterPartId(kind: "track" | "support" | "footer", pieceId: number, coasterId?: number): string {
+  if (coasterId === undefined) return `${kind}-${pieceId}`;
+  if (!Number.isInteger(coasterId) || coasterId < 0 || coasterId > 0xffff_ffff) throw new RangeError("Invalid coaster ID");
+  return `${kind}-${coasterId}-${pieceId}`;
+}
 export function trackStyle(atlas: Atlas): TrackStyle {
   const { themeStyle } = atlas;
   if (!themeStyle || !themeStyle.steel || !themeStyle.wood || !themeStyle.train || !themeStyle.ink) throw new Error("Atlas is missing coaster theme style");
@@ -183,7 +189,7 @@ export function createQuadBuilder(camera: Camera, viewport: Viewport, ink: strin
   return { quads, box, solid, beam, solidBeam, tube };
 }
 
-export function buildTrackQuads(rails: Float32Array, ties: Float32Array, supports: Float32Array, camera: Camera, viewport: Viewport, style: TrackPaint, sectionBoundariesMetres?: readonly number[], railDistancesMetres?: Float32Array): TrackQuad[] {
+export function buildTrackQuads(rails: Float32Array, ties: Float32Array, supports: Float32Array, camera: Camera, viewport: Viewport, style: TrackPaint, sectionBoundariesMetres?: readonly number[], railDistancesMetres?: Float32Array, coasterId?: number): TrackQuad[] {
   if (rails.length % 19 || ties.length % 13 || supports.length % 7) throw new Error("Invalid coaster snapshot");
   if (sectionBoundariesMetres?.length && railDistancesMetres === undefined) throw new Error("Block-section coloring requires exact rail distances");
   const sectionColors = sectionBoundariesMetres?.length ? sectionColorsForRails(rails, sectionBoundariesMetres, railDistancesMetres!) : undefined;
@@ -196,18 +202,18 @@ export function buildTrackQuads(rails: Float32Array, ties: Float32Array, support
     const upStart = normalize(vector(rails, i+7)), upEnd = normalize(vector(rails, i+16));
     const sectionColor = sectionColors?.[i / BRIDGE_LAYOUTS.RAIL.length];
     if (id.woodenTrack) {
-      beam(start, end, sideStart, sideEnd, upStart, upEnd, 0.055, "track", `track-${id.id}`, sectionColor ?? track, true);
-      beam(add(start, scale(upStart, 0.065)), add(end, scale(upEnd, 0.065)), sideStart, sideEnd, upStart, upEnd, 0.01, "track", `track-${id.id}`, runningRail, true);
+      beam(start, end, sideStart, sideEnd, upStart, upEnd, 0.055, "track", coasterPartId("track", id.id, coasterId), sectionColor ?? track, true);
+      beam(add(start, scale(upStart, 0.065)), add(end, scale(upEnd, 0.065)), sideStart, sideEnd, upStart, upEnd, 0.01, "track", coasterPartId("track", id.id, coasterId), runningRail, true);
     }
-    else if (id.steel) tube(start, end, sideStart, sideEnd, upStart, upEnd, 0.035, "track", `track-${id.id}`, sectionColor ?? track);
-    else beam(start, end, sideStart, sideEnd, upStart, upEnd, 0.035, "track", `track-${id.id}`, sectionColor ?? track, true);
+    else if (id.steel) tube(start, end, sideStart, sideEnd, upStart, upEnd, 0.035, "track", coasterPartId("track", id.id, coasterId), sectionColor ?? track);
+    else beam(start, end, sideStart, sideEnd, upStart, upEnd, 0.035, "track", coasterPartId("track", id.id, coasterId), sectionColor ?? track, true);
   }
   for (let i = 0; i < ties.length; i += BRIDGE_LAYOUTS.TIE.length) {
     const id = geometryId(ties[i]);
     const up = normalize(vector(ties, i+7)), tangent = normalize(vector(ties, i+10));
     const start = vector(ties, i+1), end = vector(ties, i+4);
-    if (id.steel) tube(start, end, up, up, tangent, tangent, 0.025, "track", `track-${id.id}`, track);
-    else beam(start, end, up, up, tangent, tangent, 0.025, "track", `track-${id.id}`, track);
+    if (id.steel) tube(start, end, up, up, tangent, tangent, 0.025, "track", coasterPartId("track", id.id, coasterId), track);
+    else beam(start, end, up, up, tangent, tangent, 0.025, "track", coasterPartId("track", id.id, coasterId), track);
   }
   for (let i = 0; i < supports.length; i += BRIDGE_LAYOUTS.SUPPORT.length) {
     const id = geometryId(supports[i]);
@@ -216,11 +222,11 @@ export function buildTrackQuads(rails: Float32Array, ties: Float32Array, support
     const side = normalize(cross(direction, Math.abs(direction[2]) > 0.9 ? [1,0,0] : [0,0,1]));
     const up = normalize(cross(direction, side));
     const member = Math.abs(direction[2]) > 0.999 ? "column" : Math.abs(direction[2]) < 0.001 ? "ledger" : "brace";
-    if (id.steel) tube(start, end, side, side, up, up, STEEL_MEMBER_RADIUS[member], "support", `support-${id.id}`, supportColor);
-    else if (member === "column") beam(start, end, side, side, up, up, TIMBER_MEMBER_HALF_WIDTH[member], "support", `support-${id.id}`, supportColor);
-    else solidBeam(start, end, side, up, TIMBER_MEMBER_HALF_WIDTH[member], "support", `support-${id.id}`, shade(supportColor, TIMBER_BRACING_SHADE));
+    if (id.steel) tube(start, end, side, side, up, up, STEEL_MEMBER_RADIUS[member], "support", coasterPartId("support", id.id, coasterId), supportColor);
+    else if (member === "column") beam(start, end, side, side, up, up, TIMBER_MEMBER_HALF_WIDTH[member], "support", coasterPartId("support", id.id, coasterId), supportColor);
+    else solidBeam(start, end, side, up, TIMBER_MEMBER_HALF_WIDTH[member], "support", coasterPartId("support", id.id, coasterId), shade(supportColor, TIMBER_BRACING_SHADE));
     if (start[0] === end[0] && start[1] === end[1] && end[2] > start[2]) {
-      beam(start, add(start, [0, 0, 0.05]), [1, 0, 0], [1, 0, 0], [0, 1, 0], [0, 1, 0], 0.1, "support", `footer-${id.id}`, supportColor);
+      beam(start, add(start, [0, 0, 0.05]), [1, 0, 0], [1, 0, 0], [0, 1, 0], [0, 1, 0], 0.1, "support", coasterPartId("footer", id.id, coasterId), supportColor);
     }
   }
   return quads;

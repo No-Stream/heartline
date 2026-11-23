@@ -21,7 +21,7 @@ async function trackPixels(page: Page): Promise<Rgb[]> {
     const pixels: [number, number, number][] = [];
     for (let y = 4; y < canvas.height; y += 5) for (let x = 4; x < canvas.width * 0.65; x += 5) {
       const pick = window.gameTest.pick(x, y);
-      if (!pick || !("id" in pick) || !pick.id.startsWith("construction-track-")) continue;
+      if (!pick || !("id" in pick) || !/^track-0-\d+$/.test(pick.id)) continue;
       const color = new Uint8Array(4);
       gl.readPixels(x, canvas.height - 1 - y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, color);
       pixels.push([color[0], color[1], color[2]]);
