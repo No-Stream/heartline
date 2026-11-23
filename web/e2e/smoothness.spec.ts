@@ -110,19 +110,19 @@ function coefficientOfVariation(values: number[]): number {
 
 test("demo coaster render progress stays smooth on the production build @slow", async ({ page }) => {
   test.setTimeout(90_000);
-  await page.addInitScript(() => {
+  await page.addInitScript((demoCoasterId: number) => {
     const scope = window as Window & { smoothnessRails?: number[] };
     const NativeWorker = window.Worker;
     window.Worker = class extends NativeWorker {
       constructor(scriptURL: string | URL, options?: WorkerOptions) {
         super(scriptURL, options);
         this.addEventListener("message", (event: MessageEvent<{ type?: string; coasters?: { id: number; rails?: Float32Array }[] }>) => {
-          const rails = event.data.coasters?.find(({ id }) => id === DEMO_COASTER_ID)?.rails;
+          const rails = event.data.coasters?.find(({ id }) => id === demoCoasterId)?.rails;
           if (event.data.type === "world" && rails) scope.smoothnessRails = Array.from(rails);
         });
       }
     };
-  });
+  }, DEMO_COASTER_ID);
 
   await page.goto("/?frameLog=1");
   await page.waitForFunction(() => window.smoothnessRails !== undefined && window.gameTest.frameLog().length > 0);
