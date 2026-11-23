@@ -2276,8 +2276,8 @@ fn shaped_raven_turns_meet_peak_force_reversal_and_roll_rate_contract() {
         }
     }
 
-    // Long 8-car Hybrid train at 22 m/s honestly refuses with Stall because the full train
-    // cannot clear the half-loop + half-roll apex without stalling.
+    // A long 8-car Hybrid train at 22 m/s crosses the crest so slowly that pressing it in to a
+    // neutral top pulls the rear cars past the longitudinal limit, so the top feel is out of reach.
     let hybrid = hybrid_model();
     let long_train_refusal = solve_with_prefix(
         ElementIntent::RavenTurn {
@@ -2290,8 +2290,11 @@ fn shaped_raven_turns_meet_peak_force_reversal_and_roll_rate_contract() {
         22.0,
     );
     assert!(
-        matches!(long_train_refusal, Err(SolveRefusal::Stall { .. })),
-        "expected honest Stall refusal for 8-car Hybrid Raven turn at 22 m/s, got {long_train_refusal:?}"
+        matches!(
+            long_train_refusal,
+            Err(SolveRefusal::TopFeelOutOfReach { .. })
+        ),
+        "expected a top-feel refusal for the 8-car Hybrid Raven turn at 22 m/s, got {long_train_refusal:?}"
     );
 
     // Right-hand and diagonal Raven turn.
@@ -2357,10 +2360,11 @@ fn shaped_raven_turn_peak_force_and_top_feel_steps_are_calibrated() {
             30.0,
         );
         // A soft 3.5 g pullout makes a tall, slow crest; pressing riders in there needs a crest
-        // tight enough that the 4-car train breaks the model's force headroom.
+        // tight enough that the 4-car train breaks the model's force headroom, so the top feel
+        // is out of reach.
         if peak_g == 3.5 && top_feel == LoopTopFeel::PressedIn {
             assert!(
-                matches!(result, Err(SolveRefusal::InfeasibleTarget { .. })),
+                matches!(result, Err(SolveRefusal::TopFeelOutOfReach { .. })),
                 "Viper Raven turn at {peak_g:.1} g PressedIn: {:?}",
                 result.map(|(_, _, solved)| solved.spec)
             );
@@ -2570,77 +2574,34 @@ fn shaped_inversions_are_deterministic_and_save_round_trip() {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum RavenTopFeelOutcome {
     Reached,
-    /// Cars cross the crest at speeds too different for one feel to suit them all: their crest
-    /// forces span more than the 0.70 g a centred tolerance band allows.
-    SpreadTooWide,
-    /// The cars' crest forces span less than 0.70 g, but calibration ran out of previews before
-    /// it centred them on the target.
-    NotCentred,
-    /// The crest is reachable but the train breaks the force budget elsewhere in the element.
-    ForceBudget,
+    /// The train's average crest force cannot get within 0.35 g of the target without the crest
+    /// breaking a force limit. On slow or long trains a tight crest pulls the rear cars past the
+    /// longitudinal limit.
+    TopFeelOutOfReach,
+    /// The pullout's peak breaks the force budget, which no top feel can change.
+    PeakOutOfReach,
     /// The crest is too tight or too low for the model's minimum radius or exit height.
     Geometry,
 }
 
+/// The top feel is a target for the train as a whole: the average crest force over the cars must
+/// be within 0.35 g of it. Single cars spread around that average, bounded only by the force limits.
 #[test]
-fn shaped_raven_turn_top_feels_reach_every_car_or_refuse_with_a_reason() {
-    use RavenTopFeelOutcome::{ForceBudget, Geometry, NotCentred, SpreadTooWide};
-    let expected_refusals: &[(&str, u8, f64, LoopTopFeel, RavenTopFeelOutcome)] = &[
-        ("velocity_viper", 3, 22.0, LoopTopFeel::Neutral, ForceBudget),
-        (
-            "velocity_viper",
-            3,
-            22.0,
-            LoopTopFeel::PressedIn,
-            ForceBudget,
-        ),
-        (
-            "velocity_viper",
-            3,
-            26.0,
-            LoopTopFeel::PressedIn,
-            ForceBudget,
-        ),
-        ("velocity_viper", 6, 22.0, LoopTopFeel::Floaty, NotCentred),
-        (
-            "velocity_viper",
-            6,
-            22.0,
-            LoopTopFeel::Neutral,
-            SpreadTooWide,
-        ),
-        (
-            "velocity_viper",
-            6,
-            22.0,
-            LoopTopFeel::PressedIn,
-            SpreadTooWide,
-        ),
-        (
-            "velocity_viper",
-            6,
-            26.0,
-            LoopTopFeel::Neutral,
-            SpreadTooWide,
-        ),
-        (
-            "velocity_viper",
-            6,
-            26.0,
-            LoopTopFeel::PressedIn,
-            SpreadTooWide,
-        ),
-        ("hybrid", 4, 22.0, LoopTopFeel::PressedIn, ForceBudget),
-        ("hybrid", 4, 26.0, LoopTopFeel::PressedIn, ForceBudget),
-        ("hybrid", 8, 22.0, LoopTopFeel::Floaty, SpreadTooWide),
-        ("hybrid", 8, 22.0, LoopTopFeel::Neutral, SpreadTooWide),
-        ("hybrid", 8, 22.0, LoopTopFeel::PressedIn, SpreadTooWide),
-        ("hybrid", 8, 26.0, LoopTopFeel::Floaty, SpreadTooWide),
-        ("hybrid", 8, 26.0, LoopTopFeel::Neutral, SpreadTooWide),
-        ("hybrid", 8, 26.0, LoopTopFeel::PressedIn, SpreadTooWide),
-        ("hybrid", 8, 30.0, LoopTopFeel::Neutral, SpreadTooWide),
-        ("hybrid", 8, 30.0, LoopTopFeel::PressedIn, SpreadTooWide),
-        ("hybrid", 8, 34.0, LoopTopFeel::PressedIn, SpreadTooWide),
+fn shaped_raven_turn_top_feels_reach_the_train_average_or_refuse_with_a_reason() {
+    use RavenTopFeelOutcome::{Geometry, PeakOutOfReach, TopFeelOutOfReach};
+    let expected_refusals: &[(&str, u8, f64, LoopTopFeel)] = &[
+        ("velocity_viper", 3, 22.0, LoopTopFeel::Neutral),
+        ("velocity_viper", 3, 22.0, LoopTopFeel::PressedIn),
+        ("velocity_viper", 3, 26.0, LoopTopFeel::PressedIn),
+        ("velocity_viper", 6, 22.0, LoopTopFeel::Neutral),
+        ("velocity_viper", 6, 22.0, LoopTopFeel::PressedIn),
+        ("velocity_viper", 6, 26.0, LoopTopFeel::PressedIn),
+        ("hybrid", 4, 22.0, LoopTopFeel::PressedIn),
+        ("hybrid", 4, 26.0, LoopTopFeel::PressedIn),
+        ("hybrid", 8, 22.0, LoopTopFeel::Neutral),
+        ("hybrid", 8, 22.0, LoopTopFeel::PressedIn),
+        ("hybrid", 8, 26.0, LoopTopFeel::PressedIn),
+        ("hybrid", 8, 30.0, LoopTopFeel::PressedIn),
     ];
     let mut mismatches = Vec::new();
     for (base_model, cars) in [
@@ -2656,15 +2617,12 @@ fn shaped_raven_turn_top_feels_reach_every_car_or_refuse_with_a_reason() {
                 LoopTopFeel::Neutral,
                 LoopTopFeel::PressedIn,
             ] {
-                let expected = expected_refusals
-                    .iter()
-                    .find(|(key, expected_cars, expected_speed, expected_feel, _)| {
-                        *key == base_model.key
-                            && *expected_cars == cars
-                            && *expected_speed == speed_mps
-                            && *expected_feel == top_feel
-                    })
-                    .map_or(RavenTopFeelOutcome::Reached, |(.., outcome)| *outcome);
+                let expected =
+                    if expected_refusals.contains(&(base_model.key, cars, speed_mps, top_feel)) {
+                        TopFeelOutOfReach
+                    } else {
+                        RavenTopFeelOutcome::Reached
+                    };
                 for hand in [Hand::Left, Hand::Right] {
                     let label = format!(
                         "{} {cars}-car {speed_mps:.0} m/s {top_feel:?} {hand:?}",
@@ -2683,6 +2641,7 @@ fn shaped_raven_turn_top_feels_reach_every_car_or_refuse_with_a_reason() {
                         Ok((model, prefix, solved)) => {
                             let ElementSpec::RavenTurn {
                                 delivered_peak_g,
+                                delivered_top_g,
                                 peak_roll_rate_deg_s,
                                 exit_dz_half_tiles,
                                 ..
@@ -2696,20 +2655,24 @@ fn shaped_raven_turn_top_feels_reach_every_car_or_refuse_with_a_reason() {
                                 &solved.piece,
                                 speed_mps,
                             );
+                            let average_crest_g =
+                                crest_g.iter().sum::<f64>() / crest_g.len() as f64;
+                            let lowest_crest_g =
+                                crest_g.iter().copied().fold(f64::INFINITY, f64::min);
+                            let highest_crest_g =
+                                crest_g.iter().copied().fold(f64::NEG_INFINITY, f64::max);
                             eprintln!(
-                                "Raven top feel {label}: target {:.2} g, crest by car {:?}",
+                                "Raven top feel {label}: target {:.2} g, train average {average_crest_g:.2} g (solver {delivered_top_g:.2} g), cars {lowest_crest_g:.2} to {highest_crest_g:.2} g",
                                 top_feel.target_g(),
-                                crest_g
-                                    .iter()
-                                    .map(|g| format!("{g:.2}"))
-                                    .collect::<Vec<_>>()
                             );
-                            for (car_index, car_crest_g) in crest_g.iter().enumerate() {
-                                assert!(
-                                    (car_crest_g - top_feel.target_g()).abs() <= 0.35,
-                                    "{label}: car {car_index} crest {car_crest_g:.3} g"
-                                );
-                            }
+                            assert!(
+                                (average_crest_g - top_feel.target_g()).abs() <= 0.35,
+                                "{label}: train average crest {average_crest_g:.3} g"
+                            );
+                            assert!(
+                                (delivered_top_g - average_crest_g).abs() <= 0.1,
+                                "{label}: solver average {delivered_top_g:.3} g, ride average {average_crest_g:.3} g"
+                            );
                             assert!((delivered_peak_g - peak_g).abs() <= 0.20, "{label}");
                             assert!(peak_roll_rate_deg_s <= 200.0, "{label}");
                             assert!(exit_dz_half_tiles >= 3, "{label}");
@@ -2726,25 +2689,22 @@ fn shaped_raven_turn_top_feels_reach_every_car_or_refuse_with_a_reason() {
                         }
                         Err(SolveRefusal::TopFeelOutOfReach {
                             target_top_g,
+                            average_top_g,
                             lowest_car_top_g,
                             highest_car_top_g,
                         }) => {
                             eprintln!(
-                                "Raven top feel {label}: refused, cars {lowest_car_top_g:.2} to {highest_car_top_g:.2} g"
+                                "Raven top feel {label}: refused, train average {average_top_g:.2} g, cars {lowest_car_top_g:.2} to {highest_car_top_g:.2} g"
                             );
                             assert_eq!(target_top_g, top_feel.target_g(), "{label}");
                             assert!(
-                                (lowest_car_top_g - target_top_g).abs() > 0.35
-                                    || (highest_car_top_g - target_top_g).abs() > 0.35,
-                                "{label}: refused a band inside the tolerance"
+                                lowest_car_top_g <= average_top_g
+                                    && average_top_g <= highest_car_top_g,
+                                "{label}: average outside the car spread"
                             );
-                            if highest_car_top_g - lowest_car_top_g > 0.70 {
-                                SpreadTooWide
-                            } else {
-                                NotCentred
-                            }
+                            TopFeelOutOfReach
                         }
-                        Err(SolveRefusal::InfeasibleTarget { .. }) => ForceBudget,
+                        Err(SolveRefusal::InfeasibleTarget { .. }) => PeakOutOfReach,
                         Err(SolveRefusal::InvalidGeometry) => Geometry,
                         Err(refusal) => panic!("{label}: unexpected refusal {refusal:?}"),
                     };

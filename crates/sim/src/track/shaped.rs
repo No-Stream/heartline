@@ -1890,10 +1890,12 @@ pub enum SolveRefusal {
         entry_speed_mps: f64,
         minimum_speed_mps: f64,
     },
-    /// Cars cross a Raven turn's crest at different train speeds, so their apex seat forces spread
-    /// wider than the top-feel tolerance allows on both sides of the target.
+    /// A Raven turn's train-average crest force cannot get within the top-feel tolerance of the
+    /// target without breaking a force limit. The lowest and highest single-car crest forces
+    /// show the spread along the train.
     TopFeelOutOfReach {
         target_top_g: f64,
+        average_top_g: f64,
         lowest_car_top_g: f64,
         highest_car_top_g: f64,
     },

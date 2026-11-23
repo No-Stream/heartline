@@ -171,6 +171,33 @@ describe("shaped element selections", () => {
     ]);
   });
 
+  it("names the top feel or the peak as the reason a Raven turn is refused", () => {
+    const ravenWire = {
+      selection: "shape:ravenTurn:left:4:pressedIn",
+      kind: "ravenTurn" as const,
+      feel: "pressedIn",
+      hand: "left" as const,
+      strengthG: 4.0,
+      fixedSize: null,
+      modelName: "Hybrid",
+      exceedsModelFeel: false,
+      spec: null,
+      pieceShape: null,
+    };
+    expect(shapedElementReadout({
+      ...ravenWire,
+      refusal: { kind: "topFeelOutOfReach", targetTopG: 1.5, averageTopG: 1.36, lowestCarTopG: 1.13, highestCarTopG: 1.82 },
+    }, "metric")).toEqual([
+      "Top feel 1.5 g is out of reach within the force limits: the train averages 1.36 g at the top (cars 1.13 to 1.82 g). A faster entry or a shorter train helps.",
+    ]);
+    expect(shapedElementReadout({
+      ...ravenWire,
+      refusal: { kind: "infeasibleTarget", targetG: 4.0, availableHeadroomG: 0.12 },
+    }, "metric")).toEqual([
+      "Peak target 4 g exceeds available headroom of 0.12 g.",
+    ]);
+  });
+
   it("serializes and steps shaped vertical loops, zero-g rolls, and Raven turns", () => {
     expect(defaultInversionSelectionId("loop", "left")).toBe("shape:loop:left:default:neutral");
     expect(defaultInversionSelectionId("zeroGRoll", "right")).toBe("shape:zeroGRoll:right:default");

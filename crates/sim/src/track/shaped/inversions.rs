@@ -13,13 +13,14 @@ use crate::track::shaped::{
     grid_heading_delta, piece_from_spec, stored_value_matches,
 };
 use crate::track::{
-    Bank, CoasterModel, Hand, Heading, HorizontalCurvature, Inversion, Material, Slope, TrackState,
-    VerticalCurvature,
+    Bank, CoasterModel, DesignForceTargets, ENVELOPE_DISPLAY_LIMITS, Hand, Heading,
+    HorizontalCurvature, Inversion, Material, Slope, TrackState, VerticalCurvature,
 };
 
 pub(super) const MAXIMUM_INVERSION_PEAK_ERROR_G: f64 = 0.20;
 pub(super) const MAXIMUM_SHAPED_ROLL_RATE_DEG_S: f64 = 200.0;
-/// Every car's seat force at a Raven turn's inverted apex stays this close to the top feel.
+/// The train's average seat force at a Raven turn's inverted apex stays this close to the top
+/// feel. Single cars may spread further; only the force limits bound them.
 pub(super) const MAXIMUM_RAVEN_TOP_FEEL_ERROR_G: f64 = 0.35;
 const LOOP_DEFAULT_HOLD_DEGREES: f64 = 105.0;
 /// Seconds over which a Raven turn's crest curvature tapers out after the apex.
@@ -27,6 +28,15 @@ const RAVEN_CREST_TAPER_SECONDS: f64 = 0.3;
 /// Riders feel a Raven crest about this much lighter than its profile schedule, mostly from the
 /// curvature taper inside the crest band and the 5 Hz rider filter, so the first try aims high.
 const RAVEN_CREST_SCHEDULE_OFFSET_G: f64 = 0.3;
+/// The solver accepts a Raven turn's previewed average top feel this close to the target. The
+/// full-ride reading differs from the solver's preview by up to about 0.06 g, so this keeps it
+/// inside the 0.35 g tolerance.
+const RAVEN_TOP_FEEL_SOLVE_TOLERANCE_G: f64 = 0.25;
+/// How far the solver lets a Raven turn's aimed top feel move from the requested one to keep the
+/// crest inside the force limits.
+const MAXIMUM_RAVEN_TOP_AIM_SHIFT_G: f64 = RAVEN_TOP_FEEL_SOLVE_TOLERANCE_G;
+/// How far one try moves the aimed top feel after the crest broke a force limit.
+const RAVEN_TOP_AIM_STEP_G: f64 = 0.125;
 /// Shortest crest taper a low Raven turn may use to keep its exit off the ground.
 const MINIMUM_RAVEN_CREST_TAPER_SECONDS: f64 = 0.15;
 const MINIMUM_INVERSION_PEAK_TARGET_G: f64 = 2.5;
@@ -127,12 +137,21 @@ fn worst_inverted_vertical_g(cars: &[CandidateCarForces]) -> f64 {
         })
 }
 
-/// Every car's crest force lies within the top-feel tolerance of the target.
+/// The train's average crest force in the solver's preview lies close enough to the target that
+/// the full-ride reading stays within the top-feel tolerance.
 pub(super) fn raven_top_feel_reached(cars: &[CandidateCarForces], target_top_g: f64) -> bool {
-    crest_top_band_g(cars).is_some_and(|(low_g, high_g)| {
-        (low_g - target_top_g).abs() <= MAXIMUM_RAVEN_TOP_FEEL_ERROR_G
-            && (high_g - target_top_g).abs() <= MAXIMUM_RAVEN_TOP_FEEL_ERROR_G
+    crest_top_average_g(cars).is_some_and(|average_g| {
+        (average_g - target_top_g).abs() <= RAVEN_TOP_FEEL_SOLVE_TOLERANCE_G
     })
+}
+
+/// Mean crest seat force over the cars: the top feel of the train as a whole.
+fn crest_top_average_g(cars: &[CandidateCarForces]) -> Option<f64> {
+    let total_g = cars
+        .iter()
+        .map(|car| car.inverted_crest_vertical_g)
+        .sum::<Option<f64>>()?;
+    (!cars.is_empty()).then(|| total_g / cars.len() as f64)
 }
 
 /// Lowest and highest crest seat force among the cars.
@@ -142,6 +161,39 @@ fn crest_top_band_g(cars: &[CandidateCarForces]) -> Option<(f64, f64)> {
             let apex_g = car.inverted_crest_vertical_g?;
             Some((low.min(apex_g), high.max(apex_g)))
         })
+}
+
+/// Which way a Raven turn's crest must move to get back inside the limit the train breaks: -1 for
+/// a lighter crest, +1 for a heavier one. None when the binding limit is the pullout's peak
+/// vertical force, which the top feel cannot change.
+fn raven_crest_relief_direction(
+    limits: DesignForceTargets,
+    cars: &[CandidateCarForces],
+    rail_radius_ok: bool,
+    crest_tighter_than_pullout: bool,
+) -> Option<f64> {
+    if !rail_radius_ok {
+        return crest_tighter_than_pullout.then_some(-1.0);
+    }
+    let lowest_headroom_g = |headroom: fn(&CandidateCarForces) -> f64| {
+        cars.iter().map(headroom).fold(f64::INFINITY, f64::min)
+    };
+    let peak_headroom_g =
+        lowest_headroom_g(|car| -car.peaks.maximum_vertical_g) + limits.maximum_vertical_g;
+    let light_headroom_g =
+        lowest_headroom_g(|car| car.peaks.minimum_vertical_g) - limits.minimum_vertical_g;
+    let lateral_headroom_g =
+        lowest_headroom_g(|car| -car.peaks.maximum_lateral_g) + limits.maximum_lateral_g;
+    let longitudinal_headroom_g =
+        lowest_headroom_g(|car| -car.peaks.maximum_longitudinal_g) + limits.maximum_longitudinal_g;
+    let heavy_headroom_g = lateral_headroom_g.min(longitudinal_headroom_g);
+    if peak_headroom_g <= light_headroom_g.min(heavy_headroom_g) {
+        None
+    } else if light_headroom_g < heavy_headroom_g {
+        Some(1.0)
+    } else {
+        Some(-1.0)
+    }
 }
 
 fn worst_roll_rate_deg_s(cars: &[CandidateCarForces]) -> f64 {
@@ -830,11 +882,11 @@ pub(super) fn solve_raven_turn(
             return None;
         };
         let seed = candidate.calibration_seed.as_ref()?;
-        let (crest_low_g, crest_high_g) = crest_top_band_g(&seed.preview.cars)?;
+        let crest_average_g = crest_top_average_g(&seed.preview.cars)?;
         Some((
             delivered_peak_g,
             bottom_g,
-            top_g + target_top_g - 0.5 * (crest_low_g + crest_high_g),
+            top_g + target_top_g - crest_average_g,
         ))
     });
 
@@ -852,8 +904,8 @@ pub(super) fn solve_raven_turn(
     );
     let mut roll_length_scale = 3.2_f64;
     let mut last_headroom_g = f64::NEG_INFINITY;
-    let mut last_delivered_g = None;
-    let mut last_crest_band_g = None;
+    let mut top_aim_g = target_top_g;
+    let mut last_top_feel_miss = None;
 
     while preview_count < maximum_previews {
         bottom_g = round_element_value(bottom_g.clamp(2.0, 5.5));
@@ -953,15 +1005,9 @@ pub(super) fn solve_raven_turn(
         let (crest_low_g, crest_high_g) =
             crest_top_band_g(&preview.cars).ok_or(SolveRefusal::InvalidGeometry)?;
         let delivered_top_g =
-            if (crest_low_g - target_top_g).abs() >= (crest_high_g - target_top_g).abs() {
-                crest_low_g
-            } else {
-                crest_high_g
-            };
-        let crest_half_spread_g = 0.5 * (crest_high_g - crest_low_g);
+            crest_top_average_g(&preview.cars).ok_or(SolveRefusal::InvalidGeometry)?;
         let top_feel_ok = raven_top_feel_reached(&preview.cars, target_top_g);
         let peak_roll_rate_deg_s = worst_roll_rate_deg_s(&preview.cars);
-        last_delivered_g = Some(delivered_peak_g);
         let (passes_budget, headroom_g) =
             candidate_passes_force_budget(context.model, &preview.cars, within_vibe);
         last_headroom_g = headroom_g;
@@ -996,12 +1042,8 @@ pub(super) fn solve_raven_turn(
             });
         }
 
-        if passes_budget
-            && rail_radius_ok
-            && roll_rate_ok
-            && top_feel_ok
-            && (delivered_peak_g - target_peak_g).abs() <= MAXIMUM_INVERSION_PEAK_ERROR_G
-        {
+        let peak_ok = (delivered_peak_g - target_peak_g).abs() <= MAXIMUM_INVERSION_PEAK_ERROR_G;
+        if passes_budget && rail_radius_ok && roll_rate_ok && top_feel_ok && peak_ok {
             if let ElementSpec::RavenTurn {
                 delivered_peak_g: stored_peak,
                 delivered_top_g: stored_top,
@@ -1026,22 +1068,40 @@ pub(super) fn solve_raven_turn(
             });
         }
 
-        // Cars cross the crest at different train speeds, and the band widens as the crest
-        // tightens, so a band too wide while centred at or below the target cannot be fixed.
-        let crest_centre_g = 0.5 * (crest_low_g + crest_high_g);
-        if crest_half_spread_g > MAXIMUM_RAVEN_TOP_FEEL_ERROR_G && crest_centre_g <= target_top_g {
-            return Err(SolveRefusal::TopFeelOutOfReach {
-                target_top_g,
-                lowest_car_top_g: crest_low_g,
-                highest_car_top_g: crest_high_g,
-            });
+        let within_limits = passes_budget && rail_radius_ok;
+        let crest_relief_direction = if within_limits || !peak_ok || !roll_rate_ok {
+            None
+        } else {
+            let limits = if within_vibe {
+                context.model.design_force_targets
+            } else {
+                ENVELOPE_DISPLAY_LIMITS
+            };
+            let crest_curvature =
+                (crest_top_g + 1.0) * GRAVITY / crate::math::powi(crest_speed_mps, 2);
+            let pullout_curvature =
+                (bottom_g - 1.0) * GRAVITY / crate::math::powi(design_speed_mps, 2);
+            raven_crest_relief_direction(
+                limits,
+                &preview.cars,
+                rail_radius_ok,
+                crest_curvature > pullout_curvature,
+            )
+        };
+        last_top_feel_miss = ((within_limits && roll_rate_ok && peak_ok)
+            || crest_relief_direction.is_some())
+        .then_some((delivered_top_g, crest_low_g, crest_high_g));
+        if let Some(direction) = crest_relief_direction {
+            let relieved_aim_g = (top_aim_g + direction * RAVEN_TOP_AIM_STEP_G).clamp(
+                target_top_g - MAXIMUM_RAVEN_TOP_AIM_SHIFT_G,
+                target_top_g + MAXIMUM_RAVEN_TOP_AIM_SHIFT_G,
+            );
+            if relieved_aim_g == top_aim_g {
+                break;
+            }
+            top_aim_g = relieved_aim_g;
         }
-        last_crest_band_g = (passes_budget
-            && rail_radius_ok
-            && roll_rate_ok
-            && (delivered_peak_g - target_peak_g).abs() <= MAXIMUM_INVERSION_PEAK_ERROR_G)
-            .then_some((crest_low_g, crest_high_g));
-        crest_top_g += target_top_g - crest_centre_g;
+        crest_top_g += top_aim_g - delivered_top_g;
 
         if !roll_rate_ok {
             roll_length_scale *= (peak_roll_rate_deg_s / 175.0).clamp(1.1, 1.4);
@@ -1049,9 +1109,7 @@ pub(super) fn solve_raven_turn(
             continue;
         }
 
-        if !rail_radius_ok
-            && (delivered_peak_g - target_peak_g).abs() <= MAXIMUM_INVERSION_PEAK_ERROR_G
-        {
+        if !rail_radius_ok && peak_ok && crest_relief_direction.is_none() {
             return Err(SolveRefusal::InfeasibleTarget {
                 target_g: target_peak_g,
                 available_headroom_g: headroom_g.min(0.0),
@@ -1073,16 +1131,18 @@ pub(super) fn solve_raven_turn(
         bottom_g = next_bottom_g;
     }
 
-    // The last try met every limit but the top feel, so the top feel is what is out of reach.
-    if let Some((lowest_car_top_g, highest_car_top_g)) = last_crest_band_g {
+    // The last try reached the peak, so the top feel is what is out of reach: either it missed
+    // the feel within the limits, or its crest broke a limit and no allowed aim relieves it.
+    if let Some((average_top_g, lowest_car_top_g, highest_car_top_g)) = last_top_feel_miss {
         return Err(SolveRefusal::TopFeelOutOfReach {
             target_top_g,
+            average_top_g,
             lowest_car_top_g,
             highest_car_top_g,
         });
     }
     Err(SolveRefusal::InfeasibleTarget {
-        target_g: last_delivered_g.unwrap_or(target_peak_g),
+        target_g: target_peak_g,
         available_headroom_g: last_headroom_g,
     })
 }
@@ -1258,6 +1318,7 @@ pub(super) fn inversion_intent_matches_spec(
                 top_feel: resolved_top_feel,
                 target_peak_g,
                 delivered_peak_g,
+                delivered_top_g,
                 peak_roll_rate_deg_s,
                 height_m,
                 exit_dz_half_tiles,
@@ -1266,7 +1327,8 @@ pub(super) fn inversion_intent_matches_spec(
                 ..
             },
         ) => {
-            let expected_height = f64::from(*exit_dz_half_tiles) * 2.0;
+            // The exit sits below the apex by the crest dive, at least three half-tiles up.
+            let exit_height_m = f64::from(*exit_dz_half_tiles) * 2.0;
             hand == resolved_hand
                 && top_feel == resolved_top_feel
                 && *spec_diagonal == diagonal
@@ -1277,9 +1339,11 @@ pub(super) fn inversion_intent_matches_spec(
                 && (*delivered_peak_g - *target_peak_g).abs() <= MAXIMUM_INVERSION_PEAK_ERROR_G
                 && peak_roll_rate_deg_s.is_finite()
                 && *peak_roll_rate_deg_s <= MAXIMUM_SHAPED_ROLL_RATE_DEG_S
-                && stored_value_matches(expected_height, *height_m)
-                && (half_loop.endpoint()[1] - expected_height).abs() <= 0.25
-                && *height_m > 0.0
+                && delivered_top_g.is_finite()
+                && (*delivered_top_g - top_feel.target_g()).abs() <= MAXIMUM_RAVEN_TOP_FEEL_ERROR_G
+                && stored_value_matches(half_loop.endpoint()[1], *height_m)
+                && *exit_dz_half_tiles >= 3
+                && exit_height_m < *height_m
         }
         _ => false,
     }

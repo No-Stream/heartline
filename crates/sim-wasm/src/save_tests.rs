@@ -815,7 +815,11 @@ fn v9_save_round_trips_shaped_inversion_intents_and_pieces() {
 
         assert!(simulation.construction_can_append());
         simulation.construction_append();
-        assert!(simulation.construction_message().is_empty());
+        assert!(
+            simulation.construction_message().is_empty(),
+            "{model_key} {selection} append: {}",
+            simulation.construction_message()
+        );
         assert_eq!(
             simulation
                 .editing_construction()

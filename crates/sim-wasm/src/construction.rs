@@ -114,6 +114,7 @@ pub enum ConstructionShapeRefusalWire {
     InvalidGeometry,
     TopFeelOutOfReach {
         target_top_g: f64,
+        average_top_g: f64,
         lowest_car_top_g: f64,
         highest_car_top_g: f64,
     },
@@ -557,10 +558,12 @@ fn solve_refusal_wire(refusal: SolveRefusal) -> ConstructionShapeRefusalWire {
         SolveRefusal::InvalidGeometry => ConstructionShapeRefusalWire::InvalidGeometry,
         SolveRefusal::TopFeelOutOfReach {
             target_top_g,
+            average_top_g,
             lowest_car_top_g,
             highest_car_top_g,
         } => ConstructionShapeRefusalWire::TopFeelOutOfReach {
             target_top_g,
+            average_top_g,
             lowest_car_top_g,
             highest_car_top_g,
         },
@@ -598,10 +601,11 @@ fn solve_refusal_message(refusal: SolveRefusal) -> String {
         }
         SolveRefusal::TopFeelOutOfReach {
             target_top_g,
+            average_top_g,
             lowest_car_top_g,
             highest_car_top_g,
         } => format!(
-            "The cars feel {lowest_car_top_g:.2} to {highest_car_top_g:.2} g at the top; they cannot all be within 0.35 g of {target_top_g:.2} g at this speed."
+            "The top feel is out of reach: the train averages {average_top_g:.2} g at the top (cars {lowest_car_top_g:.2} to {highest_car_top_g:.2} g) and cannot get within 0.35 g of {target_top_g:.2} g without breaking a force limit at this speed."
         ),
         SolveRefusal::GeometryDigestMismatch { .. } => {
             "The saved shaped geometry does not match its resolved parameters.".into()

@@ -24,8 +24,10 @@ function shapeRefusalMessage(shape: ConstructionShapedElementWire, units: Units)
       const noun = shape.kind === "hill" ? "hill" : "element";
       return [`Would stall at ${formatSpeed(shape.refusal.entrySpeedMps, units, 0)}; tallest feasible ${noun} is ${formatLength(shape.refusal.heightM, units)}.`];
     }
-    case "infeasibleTarget":
-      return [`Target ${formatCalibratedForce(shape.refusal.targetG)} g exceeds available headroom of ${formatCalibratedForce(shape.refusal.availableHeadroomG)} g.`];
+    case "infeasibleTarget": {
+      const target = shape.kind === "loop" || shape.kind === "zeroGRoll" || shape.kind === "ravenTurn" ? "Peak target" : "Target";
+      return [`${target} ${formatCalibratedForce(shape.refusal.targetG)} g exceeds available headroom of ${formatCalibratedForce(shape.refusal.availableHeadroomG)} g.`];
+    }
     case "belowMinimumSpeed":
       return [`Entry speed is below the shaped-element minimum of ${formatSpeed(shape.refusal.minimumSpeedMps, units, 1)}.`];
     case "unsupportedScope":
@@ -42,7 +44,7 @@ function shapeRefusalMessage(shape: ConstructionShapedElementWire, units: Units)
       return ["The shaped element geometry could not be integrated at this entry speed."];
     case "topFeelOutOfReach":
       return [
-        `Cars feel ${formatCalibratedForce(shape.refusal.lowestCarTopG)} to ${formatCalibratedForce(shape.refusal.highestCarTopG)} g at the top; they cannot all be within 0.35 g of ${formatCalibratedForce(shape.refusal.targetTopG)} g. A faster entry or a shorter train narrows the spread.`,
+        `Top feel ${formatCalibratedForce(shape.refusal.targetTopG)} g is out of reach within the force limits: the train averages ${formatCalibratedForce(shape.refusal.averageTopG)} g at the top (cars ${formatCalibratedForce(shape.refusal.lowestCarTopG)} to ${formatCalibratedForce(shape.refusal.highestCarTopG)} g). A faster entry or a shorter train helps.`,
       ];
     case "geometryDigestMismatch":
       return ["Saved shaped geometry does not match its recipe."];
@@ -86,7 +88,8 @@ export function shapedElementReadout(shape: ConstructionShapedElementWire, units
       if (spec.kind === "zeroGRoll") {
         forceParts.push(`crest: ${formatCalibratedForce(spec.topG)} g`);
       } else {
-        forceParts.push(`top: ${formatCalibratedForce(spec.topG)} g (${topFeelLabel})`);
+        const average = spec.kind === "ravenTurn" ? " train average" : "";
+        forceParts.push(`top: ${formatCalibratedForce(spec.topG)} g${average} (${topFeelLabel})`);
       }
     }
     if (spec.peakRollRateDegS !== null) {

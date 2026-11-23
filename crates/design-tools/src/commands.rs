@@ -3270,7 +3270,7 @@ fn shaped_element_report_rows(
                             format!("{hand_name} Raven turn"),
                             format!("peak {target_peak_g:.2} g, {top_name} top"),
                             format!(
-                                "peak {delivered_peak_g:.2} g, top {delivered_top_g:.2} g, roll {peak_roll_rate_deg_s:.0} deg/s"
+                                "peak {delivered_peak_g:.2} g, top {delivered_top_g:.2} g train average, roll {peak_roll_rate_deg_s:.0} deg/s"
                             ),
                             format!(
                                 "{:.2} g vertical",
