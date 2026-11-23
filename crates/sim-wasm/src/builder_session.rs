@@ -1057,7 +1057,12 @@ mod tests {
                 }),
             ],
         );
-        let piece_error = first.replay_ride(&unknown_piece).unwrap_err().to_string();
+        let mut invalid_piece_session =
+            BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
+        let piece_error = invalid_piece_session
+            .replay_ride(&unknown_piece)
+            .unwrap_err()
+            .to_string();
         assert!(piece_error.contains("step 2"), "{piece_error}");
         assert!(piece_error.contains("Straight"), "{piece_error}");
     }

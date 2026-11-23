@@ -1189,7 +1189,7 @@ fn model_selection_controls_new_construction_and_launch_choices() {
     simulation.construction_append();
     assert!(simulation.construction_track().contains("Launch"));
     simulation.construction_select("model:hybrid");
-    simulation.construction_start(200, 200, 20, 0);
+    simulation.construction_start(400, 200, 20, 0);
     assert_eq!(
         simulation.editing_construction().unwrap().model().name,
         super::hybrid_model().name
@@ -1310,7 +1310,7 @@ fn geometry_encodes_material_and_preserves_piece_identity() {
     let wooden = simulation.construction_placed_rails();
     assert!(wooden.chunks_exact(19).all(|record| record[0] == 0.0));
     simulation.construction_select("model:velocity_viper");
-    simulation.construction_start(200, 200, 20, 0);
+    simulation.construction_start(400, 200, 20, 0);
     simulation.construction_select("LaunchShort");
     simulation.construction_append();
     for (geometry, stride) in [
@@ -1829,22 +1829,25 @@ fn coaster_colours_start_from_the_model_and_change_the_state_hash() {
         render_entry(&simulation, u32::MAX)["colors"],
         serde_json::json!({"track":"coral", "supports":"timber", "trains":"sage"})
     );
-    for (model, colors) in [
+    for (x, model, colors) in [
         (
+            100,
             "model:hybrid",
             "{\"track\":\"coral\",\"supports\":\"timber\",\"trains\":\"sage\"}",
         ),
         (
+            300,
             "model:velocity_viper",
             "{\"track\":\"teal\",\"supports\":\"cream\",\"trains\":\"coral\"}",
         ),
         (
+            500,
             "model:wooden_twister",
             "{\"track\":\"timber\",\"supports\":\"timber\",\"trains\":\"slate\"}",
         ),
     ] {
         simulation.construction_select(model);
-        simulation.construction_start(100, 100, 40, 0);
+        simulation.construction_start(x, 100, 40, 0);
         let coaster_id = simulation.editing_coaster_id().unwrap().0;
         assert_eq!(
             render_entry(&simulation, coaster_id)["colors"],
@@ -1870,7 +1873,7 @@ fn coaster_colours_start_from_the_model_and_change_the_state_hash() {
     );
     assert_eq!(simulation.construction_message(), "Unknown coaster colour");
 
-    simulation.construction_start(120, 120, 40, 0);
+    simulation.construction_start(100, 300, 40, 0);
     assert_eq!(
         render_entry(&simulation, simulation.editing_coaster_id().unwrap().0)["colors"],
         serde_json::json!({"track":"timber", "supports":"timber", "trains":"slate"})
@@ -1892,13 +1895,13 @@ fn train_layouts_name_each_model_and_its_train_shape() {
         render_entry(&simulation, u32::MAX)["trainLayout"],
         serde_json::json!({"model": "hybrid", "trackMaterial": "hybrid", "carsPerTrain": 6, "rowsPerCar": 2, "seatsPerRow": 2, "lengthMetres": 18.0})
     );
-    for (model, key, material, cars, rows) in [
-        ("model:hybrid", "hybrid", "hybrid", 6, 2),
-        ("model:velocity_viper", "velocity_viper", "steel", 6, 2),
-        ("model:wooden_twister", "wooden_twister", "wood", 12, 1),
+    for (x, model, key, material, cars, rows) in [
+        (100, "model:hybrid", "hybrid", "hybrid", 6, 2),
+        (300, "model:velocity_viper", "velocity_viper", "steel", 6, 2),
+        (500, "model:wooden_twister", "wooden_twister", "wood", 12, 1),
     ] {
         simulation.construction_select(model);
-        simulation.construction_start(100, 100, 40, 0);
+        simulation.construction_start(x, 100, 40, 0);
         let coaster_id = simulation.editing_coaster_id().unwrap().0;
         assert_eq!(
             render_entry(&simulation, coaster_id)["trainLayout"],
@@ -2296,7 +2299,7 @@ fn hill_options_follow_model_and_select_variants_by_parameters() {
     assert!(selected["hillEstimate"]["ratedSpeed"].is_object());
     assert!(selected["hillEstimate"]["limits"]["minimumVerticalG"].is_number());
     simulation.construction_select("model:wooden_twister");
-    simulation.construction_start(200, 200, 20, 0);
+    simulation.construction_start(400, 200, 20, 0);
     let wooden: Vec<serde_json::Value> =
         serde_json::from_str(&simulation.construction_hill_options()).unwrap();
     assert!(!wooden.iter().any(|option| option["feel"] == "zeroGRoll"));
@@ -2349,7 +2352,7 @@ fn speed_turns_list_the_model_sizes_with_hand_and_design_speed() {
     .map(|(id, hand, speed)| (id.to_owned(), hand.to_owned(), speed));
     assert_eq!(summary, expected);
     simulation.construction_select("model:wooden_twister");
-    simulation.construction_start(200, 200, 20, 0);
+    simulation.construction_start(400, 200, 20, 0);
     let wooden: Vec<serde_json::Value> =
         serde_json::from_str(&simulation.construction_speed_turns()).unwrap();
     assert_eq!(wooden.len(), 8);
