@@ -3440,6 +3440,7 @@ define_piece_id_wire_names!(
     FloaterHill24x160,
     WideLevelToSixtyDown,
     WideSixtyDownToLevel,
+    GigaSixtyDownToLevel,
     ShapedHill,
     ShapedTurnLeft,
     ShapedTurnRight,

@@ -2493,6 +2493,7 @@ fn hyper_is_a_straight_lift_floater_ride_without_inversions() {
         PieceId::SpeedTurnLarge32Right,
         PieceId::WideLevelToSixtyDown,
         PieceId::WideSixtyDownToLevel,
+        PieceId::GigaSixtyDownToLevel,
         PieceId::FloaterHill8x64,
         PieceId::FamilyHill4x40,
     ] {

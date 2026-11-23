@@ -17,7 +17,8 @@ use theme_park_sim::track::shaped::{
     ElementIntent, ElementSpec, HillSizeHint, TurnSizeHint, default_hill_strength,
 };
 use theme_park_sim::track::{
-    CoasterModel, Hand, Heading as TrackHeading, Heartlining, HillFeel, PieceId, coaster_models,
+    CoasterModel, Hand, Heading as TrackHeading, Heartlining, HillFeel, PieceId, RatedSpeeds,
+    coaster_models, rated_speed_margin,
 };
 use theme_park_sim_wasm::WasmSimulation;
 use theme_park_sim_wasm::builder_session::{BuilderEstimates, BuilderSession};
@@ -38,9 +39,10 @@ use crate::brake_report::{
 use crate::finish_report::{check_completion, finish_options_json, render_finish_options};
 use crate::report::{
     ForceRatings, RidePieceEstimate, ShapedElementReportRow, default_physics_test_run,
-    element_physics_report_rows, force_headroom_results, format_force_headroom_results,
-    rated_speed_margin_failures, rated_speed_margin_report, render_element_physics_table,
-    render_ride_report_with_margins, render_shaped_elements_table, shaped_element_entry_speeds,
+    design_rated_speeds, element_physics_report_rows, force_headroom_results,
+    format_force_headroom_results, rated_speed_margin_failures, rated_speed_margin_report,
+    render_element_physics_table, render_ride_report_with_margins, render_shaped_elements_table,
+    shaped_element_entry_speeds,
 };
 
 #[derive(Debug)]
@@ -1155,7 +1157,13 @@ fn execute_command(
                     )
                 })?;
                 (
-                    candidate_value(&selection.selected_id, candidate, None, geometry),
+                    candidate_value(
+                        &selection.selected_id,
+                        candidate,
+                        rated_window_for_id(session.simulation(), &selection.selected_id),
+                        None,
+                        geometry,
+                    ),
                     format!(
                         "{} m/s entry, {}",
                         optional_number(candidate.entry_speed),
@@ -2319,7 +2327,14 @@ fn candidate_for(session: &mut BuilderSession, id: &str) -> Result<Value, String
             "method": "closed-form hill inspector prediction",
         }));
     let geometry = candidate_geometry_value(session);
-    let mut value = candidate_value(&selection.selected_id, candidate, hill, geometry);
+    let rated_window = rated_window_for_id(session.simulation(), &selection.selected_id);
+    let mut value = candidate_value(
+        &selection.selected_id,
+        candidate,
+        rated_window,
+        hill,
+        geometry,
+    );
     let choice = estimates
         .choices
         .iter()
@@ -2405,10 +2420,11 @@ fn unavailable_candidate_value(
     json!({
         "id": id,
         "entrySpeed": null,
-        "ratedWindow": choice.and_then(|choice| choice.hill_estimate.as_ref())
-            .and_then(|estimate| estimate.rated_speed.as_ref())
+        "ratedWindow": rated_window_for_id(simulation, id)
             .map(|window| json!([window.minimum_entry, window.maximum_entry]))
-            .or_else(|| rated_window_for_id(simulation, id).map(|window| json!(window))),
+            .or_else(|| choice.and_then(|choice| choice.hill_estimate.as_ref())
+                .and_then(|estimate| estimate.rated_speed.as_ref())
+                .map(|window| json!([window.minimum_entry, window.maximum_entry]))),
         "margin": null,
         "peaks": null,
         "ratings": null,
@@ -2467,7 +2483,7 @@ fn candidate_geometry_value(session: &BuilderSession) -> Option<Value> {
     }))
 }
 
-fn rated_window_for_id(simulation: &WasmSimulation, id: &str) -> Option<[f64; 2]> {
+fn rated_window_for_id(simulation: &WasmSimulation, id: &str) -> Option<RatedSpeeds> {
     let construction = simulation.editing_construction()?;
     let model = construction.model();
     let piece = theme_park_sim::track::catalog()
@@ -2476,15 +2492,17 @@ fn rated_window_for_id(simulation: &WasmSimulation, id: &str) -> Option<[f64; 2]
     if !model.allows_piece(piece) {
         return None;
     }
-    let window = theme_park_sim::track::rated_speeds(model, piece)?;
-    Some([window.minimum_entry, window.maximum_entry])
+    design_rated_speeds(model, piece)
 }
 
 fn candidate_window(session: &BuilderSession, preview: &Value, id: &str) -> Value {
-    preview["ratedWindow"]
-        .as_array()
-        .map(|_| preview["ratedWindow"].clone())
-        .or_else(|| rated_window_for_id(session.simulation(), id).map(|window| json!(window)))
+    rated_window_for_id(session.simulation(), id)
+        .map(|window| json!([window.minimum_entry, window.maximum_entry]))
+        .or_else(|| {
+            preview["ratedWindow"]
+                .as_array()
+                .map(|_| preview["ratedWindow"].clone())
+        })
         .unwrap_or(Value::Null)
 }
 
@@ -2503,6 +2521,7 @@ fn optional_rating<'a>(ratings: &'a Value, key: &str) -> &'a str {
 fn candidate_value(
     id: &str,
     candidate: &ConstructionCandidateForcePreviewWire,
+    rated_window: Option<RatedSpeeds>,
     hill: Option<Value>,
     geometry: Option<Value>,
 ) -> Value {
@@ -2515,14 +2534,10 @@ fn candidate_value(
             "maximumLongitudinalG": peaks.maximum_absolute_longitudinal_g,
         })
     });
-    let rated_window = candidate
-        .rated_speed
-        .as_ref()
-        .map(|window| [window.minimum_entry, window.maximum_entry]);
     let margin = candidate
         .entry_speed
-        .zip(candidate.rated_speed.as_ref())
-        .map(|(speed, window)| (speed - window.minimum_entry).min(window.maximum_entry - speed));
+        .zip(rated_window)
+        .map(|(speed, window)| rated_speed_margin(window, speed));
     let ratings = candidate.peaks.as_ref().map(|peaks| {
         json!({
             "airtime": classify_rating(&candidate.limits.rating_bands.airtime, -peaks.minimum_vertical_g),
@@ -2534,7 +2549,8 @@ fn candidate_value(
     let mut value = json!({
         "id": id,
         "entrySpeed": candidate.entry_speed,
-        "ratedWindow": rated_window,
+        "ratedWindow": rated_window
+            .map(|window| [window.minimum_entry, window.maximum_entry]),
         "margin": margin,
         "peaks": peaks,
         "ratings": ratings,

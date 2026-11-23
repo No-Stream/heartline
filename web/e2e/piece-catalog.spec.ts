@@ -22,6 +22,7 @@ test.beforeAll(async () => {
   for (const name of [
     "TopHat", "LaunchedTopHat", "HalfLoopUp", "HalfLoopDown", "HalfCorkscrewLeftUp", "HalfCorkscrewRightUp", "HalfCorkscrewLeftDown", "HalfCorkscrewRightDown",
     "LevelToSixtyUp", "SixtyUpToLevel", "LevelToSixtyDown", "SixtyDownToLevel",
+    "GigaSixtyDownToLevel",
     "BankedDropLeft", "BankedDropRight", "TwistedDropLeft", "TwistedDropRight", "BarrelDropLeft", "BarrelDropRight",
   ]) {
     expect(pieces.map((piece) => piece.name)).toContain(name);

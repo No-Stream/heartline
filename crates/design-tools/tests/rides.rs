@@ -156,6 +156,7 @@ fn native_agreement_check_reports_every_ride_and_attributes_each_failure() {
         "briar-blitz.ride.json",
         "daisy-dash.ride.json",
         "horizon-hawk.ride.json",
+        "sky-harrier.ride.json",
         "timber-tumbler.ride.json",
         "velocity-viper.ride.json",
     ] {

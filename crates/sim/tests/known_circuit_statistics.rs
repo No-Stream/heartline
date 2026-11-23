@@ -118,6 +118,7 @@ fn player_ride(name: &str) -> RideFile {
         "Briar Blitz" => include_str!("../../../content/rides/briar-blitz.ride.json"),
         "Daisy Dash" => include_str!("../../../content/rides/daisy-dash.ride.json"),
         "Horizon Hawk" => include_str!("../../../content/rides/horizon-hawk.ride.json"),
+        "Sky Harrier" => include_str!("../../../content/rides/sky-harrier.ride.json"),
         _ => panic!("unknown player ride {name}"),
     };
     let ride: RideFile = serde_json::from_str(source)
@@ -598,6 +599,92 @@ fn horizon_hawk_is_a_straight_lift_hyper_under_both_physics_configs() {
                 });
             assert!(
                 worst_car_airtime <= -0.8,
+                "{configuration}: strong-floater piece {piece_index} worst-car sustained airtime {worst_car_airtime:.3} g"
+            );
+        }
+    }
+}
+
+#[test]
+fn sky_harrier_is_a_giga_with_a_three_g_first_pullout_under_both_physics_configs() {
+    let model = hyper_model();
+    let ride = player_ride("Sky Harrier");
+    let circuit = player_circuit("Sky Harrier", model.clone());
+    let pieces = circuit.pieces();
+    assert!(
+        pieces
+            .iter()
+            .filter(|piece| piece.kind == PieceKind::Lift)
+            .all(|piece| piece.entry.heading == piece.exit.heading),
+        "the chain lift is straight"
+    );
+    let pullout_piece_index = pieces
+        .iter()
+        .position(|piece| piece.id == PieceId::GigaSixtyDownToLevel)
+        .expect("Sky Harrier's first drop ends in the giga pullout");
+    assert_eq!(
+        mid_course_brake_run_count(&circuit),
+        1,
+        "Sky Harrier has one mid-course trim"
+    );
+
+    let reports = assert_rides_in_band_with_design_margins(&circuit, &model, 6.5..=9.0);
+    let strong_floater_piece_indices = strong_floater_piece_indices(&ride);
+    assert_eq!(strong_floater_piece_indices.len(), 5);
+    for (configuration_index, report) in reports.iter().enumerate() {
+        let configuration = if configuration_index == 0 {
+            "default physics"
+        } else {
+            "construction-test physics"
+        };
+        let stats = report.statistics;
+        eprintln!(
+            "Sky Harrier {configuration}: excitement {:.2}, intensity {:.2}, nausea {:.2}; stats {stats:?}",
+            report.excitement, report.intensity, report.nausea
+        );
+        assert_eq!(stats.inversions, 0);
+        assert_eq!(stats.launches, 0);
+        assert!(stats.max_height >= 100.0, "{configuration}: {stats:?}");
+        assert!(stats.biggest_drop >= 90.0, "{configuration}: {stats:?}");
+        assert!(stats.max_speed >= 41.0, "{configuration}: {stats:?}");
+        assert!(stats.airtime_moments >= 6, "{configuration}: {stats:?}");
+        assert!(
+            stats.max_lateral_g <= 0.6,
+            "{configuration}: lateral g {}",
+            stats.max_lateral_g
+        );
+        let sustained = report.sustained_force_peaks();
+        assert!(
+            sustained
+                .maximum_vertical_g
+                .is_some_and(|force| (3.0..=3.5).contains(&force)),
+            "{configuration}: sustained positive vertical g {sustained:?}"
+        );
+
+        let car_piece_peaks = report.car_piece_sustained_force_peaks();
+        let pullout_peaks: Vec<_> = car_piece_peaks
+            .iter()
+            .filter(|peaks| peaks.piece_index == pullout_piece_index)
+            .filter_map(|peaks| peaks.peaks.maximum_vertical_g)
+            .collect();
+        assert_eq!(pullout_peaks.len(), model.train.cars as usize);
+        assert!(
+            pullout_peaks
+                .iter()
+                .all(|force| (3.0..=3.5).contains(force)),
+            "{configuration}: first-drop pullout sustained vertical g per car {pullout_peaks:?}"
+        );
+        for piece_index in &strong_floater_piece_indices {
+            let worst_car_airtime = car_piece_peaks
+                .iter()
+                .filter(|peaks| peaks.piece_index == *piece_index)
+                .filter_map(|peaks| peaks.peaks.minimum_vertical_g)
+                .min_by(f64::total_cmp)
+                .unwrap_or_else(|| {
+                    panic!("{configuration}: strong-floater piece {piece_index} has no sustained airtime")
+                });
+            assert!(
+                (-1.2..=-0.8).contains(&worst_car_airtime),
                 "{configuration}: strong-floater piece {piece_index} worst-car sustained airtime {worst_car_airtime:.3} g"
             );
         }
