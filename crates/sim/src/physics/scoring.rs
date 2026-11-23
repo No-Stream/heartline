@@ -104,7 +104,7 @@ mod score_tests {
     use super::*;
     use crate::physics::TestSample;
     use crate::physics::features::{PieceSummary, ride_features};
-    use crate::track::{PieceId, PieceKind, Shape};
+    use crate::track::{Inversion, PieceId, PieceKind, Shape};
 
     #[test]
     fn breakdowns_sum_and_overlay_bands_change_scores() {
@@ -307,11 +307,11 @@ mod score_tests {
                 turn_angle_radians: 0.0,
             },
             PieceSummary {
-                id: PieceId::Straight,
-                name: "Track",
+                id: PieceId::Loop,
+                name: "Loop",
                 kind: PieceKind::Track,
                 shape: Shape::Plain,
-                inversion: None,
+                inversion: Some(Inversion::VerticalLoop),
                 heartlining: None,
                 length: 6.0,
                 turn_angle_radians: 0.0,
@@ -333,14 +333,18 @@ mod score_tests {
                 };
                 TestSample {
                     distance: index as f64,
-                    speed: [2.0, 4.0, 10.0][piece_index],
+                    speed: if index == 10 {
+                        0.5
+                    } else {
+                        [2.0, 4.0, 10.0][piece_index]
+                    },
                     vertical_g,
                     lateral_g: 0.0,
                     longitudinal_g: 0.0,
                     airtime: false,
                     force_limit_exceeded: [false; 3],
                     height_m: 0.0,
-                    inverted: matches!(index, 1 | 4 | 7),
+                    inverted: matches!(index, 7 | 10),
                     roll: 0.0,
                     piece_index,
                 }
@@ -363,7 +367,8 @@ mod score_tests {
             .unwrap();
 
         assert_eq!(features.statistics.airtime_moments, 3);
-        assert!((features.statistics.inverted_seconds - 0.85).abs() < 1e-12);
+        let expected_inverted_seconds = 0.1 + 1.0 / 5.25;
+        assert!((features.statistics.inverted_seconds - expected_inverted_seconds).abs() < 1e-12);
         assert_eq!(airtime_moments.measure, 1.0);
         assert!((time_inverted.measure - 0.1).abs() < 1e-12);
     }

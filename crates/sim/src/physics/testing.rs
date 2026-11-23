@@ -1878,6 +1878,24 @@ impl TestRunRecorder {
                 })
             })
             .collect();
+        let mut scoring_samples = samples.clone();
+        let pieces = if self.piece_summaries.is_empty() {
+            for sample in &mut scoring_samples {
+                sample.piece_index = 0;
+            }
+            vec![PieceSummary {
+                id: crate::track::PieceId::Straight,
+                name: "Track",
+                kind: crate::track::PieceKind::Track,
+                shape: crate::track::Shape::Plain,
+                inversion: None,
+                heartlining: None,
+                length: circuit_length,
+                turn_angle_radians: 0.0,
+            }]
+        } else {
+            self.piece_summaries
+        };
         let mut notes = Vec::new();
         for (axis, seconds) in ["Vertical", "Lateral", "Longitudinal"]
             .into_iter()
@@ -1889,7 +1907,7 @@ impl TestRunRecorder {
                 ));
             }
         }
-        let mut statistics = ride_statistics(&samples, circuit_length, completed);
+        let mut statistics = ride_statistics(&scoring_samples, &pieces, circuit_length, completed);
         statistics.max_positive_vertical_g = self.maximum_positive_vertical_g;
         statistics.max_negative_vertical_g = self.maximum_negative_vertical_g;
         statistics.max_lateral_g = self.maximum_lateral_g;
@@ -1925,24 +1943,6 @@ impl TestRunRecorder {
         if rolled_back {
             notes.push("The train rolled back and was recovered safely.".to_owned());
         }
-        let mut scoring_samples = samples.clone();
-        let pieces = if self.piece_summaries.is_empty() {
-            for sample in &mut scoring_samples {
-                sample.piece_index = 0;
-            }
-            vec![PieceSummary {
-                id: crate::track::PieceId::Straight,
-                name: "Track",
-                kind: crate::track::PieceKind::Track,
-                shape: crate::track::Shape::Plain,
-                inversion: None,
-                heartlining: None,
-                length: circuit_length,
-                turn_angle_radians: 0.0,
-            }]
-        } else {
-            self.piece_summaries
-        };
         let input = RatingInput {
             samples: scoring_samples,
             pieces,
@@ -2438,6 +2438,7 @@ fn interpolate_reading(first: CarReading, second: CarReading, fraction: f64) -> 
 
 pub(super) fn ride_statistics(
     samples: &[TestSample],
+    pieces: &[PieceSummary],
     circuit_length: f64,
     completed: bool,
 ) -> RideStatistics {
@@ -2485,9 +2486,9 @@ pub(super) fn ride_statistics(
             largest_downhill_drop_on_sampled_run(samples)
         },
         inversions: if completed {
-            count_inversion_passages(samples)
+            count_inversion_passages(samples, pieces)
         } else {
-            count_inversion_passages_on_sampled_run(samples)
+            count_inversion_passages_on_sampled_run(samples, pieces)
         },
         ..RideStatistics::default()
     };
@@ -2543,7 +2544,7 @@ pub(super) fn ride_statistics(
         if sample.lateral_g.abs() > STRONG_LATERAL_G_THRESHOLD {
             stats.strong_lateral_g_seconds += seconds;
         }
-        if sample.inverted {
+        if sample.inverted && pieces[sample.piece_index].inversion.is_some() {
             stats.inverted_seconds += seconds;
         }
         if index + 1 == samples.len() && !completed {
@@ -2605,32 +2606,39 @@ fn largest_downhill_drop_on_sampled_run(samples: &[TestSample]) -> f64 {
     largest_drop
 }
 
-fn count_inversion_passages(samples: &[TestSample]) -> usize {
+fn count_inversion_passages(samples: &[TestSample], pieces: &[PieceSummary]) -> usize {
     if samples.is_empty() {
         return 0;
     }
-    let mut previous_inverted = samples.last().expect("nonempty samples").inverted;
+    let last_sample = samples.last().expect("nonempty samples");
+    let mut previous_inverted =
+        last_sample.inverted && pieces[last_sample.piece_index].inversion.is_some();
     let mut passages = 0;
     for sample in samples {
-        if sample.inverted && !previous_inverted {
+        let inverted = sample.inverted && pieces[sample.piece_index].inversion.is_some();
+        if inverted && !previous_inverted {
             passages += 1;
         }
-        previous_inverted = sample.inverted;
+        previous_inverted = inverted;
     }
     passages
 }
 
-fn count_inversion_passages_on_sampled_run(samples: &[TestSample]) -> usize {
+fn count_inversion_passages_on_sampled_run(
+    samples: &[TestSample],
+    pieces: &[PieceSummary],
+) -> usize {
     let Some(first) = samples.first() else {
         return 0;
     };
-    let mut previous_inverted = first.inverted;
+    let mut previous_inverted = first.inverted && pieces[first.piece_index].inversion.is_some();
     let mut passages = 0;
     for sample in samples.iter().skip(1) {
-        if sample.inverted && !previous_inverted {
+        let inverted = sample.inverted && pieces[sample.piece_index].inversion.is_some();
+        if inverted && !previous_inverted {
             passages += 1;
         }
-        previous_inverted = sample.inverted;
+        previous_inverted = inverted;
     }
     passages
 }
@@ -3412,7 +3420,8 @@ mod tests {
             .enumerate()
             .map(|(distance, vertical)| sample_for_statistics(distance as f64, 10.0, vertical))
             .collect();
-        let statistics = ride_statistics(&samples, 5.0, true);
+        let pieces = [statistics_piece(crate::track::PieceId::Straight, None)];
+        let statistics = ride_statistics(&samples, &pieces, 5.0, true);
         assert!((statistics.ejector_airtime_seconds - 0.1).abs() < 1e-9);
         assert!((statistics.floater_airtime_seconds - 0.2).abs() < 1e-9);
         assert_eq!(statistics.airtime_moments, 1);
@@ -3474,7 +3483,11 @@ mod tests {
                 piece_index: 0,
             },
         ];
-        let stats = ride_statistics(&samples, 4.0, true);
+        let pieces = [statistics_piece(
+            crate::track::PieceId::Loop,
+            Some(crate::track::Inversion::VerticalLoop),
+        )];
+        let stats = ride_statistics(&samples, &pieces, 4.0, true);
         assert!((stats.ejector_airtime_seconds - 0.1).abs() < 1e-9);
         assert!((stats.floater_airtime_seconds - 0.1).abs() < 1e-9);
         assert_eq!(stats.airtime_moments, 1);
@@ -3518,7 +3531,8 @@ mod tests {
             },
         ];
 
-        assert_eq!(ride_statistics(&samples, 3.0, true).drops, 1);
+        let pieces = [statistics_piece(crate::track::PieceId::Straight, None)];
+        assert_eq!(ride_statistics(&samples, &pieces, 3.0, true).drops, 1);
     }
 
     #[test]
@@ -3538,7 +3552,8 @@ mod tests {
             },
         ];
 
-        let stats = ride_statistics(&samples, 3.0, true);
+        let pieces = [statistics_piece(crate::track::PieceId::Straight, None)];
+        let stats = ride_statistics(&samples, &pieces, 3.0, true);
         assert!((stats.strong_positive_g_seconds - 0.2).abs() < 1e-9);
         assert!((stats.longest_strong_positive_g_seconds - 0.2).abs() < 1e-9);
     }
@@ -3551,8 +3566,38 @@ mod tests {
             sample_for_statistics(2.0, 20.0, 1.0),
         ];
 
-        let stats = ride_statistics(&samples, 3.0, true);
+        let pieces = [statistics_piece(crate::track::PieceId::Straight, None)];
+        let stats = ride_statistics(&samples, &pieces, 3.0, true);
         assert!((stats.average_speed - 3.0 / 0.28).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sampled_run_statistics_ignore_undeclared_overbank_inversions() {
+        let pieces = [
+            statistics_piece(crate::track::PieceId::Straight, None),
+            statistics_piece(crate::track::PieceId::HybridOverbankRight, None),
+        ];
+        let samples = [
+            TestSample {
+                piece_index: 0,
+                ..sample_for_statistics(0.0, 10.0, 1.0)
+            },
+            TestSample {
+                piece_index: 1,
+                inverted: true,
+                ..sample_for_statistics(1.0, 10.0, 1.0)
+            },
+            TestSample {
+                piece_index: 1,
+                inverted: true,
+                ..sample_for_statistics(2.0, 10.0, 1.0)
+            },
+        ];
+
+        let stats = ride_statistics(&samples, &pieces, 3.0, false);
+
+        assert_eq!(stats.inversions, 0);
+        assert_eq!(stats.inverted_seconds, 0.0);
     }
 
     fn sample_for_statistics(distance: f64, speed: f64, vertical_g: f64) -> TestSample {
@@ -3568,6 +3613,22 @@ mod tests {
             inverted: false,
             roll: 0.0,
             piece_index: 0,
+        }
+    }
+
+    fn statistics_piece(
+        id: crate::track::PieceId,
+        inversion: Option<crate::track::Inversion>,
+    ) -> PieceSummary {
+        PieceSummary {
+            id,
+            name: "test piece",
+            kind: crate::track::PieceKind::Track,
+            shape: crate::track::Shape::Plain,
+            inversion,
+            heartlining: None,
+            length: 1.0,
+            turn_angle_radians: 0.0,
         }
     }
 
