@@ -116,7 +116,7 @@ impl BuilderSessionBridge {
 
     pub fn start(&mut self, simulation: &mut WasmSimulation, x: i32, y: i32, z: i32, heading: u8) {
         self.invalidate();
-        start_construction(simulation, x, y, z, heading);
+        simulation.coaster_start(x * 2, y * 2, z / 2, heading * 2);
     }
 
     /// Selects with the worker's historical refusal behavior: the caller reads the bridge
@@ -1057,7 +1057,12 @@ mod tests {
                 }),
             ],
         );
-        let piece_error = first.replay_ride(&unknown_piece).unwrap_err().to_string();
+        let mut invalid_piece_session =
+            BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
+        let piece_error = invalid_piece_session
+            .replay_ride(&unknown_piece)
+            .unwrap_err()
+            .to_string();
         assert!(piece_error.contains("step 2"), "{piece_error}");
         assert!(piece_error.contains("Straight"), "{piece_error}");
     }
@@ -1741,6 +1746,22 @@ mod tests {
 
         worker_session.select(&mut worker_simulation, "unknown-piece", false);
         assert_eq!(worker_simulation.construction_message(), "Unknown piece");
+    }
+
+    #[test]
+    fn worker_bridge_start_keeps_existing_coasters() {
+        let mut simulation = WasmSimulation::new(42, 0, "new".into());
+        simulation.coaster_start(482, 498, 6, 2);
+        let mut worker_session = BuilderSessionBridge::new();
+
+        worker_session.start(&mut simulation, 100, 100, 12, 1);
+
+        let coasters: serde_json::Value =
+            serde_json::from_str(&simulation.coasters_json()).unwrap();
+        assert_eq!(coasters.as_array().unwrap().len(), 2);
+        assert_eq!(coasters[0]["id"], 0);
+        assert_eq!(coasters[1]["id"], 1);
+        assert_eq!(simulation.editing_coaster_id().unwrap().0, 1);
     }
 
     fn fixture_ride_file(ride_name: &str) -> RideFile {

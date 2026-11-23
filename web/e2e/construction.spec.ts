@@ -1,9 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { canvasSize, clickCanvas, clickTile, moveOverCanvas, openTool, selectUnits } from "./game-page";
+import { canvasSize, clickCanvas, clickTile, moveOverCanvas, selectUnits } from "./game-page";
+import { openCoasterBuilder } from "./coaster-ui";
 test("station placement targets ground directly beneath a coaster support", async ({ page }) => {
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
-  await openTool(page, "Coaster");
+  await openCoasterBuilder(page);
   await selectUnits(page, "metric");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1.5, rotation: 0 }));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
@@ -43,7 +44,7 @@ test("station placement targets ground directly beneath a coaster support", asyn
 test("closes a compact circuit with short straights and full-tile offsets @fast", async ({ page }) => {
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
-  await openTool(page, "Coaster");
+  await openCoasterBuilder(page);
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
   await selectUnits(page, "metric");
   await page.getByLabel("Station height above ground (metres)").fill("72");
@@ -96,7 +97,7 @@ test("previews and confirms a lift-powered circuit finish, then completes a ride
   test.setTimeout(240_000);
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
-  await openTool(page, "Coaster");
+  await openCoasterBuilder(page);
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
   await selectUnits(page, "metric");
   await page.getByLabel("Station height above ground (metres)").fill("72");
@@ -195,7 +196,7 @@ test("previews and confirms a lift-powered circuit finish, then completes a ride
 test("places a 60-degree climb and complete banked turn with lift markers @fast", async ({ page }) => {
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
-  await openTool(page, "Coaster");
+  await openCoasterBuilder(page);
   await selectUnits(page, "metric");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
   await page.locator(".builder select[data-model]").selectOption("model:hybrid");
@@ -271,7 +272,7 @@ test("offers direct level-to-60-degree lift and drop transitions on both eligibl
   for (const model of ["hybrid", "velocity_viper"] as const) {
     await page.goto("/?test=1&park=new&agents=1");
     await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
-    await openTool(page, "Coaster");
+    await openCoasterBuilder(page);
     await selectUnits(page, "metric");
     await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
     await page.locator(".builder select[data-model]").selectOption(`model:${model}`);
@@ -321,7 +322,7 @@ test("offers direct level-to-60-degree lift and drop transitions on both eligibl
 test("offers and places a twisted drop directly from a banked track @fast", async ({ page }) => {
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
-  await openTool(page, "Coaster");
+  await openCoasterBuilder(page);
   await selectUnits(page, "metric");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
   await page.locator(".builder select[data-model]").selectOption("model:hybrid");
@@ -360,7 +361,7 @@ test("offers and places a twisted drop directly from a banked track @fast", asyn
 test("sizes an airtime hill for the entry speed, steps it, and repeats it into a camelback run @fast", async ({ page }) => {
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
-  await openTool(page, "Coaster");
+  await openCoasterBuilder(page);
   await selectUnits(page, "metric");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
   await page.locator(".builder select[data-model]").selectOption("model:hybrid");
@@ -420,7 +421,7 @@ test("sizes an airtime hill for the entry speed, steps it, and repeats it into a
 test("shows and places a shaped floater hill and fully banked turn on a hyper coaster @fast", async ({ page }) => {
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
-  await openTool(page, "Coaster");
+  await openCoasterBuilder(page);
   await selectUnits(page, "metric");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
   await page.locator(".builder select[data-model]").selectOption("model:hyper");
@@ -517,7 +518,7 @@ for (const modelCase of [
   test(`places shaped hill and turn on ${modelCase.label} @fast`, async ({ page }) => {
     await page.goto("/?test=1");
     await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
-    await openTool(page, "Coaster");
+    await openCoasterBuilder(page);
     await selectUnits(page, "metric");
     await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
     await page.locator(".builder select[data-model]").selectOption(`model:${modelCase.key}`);
@@ -732,7 +733,7 @@ test("places shaped steel-structure vertical loop on Briar Blitz with amber feel
 test("turns after a drop default to the bank for the predicted speed, and the bank stepper overrides it @fast", async ({ page }) => {
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
-  await openTool(page, "Coaster");
+  await openCoasterBuilder(page);
   await selectUnits(page, "metric");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
   await page.locator(".builder select[data-model]").selectOption("model:hybrid");

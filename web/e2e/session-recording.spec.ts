@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import { canvasToPage, clickCanvas, moveOverCanvas, openTool, selectUnits } from "./game-page";
+import { openCoasterBuilder } from "./coaster-ui";
 
 interface ExportedSession {
   format: string;
@@ -78,7 +79,7 @@ test("exports the UI-built command count and final simulation tick", async ({ pa
   await page.goto("/?test=1&manualBlockAnalysis=1&park=new&seed=2026");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
 
-  await openTool(page, "Coaster");
+  await openCoasterBuilder(page);
   await selectUnits(page, "metric");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
@@ -99,11 +100,13 @@ test("exports the UI-built command count and final simulation tick", async ({ pa
   await expect(track, `Station did not start construction. Browser errors: ${browserErrors.join(" | ")}`).toHaveCount(1);
 
   const expectedCommandTypes = [
+    "ride-stop-editing",
     "construction-start",
     "construction-select",
     "construction-append",
     "construction-select",
     "construction-append",
+    "ride-stop-editing",
   ];
   const pieces = ["TurnSmallStandalone", "Straight"] as const;
   for (const [index, piece] of pieces.entries()) {
@@ -135,6 +138,14 @@ test("exports the UI-built command count and final simulation tick", async ({ pa
   expect(session.version).toBe(1);
   expect(session.commands).toHaveLength(expectedCommandTypes.length);
   expect(session.commands.map(({ command }) => command.type)).toEqual(expectedCommandTypes);
-  expect(session.commands.every(({ tick }) => tick === tickBeforeAdvance)).toBe(true);
+  expect(session.commands.map(({ tick }) => tick)).toEqual([
+    tickBeforeAdvance,
+    tickBeforeAdvance,
+    tickBeforeAdvance,
+    tickBeforeAdvance,
+    tickBeforeAdvance,
+    tickBeforeAdvance,
+    observedFinalTick,
+  ]);
   expect(session.finalTick).toBe(observedFinalTick);
 });

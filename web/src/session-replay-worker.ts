@@ -14,6 +14,7 @@ interface WorkerMessageWaiter {
 
 /** Commands whose effect the replay must see before it goes on, because the worker answers them with a construction state. */
 const constructionCommandsAwaitingState = new Set(["construction-start", "construction-append", "construction-append-resolved", "construction-undo", "construction-delete", "construction-close", "construction-finish-preview", "construction-finish-confirm", "construction-finish-cancel", "construction-auto-blocks", "construction-set-cars-per-train", "construction-set-train-count", "construction-set-block-sections"]);
+const coasterCommandsAwaitingResult = new Set(["ride-set-open", "ride-set-price", "ride-edit", "ride-stop-editing", "ride-rename", "ride-demolish"]);
 const replyTimeoutMs = 30_000;
 
 /**
@@ -89,6 +90,7 @@ export async function replaySessionIntoWorker(
       beforeCommand(command);
       if (command.type === "construction-finish-preview") await postAndWait({ type: "construction-finish-await" }, "construction-finish-ready");
       if (command.type === "test-advance-block-analysis" || command.type === "test-advance-block-placement") await postAndWait(preparedCommand, "test-block-analysis-advanced");
+      else if (coasterCommandsAwaitingResult.has(command.type)) await postAndWait(preparedCommand, "coaster-action-result");
       else if (constructionCommandsAwaitingState.has(command.type)) await postAndWait(preparedCommand, "construction-state");
       else sendWorkerAction(worker, preparedCommand as WorkerAction);
     }

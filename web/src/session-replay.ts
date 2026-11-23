@@ -59,6 +59,40 @@ function nonNegativeInteger(value: unknown, description: string): number {
   return value;
 }
 
+function coasterId(value: unknown, description: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 0xffff_ffff) {
+    throw new TypeError(`${description} must be a coaster ID`);
+  }
+  return value;
+}
+
+function validateCoasterCommand(command: Record<string, unknown> & { readonly type: string }, description: string): void {
+  switch (command.type) {
+    case "ride-set-open":
+      coasterId(command.ride, `${description}.ride`);
+      if (typeof command.open !== "boolean") throw new TypeError(`${description}.open must be a boolean`);
+      break;
+    case "ride-set-price":
+      coasterId(command.ride, `${description}.ride`);
+      if (typeof command.price !== "number" || !Number.isInteger(command.price) || command.price < 0 || command.price > 65_535) {
+        throw new TypeError(`${description}.price must be an integer from 0 to 65535`);
+      }
+      break;
+    case "ride-edit":
+    case "ride-demolish":
+      coasterId(command.ride, `${description}.ride`);
+      break;
+    case "ride-rename":
+      coasterId(command.ride, `${description}.ride`);
+      if (typeof command.name !== "string" || command.name.trim().length === 0) {
+        throw new TypeError(`${description}.name must be a non-empty string`);
+      }
+      break;
+    case "ride-stop-editing":
+      break;
+  }
+}
+
 function validateExpectations(value: unknown): ReplayExpectations {
   const object = record(value, "Session expect");
   const supportedKeys = new Set([
@@ -110,6 +144,7 @@ export function parseReplaySession(value: unknown): ReplaySession {
       throw new TypeError(`Session commands[${index}].command.type must be a non-empty string`);
     }
     if (command.type === "test-advance") throw new TypeError("Session command journal must not contain test-advance");
+    validateCoasterCommand(command as Record<string, unknown> & { readonly type: string }, `Session commands[${index}].command`);
     if (tick < previousCommandTick) throw new TypeError("Session commands must be ordered by tick");
     if (tick > finalTick) throw new TypeError(`Session command tick ${tick} exceeds final tick ${finalTick}`);
     previousCommandTick = tick;

@@ -12,7 +12,7 @@ import type { Cutaway, Pick as WorldPick, WorldSprite } from "./render/index";
 import type { CrestBurst } from "./render/effects";
 import type { ReplaySession } from "./session-replay";
 import type { TrainState } from "./train-states";
-import type { CoasterSnapshotData } from "./protocol";
+import type { CoasterListEntry, CoasterSnapshotData } from "./protocol";
 
 export function validateBlockAnalysisBudget(budget: number): void {
   if (!Number.isInteger(budget) || budget < 1 || budget > 1000) throw new RangeError("Invalid test block analysis budget");
@@ -96,11 +96,14 @@ export interface GameTest {
   constructionEstimates(): ConstructionEstimates;
   constructionForcePreview(): ConstructionForcePreview | null;
   constructionTrainPoses(): readonly number[];
+  coasterQueueLengths(): readonly Pick<CoasterListEntry, "id" | "queueLength">[];
   coasters(): readonly CoasterSnapshotData[];
   editingCoasterId(): number | null;
   trainStates(): { coaster: readonly TrainState[]; construction: readonly TrainState[] };
   replaySession(session: ReplaySession): Promise<void>;
-  advanceTicks(count: number): Promise<void>;
+  advanceTicks(count: number): Promise<{
+    readonly queueEntryPlaceIds: readonly number[];
+  }>;
   advanceBlockAnalysis(budget: number): Promise<void>;
   advanceBlockPlacement(budget: number): Promise<void>;
   setCamera(camera: Camera): void;

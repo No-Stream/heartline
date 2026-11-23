@@ -19,6 +19,7 @@ const workerMock = vi.hoisted(() => ({
   coasterTrainPoses: vi.fn((_id: number) => new Float32Array()),
   coasterTrainStates: vi.fn((_id: number) => new Float32Array([0, 4, 0, 1.1, 0.2, 1])),
   coasterRiders: vi.fn((_id: number) => new Uint32Array()),
+  coastersJson: vi.fn(() => "[]"),
 }));
 
 vi.mock("./wasm/theme_park_sim_wasm.js", () => ({
@@ -64,6 +65,7 @@ vi.mock("./wasm/theme_park_sim_wasm.js", () => ({
     coaster_train_poses(id: number) { workerMock.coasterTrainPoses(id); return new Float32Array(); }
     coaster_train_states(id: number) { return workerMock.coasterTrainStates(id); }
     coaster_riders(id: number) { return workerMock.coasterRiders(id); }
+    coasters_json() { return workerMock.coastersJson(); }
     construction_message() { return ""; }
     construction_coaster_price() { return 0; }
     construction_coaster_income() { return 0; }
@@ -104,6 +106,7 @@ afterEach(() => {
   workerMock.coasterTrainPoses.mockReset();
   workerMock.coasterTrainStates.mockReset().mockReturnValue(new Float32Array([0, 4, 0, 1.1, 0.2, 1]));
   workerMock.coasterRiders.mockReset();
+  workerMock.coastersJson.mockReset().mockReturnValue("[]");
 });
 
 describe("world snapshot transfer", () => {
@@ -152,7 +155,7 @@ it("starts simulation time after WebAssembly initialization completes", async ()
   finishInitialization();
   await Promise.resolve();
 
-  expect(postMessage).toHaveBeenCalledTimes(6);
+  expect(postMessage).toHaveBeenCalledTimes(7);
   const [world, worldTransfer] = postMessage.mock.calls[0];
   expect(world.coasters[0].rails).toEqual(new Float32Array([1, 2]));
   expect(world.coasters[0].ties).toEqual(new Float32Array([3]));
@@ -160,11 +163,22 @@ it("starts simulation time after WebAssembly initialization completes", async ()
   expect(worldTransfer).toContain(world.coasters[0].rails.buffer);
   expect(worldTransfer).toContain(world.coasters[0].ties.buffer);
   expect(workerMock.tick).not.toHaveBeenCalled();
-  expect(postMessage.mock.calls[2][0]).toEqual({ type: "scenery", scenery: [], message: "", outcome: null });
-  expect(postMessage.mock.calls[3][0]).toEqual({ type: "piece-shapes", shapes: [] });
-  expect(postMessage.mock.calls[4][0]).toEqual({ type: "ready" });
-  expect(postMessage.mock.calls[5][0]).toMatchObject({ type: "snapshot", tickCount: 0 });
-  const [snapshot, transfer] = postMessage.mock.calls[5];
+  expect(postMessage.mock.calls[1][0]).toEqual({ type: "coasters", coasters: [{
+    id: 4294967295,
+    name: "Timber Tumbler",
+    model: "hybrid",
+    open: false,
+    price: 0,
+    income: 0,
+    queueLength: 0,
+    complete: true,
+  }] });
+  expect(postMessage.mock.calls[2][0]).toEqual({ type: "facilities", facilities: [], message: "", revenue: "0", placed: false, forced: false, outcome: null });
+  expect(postMessage.mock.calls[3][0]).toEqual({ type: "scenery", scenery: [], message: "", outcome: null });
+  expect(postMessage.mock.calls[4][0]).toEqual({ type: "piece-shapes", shapes: [] });
+  expect(postMessage.mock.calls[5][0]).toEqual({ type: "ready" });
+  expect(postMessage.mock.calls[6][0]).toMatchObject({ type: "snapshot", tickCount: 0 });
+  const [snapshot, transfer] = postMessage.mock.calls[6];
   expect(snapshot.guestIds).toEqual(new Uint32Array([7]));
   expect(snapshot.guests).toEqual(new Float32Array([1, 2, 3, 1, 0, 4, 1]));
   expect(snapshot.appearances).toEqual(new Uint8Array([1, 2, 3, 4, 0]));

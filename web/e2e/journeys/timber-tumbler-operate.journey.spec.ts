@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
-import { advanceUntilState, canvasToPage, flattenTerrainTiles, gotoGame, layPath, layQueue, openRide, openTool, setCoasterTicketPrice, setFacilityPrice, setGameSpeed } from "../player/driver";
+import { advanceUntilState, canvasToPage, flattenTerrainTiles, gotoGame, layPath, layQueue, openRide, openTool, selectCoasterByName, setCoasterTicketPrice, setFacilityPrice, setGameSpeed } from "../player/driver";
 import { queuedGuests, revenue, riders } from "../player/state";
 import { parseReplaySession } from "../../src/session-replay";
 
@@ -111,12 +111,13 @@ test("Timber Tumbler operating journey @journey", async ({ page }) => {
   await layPath(page, { x: 239, y: 250, z: 3 }, { x: 238, y: 256, z: 2 });
   phase("station access");
   await setCoasterTicketPrice(page, 8);
+  const rideWindow = page.getByTestId("ride-window");
   await page.getByRole("button", { name: "Raise the coaster ticket price" }).click();
-  await expect(page.getByRole("spinbutton", { name: "Coaster ticket price" })).toHaveValue("9");
+  await expect(rideWindow.getByTestId("ride-price")).toHaveValue("9");
   const revenueBeforeOpening = await revenue(page);
   const crestBurstsBeforeOpening = await page.evaluate(() => window.gameTest.crestBursts().length);
   await openRide(page);
-  await expect(page.getByRole("button", { name: "Close coaster" })).toBeVisible();
+  await expect(rideWindow.getByTestId("ride-open-toggle")).toHaveText("Close coaster");
   phase("prices and opening");
   const guestId = await selectQueuedGuest(page);
   phase("guest selection");
@@ -126,12 +127,13 @@ test("Timber Tumbler operating journey @journey", async ({ page }) => {
   await advanceUntilState(page, async () => (await riders(page)).some(({ id }) => id === guestId), { ticks: 90_000 });
   phase("boarding");
   await advanceUntilState(page, async () => {
-    const income = Number(await page.locator("[data-coaster-income]").textContent());
     const detail = await page.evaluate(() => window.gameTest.guestDetail());
-    return income > 0 && await revenue(page) > revenueBeforeOpening
+    return await revenue(page) > revenueBeforeOpening
       && detail?.id === guestId && detail.memories.some((memory) => memory.kind === "ride" && memory.rideId === 0xffff_ffff)
       && (await page.locator("[data-panel-memories]").textContent())?.includes("Ride ") === true
       && await page.evaluate((count) => window.gameTest.crestBursts().length > count, crestBurstsBeforeOpening);
   }, { ticks: 100_000 });
+  await selectCoasterByName(page, "Timber Tumbler");
+  await expect.poll(async () => Number(await rideWindow.getByTestId("ride-income").textContent())).toBeGreaterThan(0);
   phase("ride memory and income");
 });

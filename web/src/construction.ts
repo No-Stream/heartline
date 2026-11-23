@@ -232,7 +232,6 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
             </div>
             <button type="button" class="tool-panel__action" data-test>Test coaster ${hint("test")}</button>
             <button type="button" class="tool-panel__action" data-ride-info>Ride info</button>
-            <button type="button" class="tool-panel__action" data-open>Open coaster</button>
           </div>
           <p class="builder__stamp" data-stamp hidden>Circuit complete</p>
           <p class="builder__test-hint" data-test-hint></p>
@@ -272,15 +271,6 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         </section>
       </div>
       <div class="builder__tabpanel" role="tabpanel" id="builder-tabpanel-operate" aria-labelledby="builder-tab-operate" data-builder-tabpanel="operate" hidden>
-        <section class="tool-panel__section builder__coaster-price" aria-label="Ride price">
-          <span class="tool-panel__label" id="coaster-price-label">Ride price</span>
-          <div class="stepper stepper--compact" role="group" aria-labelledby="coaster-price-label">
-            <button type="button" data-coaster-price-step="-1" aria-label="Lower the coaster ticket price">−</button>
-            <input type="number" data-coaster-price min="0" max="65535" step="1" value="6" aria-label="Coaster ticket price">
-            <button type="button" data-coaster-price-step="1" aria-label="Raise the coaster ticket price">+</button>
-          </div>
-          <p class="builder__test-hint">Coaster income: <span data-coaster-income>0</span></p>
-        </section>
         <section class="tool-panel__section builder__cars" aria-label="Train length">
           <div class="builder__train-count">
             <span class="tool-panel__label" id="cars-per-train-label">Cars per train</span>
@@ -346,9 +336,6 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   const previousFinish = element<HTMLButtonElement>("[data-finish-previous]");
   const nextFinish = element<HTMLButtonElement>("[data-finish-next]");
   const test = element<HTMLButtonElement>("[data-test]");
-  const open = element<HTMLButtonElement>("[data-open]");
-  const coasterPrice = element<HTMLInputElement>("[data-coaster-price]");
-  const coasterIncome = element("[data-coaster-income]");
   const deleteMode = element<HTMLInputElement>("[data-delete-mode]");
   const chainSection = element("[data-chain-section]");
   const chainToggle = element<HTMLButtonElement>("[data-chain-toggle]");
@@ -555,19 +542,6 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   nextFinish.addEventListener("click", () => dispatch({ type: "construction-finish-cycle", step: 1 }));
   test.addEventListener("click", () => dispatch({ type: "construction-test" }));
   element("[data-ride-info]").addEventListener("click", selectEditedRide);
-  open.addEventListener("click", () => dispatch({ type: "construction-open-toggle" }));
-  const setCoasterPrice = (price: number): void => {
-    if (!Number.isInteger(price) || price < 0 || price > 65535) throw new RangeError("Invalid coaster ticket price");
-    coasterPrice.value = String(price);
-    dispatch({ type: "construction-set-coaster-price", price });
-  };
-  coasterPrice.addEventListener("change", () => {
-    if (coasterPrice.validity.valid && coasterPrice.value !== "") setCoasterPrice(Number(coasterPrice.value));
-  });
-  const coasterPriceButtons = [...container.querySelectorAll<HTMLButtonElement>("[data-coaster-price-step]")];
-  coasterPriceButtons.forEach((button) => button.addEventListener("click", () => {
-    dispatch({ type: "construction-price-step", step: Number(button.dataset.coasterPriceStep) });
-  }));
   chainToggle.addEventListener("click", () => dispatch({ type: "chain-toggle" }));
   const colorRows = COASTER_PARTS.map((part) => ({ part, row: element(`[data-coaster-color-part="${part}"]`) }));
   for (const { part, row } of colorRows) {
@@ -1385,14 +1359,6 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       undo.disabled = next.complete && next.track.length === 0;
       close.disabled = next.complete && !next.canClose;
       test.disabled = next.complete && !next.canTest;
-      open.disabled = next.complete && !next.canTest && !next.isOpen;
-      open.textContent = next.isOpen ? "Close coaster" : "Open coaster";
-      if (document.activeElement !== coasterPrice) coasterPrice.value = String(next.coasterPrice);
-      for (const button of coasterPriceButtons) {
-        const priceChange = Number(button.dataset.coasterPriceStep);
-        button.disabled = priceChange < 0 ? next.coasterPrice === 0 : next.coasterPrice === 65535;
-      }
-      coasterIncome.textContent = String(next.coasterIncome);
       renderStationAccess(next);
       element("[data-test-hint]").textContent = !next.canTest && !next.testingReport ? "Complete the circuit and make it longer than the train to test your coaster." : "";
       message.textContent = next.message;

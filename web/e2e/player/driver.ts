@@ -45,6 +45,13 @@ export async function clickCanvas(page: Page, point: { x: number; y: number }): 
   await page.mouse.click(target.x, target.y);
 }
 
+/** Fail on the normal assertion timeout when a button is missing or unavailable. */
+export async function clickVisibleButton(button: Locator): Promise<void> {
+  await expect(button).toBeVisible();
+  await expect(button).toBeEnabled();
+  await button.click();
+}
+
 export async function moveOverCanvas(page: Page, point: { x: number; y: number }, options?: { steps?: number }): Promise<void> {
   const target = await canvasToPage(page, point);
   await page.mouse.move(target.x, target.y, options);
@@ -58,8 +65,11 @@ export async function canvasSize(page: Page): Promise<{ width: number; height: n
 type Tile = { x: number; y: number; z: number };
 type GameSpeed = 1 | 2 | 4 | 8 | 16;
 
-export async function startPark(page: Page, options: { park: "new" | "demo"; seed: number; speed: GameSpeed; livePauseRender?: boolean; testMode?: boolean }): Promise<void> {
-  const path = `/?park=${options.park}&seed=${options.seed}${options.livePauseRender ? "&livePauseRender=1" : ""}${options.testMode ? "&test=1" : ""}`;
+export async function startPark(page: Page, options: { park: "new" | "demo"; seed: number; speed: GameSpeed; livePauseRender?: boolean; testMode?: boolean; agents?: number }): Promise<void> {
+  if (options.agents !== undefined && (!Number.isInteger(options.agents) || options.agents < 1 || options.agents > 500)) {
+    throw new RangeError("Guest count must be an integer from 1 through 500");
+  }
+  const path = `/?park=${options.park}&seed=${options.seed}${options.livePauseRender ? "&livePauseRender=1" : ""}${options.testMode ? "&test=1" : ""}${options.agents === undefined ? "" : `&agents=${options.agents}`}`;
   await gotoGame(page, path);
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Watch");
@@ -107,14 +117,16 @@ async function targetTiles(page: Page, tiles: readonly Tile[], surfaceKind?: "te
   const centerY = tiles.reduce((sum, tile) => sum + tile.y + 0.5, 0) / tiles.length;
   const span = Math.max(...tiles.map((tile) => tile.x)) - Math.min(...tiles.map((tile) => tile.x))
     + Math.max(...tiles.map((tile) => tile.y)) - Math.min(...tiles.map((tile) => tile.y));
-  const zoom = span > 16 ? 1 : 2;
+  const zooms = span > 16 ? [1, 0.75, 0.5, 1.5, 2] as const : [2, 1.5, 1, 0.75, 0.5] as const;
   for (const rotation of [0, 1, 2, 3] as const) {
-    await page.evaluate((camera) => window.gameTest.setCamera(camera), { centerX, centerY, zoom, rotation });
-    await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
-    const points = await Promise.all(tiles.map((tile) => tilePoint(page, tile, surfaceKind)));
-    if (points.every((point) => point !== null)) return points;
+    for (const zoom of zooms) {
+      await page.evaluate((camera) => window.gameTest.setCamera(camera), { centerX, centerY, zoom, rotation });
+      await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
+      const points = await Promise.all(tiles.map((tile) => tilePoint(page, tile, surfaceKind)));
+      if (points.every((point) => point !== null)) return points;
+    }
   }
-  throw new Error(`Could not pick tiles ${JSON.stringify(tiles)} in any rotation`);
+  throw new Error(`Could not pick tiles ${JSON.stringify(tiles)} in any rotation or zoom`);
 }
 
 export async function clickTile(page: Page, tile: Tile): Promise<void> {
@@ -195,12 +207,90 @@ export async function showBuilderTab(page: Page, tab: "Build" | "Colours" | "Ope
 
 /** Enter the coaster ticket price in its visible control. */
 export async function setCoasterTicketPrice(page: Page, price: number): Promise<void> {
+  const editingCoasterId = await page.evaluate(() => window.gameTest.editingCoasterId());
+  if (editingCoasterId === null) throw new Error("No coaster is being edited");
+  await selectCoasterById(page, editingCoasterId);
+  await setPrice({ input: page.getByTestId("ride-price"), price });
+}
+
+/** Leave the builder so the coaster list is available. */
+export async function stopCoasterEditing(page: Page): Promise<void> {
+  const button = page.getByRole("toolbar", { name: "Tools" }).getByRole("button", { name: "Coaster", exact: true });
+  if (await button.getAttribute("aria-pressed") === "true") await button.click();
+  await expect(button).toHaveAttribute("aria-pressed", "false");
+}
+
+/** Select a coaster in the park list and open its ride window. */
+export async function selectCoasterByName(page: Page, name: string): Promise<void> {
+  await closeRideWindow(page);
+  await stopCoasterEditing(page);
   await openTool(page, "Coaster");
-  await showBuilderTab(page, "Operate");
-  await setPrice({
-    input: page.getByRole("spinbutton", { name: "Coaster ticket price" }),
-    price,
-  });
+  const entry = page.locator(".coaster-list").getByRole("button", { name: new RegExp(`^View ${escapeRegExp(name)},`) });
+  await expect(entry).toBeVisible();
+  const coasterId = await entry.getAttribute("data-coaster-id");
+  if (coasterId === null) throw new Error(`Coaster list entry for ${name} has no stable id`);
+  await clickVisibleButton(entry);
+  await expect(page.getByTestId("ride-window")).toBeVisible();
+  await expect(page.getByTestId("ride-window")).toHaveAttribute("data-ride", coasterId);
+}
+
+/** Rename the coaster shown in the ride window. */
+export async function renameSelectedCoaster(page: Page, name: string): Promise<void> {
+  await clickVisibleButton(page.getByTestId("ride-rename-toggle"));
+  const nameInput = page.getByTestId("ride-name-input");
+  await expect(nameInput).toBeVisible();
+  await nameInput.fill(name);
+  await clickVisibleButton(page.getByTestId("ride-rename-submit"));
+  await expect(page.getByTestId("ride-name")).toHaveText(name);
+}
+
+/** Select a coaster by stable id in the park list and open its ride window. */
+async function selectCoasterById(page: Page, coasterId: number): Promise<void> {
+  await closeRideWindow(page);
+  await stopCoasterEditing(page);
+  await openTool(page, "Coaster");
+  const entry = page.locator(`.coaster-list [data-coaster-id="${coasterId}"]`);
+  await expect(entry).toBeVisible();
+  await clickVisibleButton(entry);
+  await expect(page.getByTestId("ride-window")).toBeVisible();
+  await expect(page.getByTestId("ride-window")).toHaveAttribute("data-ride", String(coasterId));
+}
+
+/** Select a rendered track piece from the world so the ride window follows its coaster. */
+export async function selectCoasterFromWorld(page: Page, coasterId: number, camera: { centerX: number; centerY: number }): Promise<void> {
+  await page.evaluate(({ centerX, centerY }) => window.gameTest.setCamera({ centerX, centerY, zoom: 1.5, rotation: 0 }), camera);
+  await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
+  const target = await page.evaluate((id) => {
+    const canvas = document.querySelector("canvas");
+    if (!canvas) return null;
+    for (let y = 0; y < canvas.height; y += 2) {
+      for (let x = 0; x < canvas.width; x += 2) {
+        const pick = window.gameTest.pick(x, y);
+        if (pick?.kind === "track" && "id" in pick && pick.id.startsWith(`track-${id}-`)) return { x, y };
+      }
+    }
+    return null;
+  }, coasterId);
+  if (!target) throw new Error(`Coaster ${coasterId} has no visible track at the selected camera`);
+  await clickCanvas(page, target);
+  await expect(page.getByTestId("ride-window")).toBeVisible();
+  await expect(page.getByTestId("ride-window")).toHaveAttribute("data-ride", String(coasterId));
+}
+
+export async function closeRideWindow(page: Page): Promise<void> {
+  const rideWindow = page.getByTestId("ride-window");
+  if (await rideWindow.isVisible()) await clickVisibleButton(rideWindow.getByTestId("ride-window-close"));
+  await expect(rideWindow).toBeHidden();
+}
+
+export async function finishCoaster(page: Page): Promise<void> {
+  const finish = page.getByRole("button", { name: "Finish coaster", exact: true });
+  if (await finish.isVisible() && await finish.isEnabled()) {
+    await clickVisibleButton(finish);
+    const confirm = page.getByRole("button", { name: "Confirm coaster finish", exact: true });
+    if (await confirm.isVisible()) await clickVisibleButton(confirm);
+  }
+  await expect(page.getByRole("button", { name: /^Test coaster(?:\s|$)/ })).toBeEnabled();
 }
 
 /** Enter a facility's price in its visible control. */
@@ -308,6 +398,14 @@ export async function layQueue(page: Page, start: Tile, end: Tile): Promise<void
 export async function placeStation(page: Page, options: { tile: Tile; direction: Tile; height: number; model: CoasterModelKey }): Promise<void> {
   await selectUnits(page, "metric");
   await openTool(page, "Coaster");
+  const newCoaster = page.getByRole("button", { name: "New coaster", exact: true });
+  if (!(await newCoaster.isVisible())) {
+    const coasterTool = page.getByRole("toolbar", { name: "Tools" }).getByRole("button", { name: "Coaster", exact: true });
+    if (await coasterTool.getAttribute("aria-pressed") === "true") await coasterTool.click();
+    await openTool(page, "Coaster");
+    await expect(newCoaster).toBeVisible();
+  }
+  await clickVisibleButton(newCoaster);
   await page.getByRole("combobox", { name: "Coaster model" }).selectOption(`model:${options.model}`);
   const height = page.getByLabel("Station height above ground (metres)");
   await height.fill(String(options.height));
@@ -346,6 +444,18 @@ export async function testRide(page: Page): Promise<void> {
 }
 
 export async function openRide(page: Page): Promise<void> {
-  await showBuilderTab(page, "Build");
-  await page.getByRole("button", { name: "Open coaster" }).click();
+  const rideWindow = page.getByTestId("ride-window");
+  if (!(await rideWindow.isVisible())) {
+    const editingCoasterId = await page.evaluate(() => window.gameTest.editingCoasterId());
+    if (editingCoasterId === null) throw new Error("No coaster is being edited or selected");
+    await selectCoasterById(page, editingCoasterId);
+  }
+  const openToggle = page.getByTestId("ride-open-toggle");
+  const openButton = page.getByRole("button", { name: "Open coaster", exact: true });
+  if (await openButton.isVisible()) await openButton.click();
+  await expect(openToggle).toHaveAccessibleName("Close coaster");
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

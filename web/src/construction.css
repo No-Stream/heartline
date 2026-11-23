@@ -185,7 +185,6 @@
 .builder__finish-flow { display: contents; }
 .builder__finish-reason,
 .builder__finish-confirmation { grid-column: 1 / -1; }
-.builder__coaster-price { display: grid; justify-items: start; gap: 0.3rem; }
 .builder__finish-reason { margin: 0; color: var(--ink-soft); font-size: 0.78rem; }
 .builder__finish-confirmation { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem; padding: 0.45rem; background: color-mix(in srgb, var(--mustard) 18%, var(--paper)); border: var(--hairline); }
 .builder__finish-confirmation p { grid-column: 1 / -1; margin: 0; font-size: 0.8rem; }

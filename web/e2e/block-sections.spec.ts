@@ -76,7 +76,7 @@ test("automatic block sections can be inspected, moved, refused, and rendered @s
 
 test("two requested block trains move visibly without overlapping @slow", async ({ page }) => {
   test.setTimeout(300_000);
-  await buildBlockCircuit(page, 241, 249, 4, "north", boardingCircuitPieces, 48);
+  const coasterId = await buildBlockCircuit(page, 241, 249, 4, "north", boardingCircuitPieces, 48);
 
   await showBuilderTab(page, "Operate");
   const blockPanel = page.getByRole("region", { name: "Block sections" });
@@ -100,9 +100,16 @@ test("two requested block trains move visibly without overlapping @slow", async 
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
   await buildAccessPaths(page);
   await openTool(page, "Coaster");
+  await page.locator(`[data-coaster-id="${coasterId}"]`).click();
+  await page.getByTestId("ride-edit").click();
+  await expect.poll(() => page.evaluate(() => window.gameTest.editingCoasterId())).toBe(coasterId);
   await showBuilderTab(page, "Build");
-  await page.getByRole("button", { name: "Open coaster" }).click();
-  await expect(page.getByRole("button", { name: "Close coaster" })).toBeVisible();
+  await page.getByRole("button", { name: "Ride info", exact: true }).click();
+  const rideWindow = page.getByTestId("ride-window");
+  await expect(rideWindow).toBeVisible();
+  await rideWindow.getByTestId("ride-open-toggle").click();
+  await expect(rideWindow.getByTestId("ride-open-toggle")).toHaveText("Close coaster");
+  await rideWindow.getByTestId("ride-window-close").click();
 
   let movingTrains: TrainGroup[] | undefined;
   for (let attempt = 0; attempt < 300 && !movingTrains; attempt += 1) {
@@ -157,7 +164,7 @@ async function buildBlockCircuit(
   orientation: "east" | "north" = "east",
   pieces: readonly string[] = blockCircuitPieces,
   agentCount = 12,
-): Promise<void> {
+): Promise<number> {
   const pageErrors: string[] = [];
   const failedResources: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -180,6 +187,8 @@ async function buildBlockCircuit(
   if (failedResources.length > 0) throw new Error(`Game assets failed to load: ${failedResources.join(" | ")}`);
   await selectUnits(page, "metric");
   await openTool(page, "Coaster");
+  const newCoaster = page.getByRole("button", { name: "New coaster", exact: true });
+  if (await newCoaster.isVisible()) await newCoaster.click();
   await page.evaluate(({ x, y }) => window.gameTest.setCamera({ centerX: x, centerY: y, zoom: 1, rotation: 0 }), { x, y });
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
   const stationHeight = page.getByLabel("Station height above ground (metres)");
@@ -198,6 +207,8 @@ async function buildBlockCircuit(
   const choices = page.getByRole("radiogroup", { name: "Next piece" });
   const track = page.locator("[data-track]");
   await expect(track.locator("li")).toHaveCount(1);
+  const coasterId = await page.evaluate(() => window.gameTest.editingCoasterId());
+  if (coasterId === null) throw new Error("Placed station did not select its coaster for editing");
   let chainEnabled = false;
   for (const [index, piece] of pieces.entries()) {
     const needsChain = pieces === blockCircuitPieces ? index === 2 || index === 9 : index < 8;
@@ -227,6 +238,7 @@ async function buildBlockCircuit(
   await page.getByRole("button", { name: "Confirm coaster finish" }).click();
   await expect(page.getByText("Circuit complete", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Test coaster" })).toBeEnabled();
+  return coasterId;
 }
 
 async function installVerifiedPlacement(page: Page): Promise<void> {
