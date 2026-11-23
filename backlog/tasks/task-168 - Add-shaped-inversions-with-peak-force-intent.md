@@ -1,10 +1,10 @@
 ---
 id: TASK-168
 title: Add shaped inversions with peak-force intent
-status: Done
+status: In Progress
 assignee: []
 created_date: '2026-11-22 04:58'
-updated_date: '2026-11-22 22:52'
+updated_date: '2026-11-23 05:23'
 labels:
   - shaped-elements
 dependencies: []
@@ -26,6 +26,12 @@ Follow-up from TASK-156 / TASK-167: add named shaped inversions (vertical loops,
 - [x] #4 Wire types, builder palette/inspector, design-tools CLI, and ride/save round-trips support all three shaped inversions
 - [x] #5 Native vs WASM parity, acceptance matrices under both physics configs, and Playwright E2E tests pass with classic digests unchanged
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Initial reassessment at 09740d4: the branch contains broad solver, UI, design-tool, save-test, and test changes, but its prior completion claims require independent verification. Master has since added save versions 7–8, multi-coaster state, a new PieceId, and declared-piece inversion counting; integration and final gates remain outstanding. Baseline build and test assessment is in progress.
+<!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
