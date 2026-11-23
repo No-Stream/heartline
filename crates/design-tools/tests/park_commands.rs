@@ -137,29 +137,48 @@ fn park_build_rejects_a_station_height_that_differs_from_the_ride_file() {
 }
 
 #[test]
-fn park_build_rejects_multiple_coasters_before_resolving_ride_files() {
+fn park_build_resolves_every_coaster_ride_file_and_writes_a_park_save() {
     let park = TempFile::new("multiple-coasters.park.json");
     let save = TempFile::new("multiple-coasters.park");
-    let coaster = serde_json::json!({
-        "ride": "content/rides/missing-ride.ride.json",
-        "station": { "x": 100, "y": 100, "z": 8, "heading": "east" },
-        "open": false,
-        "price": 6
-    });
-    let description = serde_json::json!({
-        "format": "heartline-park",
-        "version": 1,
-        "name": "Multiple coasters",
-        "terrain": { "preset": "flat", "edits": [] },
-        "entrance": { "x": 218, "y": 246, "height": 8, "rotation": 2 },
-        "paths": [],
-        "facilities": [],
-        "scenery": [],
-        "coasters": [coaster.clone(), coaster]
-    });
+    let mut description: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(repository_root().join("content/parks/horizon-hawk.park.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    description["coasters"] = serde_json::json!([
+        {
+            "ride": "content/rides/horizon-hawk.ride.json",
+            "station": { "x": 241, "y": 249, "z": 10, "heading": "north" },
+            "open": true,
+            "price": 6
+        },
+        {
+            "ride": "content/rides/daisy-dash.ride.json",
+            "station": { "x": 340, "y": 300, "z": 12, "heading": "north" },
+            "open": false,
+            "price": 8
+        }
+    ]);
+    let terrain_edits = description["terrain"]["edits"].as_array_mut().unwrap();
+    for x in 337..=344 {
+        for y in 300..=302 {
+            terrain_edits.push(serde_json::json!({
+                "command": "flatten",
+                "parameters": [x, y, 1, 0, 0, 12, 0, 0]
+            }));
+        }
+    }
+    for x in [338, 342] {
+        for corner in [2, 3] {
+            terrain_edits.push(serde_json::json!({
+                "command": "lower_corner",
+                "parameters": [x, 302, 1, corner, 1, 0, 0, 0]
+            }));
+        }
+    }
     fs::write(&park.0, serde_json::to_vec(&description).unwrap()).unwrap();
 
-    let error = run_cli(
+    let reply = run_cli(
         &[
             "park".into(),
             "build".into(),
@@ -169,10 +188,14 @@ fn park_build_rejects_multiple_coasters_before_resolving_ride_files() {
         ],
         "",
     )
-    .unwrap_err();
+    .unwrap();
 
-    assert_eq!(error, "this build supports one player coaster per park");
-    assert!(!save.0.exists());
+    assert!(reply.contains("Saved park"), "{reply}");
+    let restored = WasmSimulation::load_state_native(&fs::read(&save.0).unwrap()).unwrap();
+    let coasters: serde_json::Value = serde_json::from_str(&restored.coasters_json()).unwrap();
+    assert_eq!(coasters.as_array().unwrap().len(), 2);
+    assert_eq!(coasters[0]["model"], "hyper");
+    assert_eq!(coasters[1]["model"], "family_coaster");
 }
 
 #[test]
