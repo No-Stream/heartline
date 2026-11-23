@@ -12,18 +12,20 @@ interface CanvasPoint {
 interface QueueGuestVisibility {
   readonly guestIds: readonly string[];
   readonly panelInterceptedGuestIds: readonly string[];
+  readonly rideWindowInterceptedGuestIds: readonly string[];
 }
 
 interface GuestCanvasTarget {
   readonly point: CanvasPoint | null;
   readonly panelIntercepted: boolean;
+  readonly rideWindowIntercepted: boolean;
 }
 
 async function findGuestCanvasPoint(page: Page, guestId: string): Promise<GuestCanvasTarget> {
   return page.evaluate((id): GuestCanvasTarget => {
     const guest = window.gameTest.guests().find((entry) => entry.id === id);
     const canvas = document.querySelector("canvas");
-    if (!guest || !canvas) return { point: null, panelIntercepted: false };
+    if (!guest || !canvas) return { point: null, panelIntercepted: false, rideWindowIntercepted: false };
 
     const projected = window.gameTest.project({ x: guest.x, y: guest.y, z: guest.height / 4 });
     const regionX = Math.floor(projected.x) - 32;
@@ -33,6 +35,7 @@ async function findGuestCanvasPoint(page: Page, guestId: string): Promise<GuestC
     const bounds = canvas.getBoundingClientRect();
     const picks = window.gameTest.pickRegion(regionX, regionY, regionWidth, regionHeight);
     let panelIntercepted = false;
+    let rideWindowIntercepted = false;
     for (let row = 0; row < regionHeight; row++) {
       for (let column = 0; column < regionWidth; column++) {
         const pick = picks[row * regionWidth + column];
@@ -41,11 +44,12 @@ async function findGuestCanvasPoint(page: Page, guestId: string): Promise<GuestC
         const pageX = bounds.left + point.x * bounds.width / canvas.width;
         const pageY = bounds.top + point.y * bounds.height / canvas.height;
         const target = document.elementFromPoint(pageX, pageY);
-        if (target instanceof HTMLCanvasElement) return { point, panelIntercepted };
+        if (target instanceof HTMLCanvasElement) return { point, panelIntercepted, rideWindowIntercepted };
         if (target?.closest("[data-testid='guest-panel']")) panelIntercepted = true;
+        if (target?.closest("[data-testid='ride-window']")) rideWindowIntercepted = true;
       }
     }
-    return { point: null, panelIntercepted };
+    return { point: null, panelIntercepted, rideWindowIntercepted };
   }, guestId);
 }
 
@@ -55,6 +59,7 @@ async function pointerTarget(page: Page, point: CanvasPoint): Promise<string> {
     const target = document.elementFromPoint(x, y);
     if (target instanceof HTMLCanvasElement) return "canvas";
     if (target?.closest("[data-testid='guest-panel']")) return "guest-panel";
+    if (target?.closest("[data-testid='ride-window']")) return "ride-window";
     return target?.tagName.toLowerCase() ?? "no-element";
   }, pagePoint);
 }
@@ -62,18 +67,28 @@ async function pointerTarget(page: Page, point: CanvasPoint): Promise<string> {
 async function visibleQueueGuests(page: Page, guestIds: readonly string[]): Promise<QueueGuestVisibility> {
   const visibleGuestIds: string[] = [];
   const panelInterceptedGuestIds: string[] = [];
+  const rideWindowInterceptedGuestIds: string[] = [];
   for (const guestId of guestIds) {
     const target = await findGuestCanvasPoint(page, guestId);
     if (target.point) visibleGuestIds.push(guestId);
-    else if (target.panelIntercepted) panelInterceptedGuestIds.push(guestId);
+    else {
+      if (target.panelIntercepted) panelInterceptedGuestIds.push(guestId);
+      if (target.rideWindowIntercepted) rideWindowInterceptedGuestIds.push(guestId);
+    }
   }
-  return { guestIds: visibleGuestIds, panelInterceptedGuestIds };
+  return { guestIds: visibleGuestIds, panelInterceptedGuestIds, rideWindowInterceptedGuestIds };
 }
 
 async function clickGuestOnCanvas(page: Page, guestId: string): Promise<void> {
   const target = await findGuestCanvasPoint(page, guestId);
   if (!target.point) {
-    if (target.panelIntercepted) throw new Error(`Every renderer pick point for guest ${guestId} is covered by the guest panel`);
+    const interceptors = [
+      target.panelIntercepted ? "guest panel" : null,
+      target.rideWindowIntercepted ? "ride window" : null,
+    ].filter((interceptor): interceptor is string => interceptor !== null);
+    if (interceptors.length > 0) {
+      throw new Error(`Every renderer pick point for guest ${guestId} is intercepted by ${interceptors.join(" and ")}`);
+    }
     throw new Error(`Guest ${guestId} has no visible renderer pick in the paused queue`);
   }
   const point = target.point;
@@ -83,6 +98,32 @@ async function clickGuestOnCanvas(page: Page, guestId: string): Promise<void> {
   }
   const pagePoint = await canvasToPage(page, point);
   await page.mouse.click(pagePoint.x, pagePoint.y);
+}
+
+async function frameQueueOutsideRideWindow(page: Page, guestIds: readonly string[]): Promise<void> {
+  await page.evaluate((queuedGuestIds) => {
+    const canvas = document.querySelector<HTMLCanvasElement>("canvas");
+    const rideWindow = document.querySelector<HTMLElement>("[data-testid='ride-window']");
+    if (!canvas || !rideWindow) throw new Error("The canvas or open ride window is missing");
+
+    const canvasBounds = canvas.getBoundingClientRect();
+    const rideWindowLeft = rideWindow.getBoundingClientRect().left;
+    const pixelsPerCssPixel = canvas.width / canvasBounds.width;
+    const clearRightmostPoint = (rideWindowLeft - canvasBounds.left - 48) * pixelsPerCssPixel;
+    const camera = { centerX: 242.75, centerY: 253.5, zoom: 1.5, rotation: 0 as const };
+    window.gameTest.setCamera(camera);
+
+    const queuedIds = new Set(queuedGuestIds);
+    const queuedGuests = window.gameTest.guests().filter(({ id }) => queuedIds.has(id));
+    if (queuedGuests.length !== queuedGuestIds.length) throw new Error("A queued guest is missing from the current world snapshot");
+    const rightmostGuestPoint = Math.max(...queuedGuests.map((guest) => window.gameTest.project({
+      x: guest.x,
+      y: guest.y,
+      z: guest.height / 4,
+    }).x));
+    const centerX = camera.centerX + (rightmostGuestPoint - clearRightmostPoint) / (32 * camera.zoom * pixelsPerCssPixel);
+    window.gameTest.setCamera({ ...camera, centerX });
+  }, guestIds);
 }
 
 test("selects each visible queued guest with the guest panel open and closed @journey", async ({ page }) => {
@@ -124,22 +165,37 @@ test("selects each visible queued guest with the guest panel open and closed @jo
   await expect(page.locator("[data-day-clock]")).toHaveAttribute("data-paused", "true");
   await advanceUntilState(page, async () => (await queuedGuests(page)).length >= 3, { ticks: 21_600 });
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
-  await page.evaluate(() => window.gameTest.setCamera({ centerX: 241.5, centerY: 253.5, zoom: 1.5, rotation: 0 }));
-  await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
-
   const queueGuestIds = await queuedGuests(page);
   expect(queueGuestIds.length, "the paused coaster queue should still be crowded").toBeGreaterThanOrEqual(2);
+  await frameQueueOutsideRideWindow(page, queueGuestIds);
+  await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
+
   const firstVisible = await visibleQueueGuests(page, queueGuestIds);
-  expect(firstVisible.guestIds.length, `visible canvas guests; guest panel blocked ${firstVisible.panelInterceptedGuestIds.join(", ")}`).toBeGreaterThan(0);
+  expect(
+    firstVisible.guestIds.length,
+    `visible canvas guests; ride window intercepted ${firstVisible.rideWindowInterceptedGuestIds.join(", ")}; guest panel intercepted ${firstVisible.panelInterceptedGuestIds.join(", ")}`,
+  ).toBeGreaterThan(0);
+  const panelAnchorGuestId = await page.evaluate((visibleGuestIds) => {
+    const visibleIds = new Set(visibleGuestIds);
+    return window.gameTest.guests()
+      .filter(({ id }) => visibleIds.has(id))
+      .map((guest) => ({
+        id: guest.id,
+        screenX: window.gameTest.project({ x: guest.x, y: guest.y, z: guest.height / 4 }).x,
+      }))
+      .toSorted((first, second) => second.screenX - first.screenX)[0]?.id ?? null;
+  }, firstVisible.guestIds);
+  if (panelAnchorGuestId === null) throw new Error("No visible queue guest can anchor the guest panel");
   const panel = page.getByTestId("guest-panel");
-  await clickGuestOnCanvas(page, firstVisible.guestIds[0]);
+  await clickGuestOnCanvas(page, panelAnchorGuestId);
   await expect(panel).toBeVisible();
-  await expect(panel).toHaveAttribute("data-guest-id", firstVisible.guestIds[0]);
+  await expect(rideWindow).toBeHidden();
+  await expect(panel).toHaveAttribute("data-guest-id", panelAnchorGuestId);
 
   const initiallyUnobscured = await visibleQueueGuests(page, queueGuestIds);
   expect(
     initiallyUnobscured.guestIds.length,
-    `pickable queue guests with the panel open; the panel physically intercepted ${initiallyUnobscured.panelInterceptedGuestIds.join(", ")}`,
+    `pickable queue guests with the panel open; ride window intercepted ${initiallyUnobscured.rideWindowInterceptedGuestIds.join(", ")}; guest panel intercepted ${initiallyUnobscured.panelInterceptedGuestIds.join(", ")}`,
   ).toBeGreaterThanOrEqual(2);
   const scheduledGuestIds = new Set(initiallyUnobscured.guestIds);
   const pendingGuestIds = [...initiallyUnobscured.guestIds];

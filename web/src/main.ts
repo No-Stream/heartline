@@ -1,6 +1,6 @@
 import { createParkSaves } from "./park-saves";
 import { canvasBackingSizeForBounds } from "./canvas-sizing";
-import { landscapingTileFromPick, sceneryTileFromPick, entityIdFromPick, facilityIdFromPick, blockBoundaryIndexFromPick, facilityTileFromPicks, stationTileFromSurfacePick } from "./world-picking";
+import { landscapingTileFromPick, sceneryTileFromPick, entityIdFromPick, facilityIdFromPick, blockBoundaryIndexFromPick, facilityTileFromPicks, guestSelectionActionFromPick, stationTileFromSurfacePick } from "./world-picking";
 import { createStationTool } from "./station-tool";
 import { createFacilityTool } from "./facility-tool";
 import { stationToolAdapter, facilityToolAdapter, pathToolAdapter, landscapingToolAdapter, sceneryToolAdapter, coasterToolAdapter } from "./tool-adapters";
@@ -786,12 +786,12 @@ function dispatch(action: InputAction): void {
     } else if (deleteMode && selection && "id" in selection) {
       const match = /^track-(\d+)-(\d+)$/.exec(selection.id);
       if (match && Number(match[1]) === world?.editingCoasterId) dispatch({ type: "construction-delete", id: Number(match[2]) });
-    } else if (selection && "id" in selection && /^guest-\d+$/.test(selection.id)) {
-      selectedGuestId = selection.id;
-      sendWorkerAction(worker, { type: "guest-detail-request", guestId: selection.id });
-      renderRevision.invalidate();
-    } else if ((activeTool === "none" || (activeTool === "coaster" && panelContainer!.hidden)) && rideFromPick(selection) !== null) {
-      dispatch({ type: "ride-select", ride: rideFromPick(selection)! });
+    } else {
+      const guestSelection = guestSelectionActionFromPick(selection);
+      if (guestSelection) dispatch(guestSelection);
+      else if ((activeTool === "none" || (activeTool === "coaster" && panelContainer!.hidden)) && rideFromPick(selection) !== null) {
+        dispatch({ type: "ride-select", ride: rideFromPick(selection)! });
+      }
     }
   } else if (action.type === "builder-cancel") {
     // Escape first leaves the active input mode, then closes the open tool. An open guest panel takes Escape for itself.

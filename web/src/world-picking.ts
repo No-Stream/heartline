@@ -1,5 +1,5 @@
 import { projectWorld, type Camera, type Viewport } from "./camera";
-import type { ScreenPoint } from "./input/actions";
+import type { InputAction, ScreenPoint } from "./input/actions";
 import type { LandscapingTile, TerrainCorner } from "./landscaping-tool";
 import type { Pick, WorldView } from "./render/scene";
 import type { SceneryTile } from "./scenery-tool";
@@ -57,6 +57,11 @@ export function entityIdFromPick(pick: Pick | null, prefix: string): string | un
   if (!pick || !("id" in pick)) return undefined;
   const match = new RegExp(`^${prefix}-(.+)$`).exec(pick.id);
   return match?.[1];
+}
+
+export function guestSelectionActionFromPick(pick: Pick | null): Extract<InputAction, { readonly type: "guest-select" }> | null {
+  if (!pick || !("id" in pick) || !/^guest-\d+$/.test(pick.id)) return null;
+  return { type: "guest-select", guestId: pick.id };
 }
 
 export function facilityIdFromPick(pick: Pick | null): number | undefined {
