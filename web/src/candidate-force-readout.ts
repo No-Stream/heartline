@@ -40,6 +40,10 @@ function shapeRefusalMessage(shape: ConstructionShapedElementWire, units: Units)
       return ["This fixed size override is not supported for shaped elements."];
     case "invalidGeometry":
       return ["The shaped element geometry could not be integrated at this entry speed."];
+    case "topFeelOutOfReach":
+      return [
+        `Cars feel ${formatCalibratedForce(shape.refusal.lowestCarTopG)} to ${formatCalibratedForce(shape.refusal.highestCarTopG)} g at the top; they cannot all be within 0.35 g of ${formatCalibratedForce(shape.refusal.targetTopG)} g. A faster entry or a shorter train narrows the spread.`,
+      ];
     case "geometryDigestMismatch":
       return ["Saved shaped geometry does not match its recipe."];
   }

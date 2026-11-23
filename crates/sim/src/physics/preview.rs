@@ -27,12 +27,18 @@ pub struct TrackPreview {
     pub force_limit_exceeded: Vec<bool>,
 }
 
+/// Height band below an inversion's highest point that counts as its crest.
+const INVERTED_CREST_DEPTH_M: f64 = 0.5;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CandidateCarForces {
     pub car_index: usize,
     pub peaks: ForcePeakValues,
     pub sustained_minimum_vertical_g: Option<f64>,
     pub inverted_minimum_vertical_g: Option<f64>,
+    /// Mean vertical force over the car's inverted samples within `INVERTED_CREST_DEPTH_M` of its
+    /// highest inverted sample: the felt top of an inversion, read over the curved crest.
+    pub inverted_crest_vertical_g: Option<f64>,
     pub peak_roll_rate_deg_s: f64,
     pub within_limits: bool,
     #[cfg(test)]
@@ -681,6 +687,25 @@ fn preview_output(completion: PreviewCompletion) -> PreviewOutput {
                     .filter(|sample| sample.inverted)
                     .map(|sample| sample.vertical_g)
                     .reduce(f64::min);
+                let inverted_crest_vertical_g = recorder
+                    .samples
+                    .iter()
+                    .filter(|sample| sample.inverted)
+                    .map(|sample| sample.height_m)
+                    .reduce(f64::max)
+                    .map(|crest_height_m| {
+                        let (sum_g, count) = recorder
+                            .samples
+                            .iter()
+                            .filter(|sample| {
+                                sample.inverted
+                                    && sample.height_m >= crest_height_m - INVERTED_CREST_DEPTH_M
+                            })
+                            .fold((0.0, 0_u32), |(sum_g, count), sample| {
+                                (sum_g + sample.vertical_g, count + 1)
+                            });
+                        sum_g / f64::from(count)
+                    });
                 let peak_roll_rate_deg_s = recorder
                     .samples
                     .windows(2)
@@ -706,6 +731,7 @@ fn preview_output(completion: PreviewCompletion) -> PreviewOutput {
                     peaks: summary.force,
                     sustained_minimum_vertical_g: summary.sustained.minimum_vertical_g,
                     inverted_minimum_vertical_g,
+                    inverted_crest_vertical_g,
                     peak_roll_rate_deg_s,
                     within_limits: recorder.within_limits,
                     #[cfg(test)]
@@ -910,7 +936,14 @@ fn interpolate_candidate_reading(
         } else {
             second.inverted
         },
-        roll: interpolate(first.roll, second.roll),
+        // Each piece measures roll from its own reference, so roll only interpolates within a piece.
+        roll: if first.piece_index == second.piece_index {
+            interpolate(first.roll, second.roll)
+        } else if fraction < 0.5 {
+            first.roll
+        } else {
+            second.roll
+        },
         piece_index: if fraction < 0.5 {
             first.piece_index
         } else {

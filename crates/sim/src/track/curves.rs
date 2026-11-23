@@ -867,6 +867,46 @@ fn track_cos(value: f64) -> f64 {
     crate::math::cos(value)
 }
 
+/// Vertical roll-out of a Raven turn after its curved inverted crest, given the parameter scale of
+/// the roll-out and how far the exit rail sits below the crest rail. The heart runs on the inside
+/// of the crest, so at the join it moves (1 - kH) as fast as the rail with curvature k / (1 - kH);
+/// matching both keeps the rail C2 across the join.
+pub(crate) fn raven_crest_dive(
+    half_loop: &crate::track::profile::SolvedProfile,
+    roll_scale: f64,
+    rail_drop_m: f64,
+) -> Option<super::roll::CrestDive> {
+    super::roll::CrestDive::new(
+        raven_crest_heart_acceleration(half_loop, roll_scale)?,
+        rail_drop_m - 2.0 * HEART_HEIGHT_METRES,
+    )
+}
+
+/// Rail drop from crest to exit that tapers the crest curvature out over `crest_fraction` of the
+/// roll-out.
+pub(crate) fn raven_crest_dive_rail_drop_m(
+    half_loop: &crate::track::profile::SolvedProfile,
+    roll_scale: f64,
+    crest_fraction: f64,
+) -> Option<f64> {
+    let heart_drop_m = super::roll::CrestDive::drop_for(
+        raven_crest_heart_acceleration(half_loop, roll_scale)?,
+        crest_fraction,
+    );
+    Some(heart_drop_m + 2.0 * HEART_HEIGHT_METRES)
+}
+
+fn raven_crest_heart_acceleration(
+    half_loop: &crate::track::profile::SolvedProfile,
+    roll_scale: f64,
+) -> Option<f64> {
+    let (_, _, apex_second) = half_loop.sample(half_loop.length());
+    let apex_rail_curvature = -apex_second[1];
+    let heart_speed_ratio = 1.0 - apex_rail_curvature * HEART_HEIGHT_METRES;
+    (apex_rail_curvature > 0.0 && heart_speed_ratio > 0.0)
+        .then(|| apex_rail_curvature * heart_speed_ratio * crate::math::powi(roll_scale, 2))
+}
+
 #[cfg(test)]
 mod shaped_turn_math_tests {
     use super::{track_cos, track_sin};
@@ -1404,21 +1444,31 @@ impl Piece {
 
         let u = ((t - split) / (1.0 - split)).clamp(0.0, 1.0);
         let apex = half_loop.endpoint();
+        let (_, _, apex_second) = half_loop.sample(loop_length);
         let join_rail = self.entry.position() + forward * apex[0] + vertical * apex[1];
         let exit_rail = self.exit.position();
         let start_heart = join_rail - vertical * HEART_HEIGHT_METRES;
         let end_heart = exit_rail + vertical * HEART_HEIGHT_METRES;
         let exit_tangent = forward * -1.0;
         let roll_dir = if self.mirrored { -1.0 } else { 1.0 };
+        let apex_rail_curvature = -apex_second[1];
+        let start_heart_tangent =
+            exit_tangent * (roll_scale * (1.0 - apex_rail_curvature * HEART_HEIGHT_METRES));
+        let dive = raven_crest_dive(half_loop, roll_scale, join_rail.z - exit_rail.z)
+            .expect("validated Raven turn recipes have a reachable crest dive");
+        let level_end_heart = Vec3::new(end_heart.x, end_heart.y, start_heart.z);
 
         let roll_rail = |param: f64| -> (Vec3, Vec3, Vec3, f64, Vec3) {
-            let (heart, heart_first, _) = super::roll::spline_kinematics(
+            let (level_heart, level_heart_first, _) = super::roll::spline_kinematics(
                 start_heart,
-                end_heart,
-                exit_tangent * roll_scale,
+                level_end_heart,
+                start_heart_tangent,
                 exit_tangent * roll_scale,
                 param,
             );
+            let (dive_offset, dive_first, _) = dive.sample(param);
+            let heart = level_heart + vertical * dive_offset;
+            let heart_first = level_heart_first + vertical * dive_first;
             let heart_tangent = heart_first.unit();
             let base_up = super::roll::unbanked_up(heart_tangent);
             let left_exit = base_up.cross(heart_tangent).unit();
@@ -1431,7 +1481,12 @@ impl Piece {
 
         let (position, heart, desired_up, roll, heart_first) = roll_rail(u);
         let step = 1.0e-5;
-        let (first_u, second_u) = if u == 0.0 || u == 1.0 {
+        let (first_u, second_u) = if u == 0.0 {
+            (
+                exit_tangent * roll_scale,
+                vertical * (-apex_rail_curvature * crate::math::powi(roll_scale, 2)),
+            )
+        } else if u == 1.0 {
             (heart_first, Vec3::new(0.0, 0.0, 0.0))
         } else if u < step {
             let p1 = roll_rail(u + step).0;

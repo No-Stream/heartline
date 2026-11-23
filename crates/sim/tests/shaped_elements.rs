@@ -1866,85 +1866,29 @@ fn assert_inversion_envelope(
     }
 }
 
-fn raven_apex_vertical_g_by_car(
+/// Each car's felt crest force, read from an independent force preview of the solved piece.
+fn raven_crest_vertical_g_by_car(
     prefix: &[Piece],
     model: &CoasterModel,
     piece: &Piece,
     entry_speed_mps: f64,
-    apex_height_m: f64,
 ) -> Vec<f64> {
-    let candidate_index = prefix.len();
-    let candidate_start_m = prefix.iter().map(Piece::length).sum::<f64>();
+    let physics = PhysicsConfig {
+        lift_speed: entry_speed_mps,
+        ..PhysicsConfig::default()
+    };
     let mut pieces = prefix.to_vec();
     pieces.push(piece.clone());
     pieces.extend(runout_from(piece, &model.train));
-    let circuit = Circuit::open(pieces).expect("Raven candidate has a station and runout");
-
-    let scan_steps = 4096;
-    let apex_distance_m = (0..=scan_steps)
-        .map(|step| piece.length() * step as f64 / scan_steps as f64)
-        .filter_map(|distance_m| {
-            let sample = piece.sample(distance_m);
-            (sample.up.z < -0.999 && sample.roll.abs() < 1e-9)
-                .then_some((sample.position.z, distance_m))
-        })
-        .filter(|(height_m, _)| (*height_m - apex_height_m).abs() <= 0.01)
-        .map(|(_, distance_m)| distance_m)
-        .max_by(f64::total_cmp)
-        .expect("Raven geometry has a flat inverted apex join");
-
-    let mut train = Train::new(
-        &circuit,
-        &model.train,
-        PhysicsConfig {
-            lift_speed: entry_speed_mps,
-            ..PhysicsConfig::default()
-        },
-        candidate_start_m,
-        entry_speed_mps,
-    );
-    let mut closest_apex_samples = vec![None; usize::from(model.train.cars)];
-    let clear_candidate_distance_m = candidate_start_m + piece.length() + model.train.length_metres;
-    for _ in 0..100_000 {
-        train.step(&circuit);
-        for timestep_readings in train.take_readings() {
-            for (car_index, reading) in timestep_readings.into_iter().enumerate() {
-                if reading.piece_index != candidate_index {
-                    continue;
-                }
-                let local_distance_m = reading.distance - candidate_start_m;
-                let track_sample = piece.sample(local_distance_m);
-                if track_sample.up.z >= -0.95 || track_sample.roll.abs() >= 0.05 {
-                    continue;
-                }
-                let apex_distance_error_m = (local_distance_m - apex_distance_m).abs();
-                let closest_sample = &mut closest_apex_samples[car_index];
-                if closest_sample.is_none_or(|(closest_error_m, _): (f64, f64)| {
-                    apex_distance_error_m < closest_error_m
-                }) {
-                    *closest_sample = Some((apex_distance_error_m, reading.g.vertical));
-                }
-            }
-        }
-        if train.distance() >= clear_candidate_distance_m {
-            break;
-        }
-        assert!(
-            train.notes().is_empty(),
-            "Raven test train recovered before the apex"
-        );
-    }
-    closest_apex_samples
-        .into_iter()
-        .enumerate()
-        .map(|(car_index, closest_sample)| {
-            let (distance_error_m, vertical_g) = closest_sample
-                .unwrap_or_else(|| panic!("car {car_index} did not pass the Raven apex"));
-            assert!(
-                distance_error_m <= 0.5,
-                "car {car_index} apex sample missed the join by {distance_error_m:.3} m"
-            );
-            vertical_g
+    let (_, mut cache) = entry_preview(prefix, model, entry_speed_mps, physics);
+    cache
+        .preview_candidate(&pieces, model, physics, prefix.len())
+        .expect("Raven candidate preview completes")
+        .cars
+        .iter()
+        .map(|car| {
+            car.inverted_crest_vertical_g
+                .expect("every car crosses the Raven crest inverted")
         })
         .collect()
 }
@@ -2267,18 +2211,20 @@ fn shaped_zero_g_roll_peak_force_steps_are_calibrated_for_each_supported_model()
 fn shaped_raven_turns_meet_peak_force_reversal_and_roll_rate_contract() {
     for (base_model, cars, speeds) in [
         (velocity_viper_model(), 3, vec![22.0, 26.0, 30.0, 34.0]),
-        (velocity_viper_model(), 6, vec![22.0, 26.0, 30.0, 34.0]),
+        (velocity_viper_model(), 6, vec![26.0, 30.0, 34.0, 36.0]),
         (hybrid_model(), 4, vec![22.0, 26.0, 30.0, 34.0]),
-        (hybrid_model(), 8, vec![24.0, 26.0, 30.0, 34.0]),
+        (hybrid_model(), 8, vec![30.0, 34.0, 36.0]),
     ] {
         let default_peak = default_raven_turn_peak_g(&base_model);
         let mut previous_height_m: Option<f64> = None;
+        // Floaty is the top feel every one of these trains can reach at these speeds; the
+        // top-feel matrix test covers where the other feels are out of reach.
         for speed_mps in speeds {
             let (model, prefix, solved) = solve_with_prefix(
                 ElementIntent::RavenTurn {
                     hand: Hand::Left,
                     peak_g: default_peak,
-                    top_feel: LoopTopFeel::Neutral,
+                    top_feel: LoopTopFeel::Floaty,
                 },
                 &base_model,
                 cars,
@@ -2400,7 +2346,7 @@ fn shaped_raven_turn_peak_force_and_top_feel_steps_are_calibrated() {
         } else {
             Hand::Right
         };
-        let (model, prefix, solved) = solve_with_prefix(
+        let result = solve_with_prefix(
             ElementIntent::RavenTurn {
                 hand,
                 peak_g,
@@ -2409,8 +2355,18 @@ fn shaped_raven_turn_peak_force_and_top_feel_steps_are_calibrated() {
             &model,
             4,
             30.0,
-        )
-        .unwrap_or_else(|refusal| {
+        );
+        // A soft 3.5 g pullout makes a tall, slow crest; pressing riders in there needs a crest
+        // tight enough that the 4-car train breaks the model's force headroom.
+        if peak_g == 3.5 && top_feel == LoopTopFeel::PressedIn {
+            assert!(
+                matches!(result, Err(SolveRefusal::InfeasibleTarget { .. })),
+                "Viper Raven turn at {peak_g:.1} g PressedIn: {:?}",
+                result.map(|(_, _, solved)| solved.spec)
+            );
+            continue;
+        }
+        let (model, prefix, solved) = result.unwrap_or_else(|refusal| {
             panic!("Viper Raven turn at {peak_g:.1} g {top_feel:?} refused: {refusal:?}")
         });
         let ElementSpec::RavenTurn {
@@ -2418,7 +2374,6 @@ fn shaped_raven_turn_peak_force_and_top_feel_steps_are_calibrated() {
             delivered_peak_g,
             top_feel: delivered_top_feel,
             peak_roll_rate_deg_s,
-            height_m,
             ..
         } = solved.spec
         else {
@@ -2445,13 +2400,12 @@ fn shaped_raven_turn_peak_force_and_top_feel_steps_are_calibrated() {
             within_model_vibe,
             &format!("Viper Raven turn at {peak_g:.1} g {top_feel:?}"),
         );
-        let apex_vertical_g_by_car =
-            raven_apex_vertical_g_by_car(&prefix, &model, &solved.piece, 30.0, height_m);
-        for (car_index, vertical_g) in apex_vertical_g_by_car.into_iter().enumerate() {
-            let delivered_apex_load_g = -vertical_g;
-            if (delivered_apex_load_g - top_feel.target_g()).abs() > 0.35 {
+        let crest_vertical_g_by_car =
+            raven_crest_vertical_g_by_car(&prefix, &model, &solved.piece, 30.0);
+        for (car_index, crest_vertical_g) in crest_vertical_g_by_car.into_iter().enumerate() {
+            if (crest_vertical_g - top_feel.target_g()).abs() > 0.35 {
                 apex_force_misses.push(format!(
-                    "{peak_g:.1} g {top_feel:?} car {car_index}: apex load {delivered_apex_load_g:.3} g, target {:.3} g",
+                    "{peak_g:.1} g {top_feel:?} car {car_index}: crest {crest_vertical_g:.3} g, target {:.3} g",
                     top_feel.target_g()
                 ));
             }
@@ -2611,4 +2565,199 @@ fn shaped_inversions_are_deterministic_and_save_round_trip() {
         );
         assert_ride_file_shape_round_trip(&viper, 4, &intent, &first.spec);
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum RavenTopFeelOutcome {
+    Reached,
+    /// Cars cross the crest at speeds too different for one feel to suit them all: their crest
+    /// forces span more than the 0.70 g a centred tolerance band allows.
+    SpreadTooWide,
+    /// The cars' crest forces span less than 0.70 g, but calibration ran out of previews before
+    /// it centred them on the target.
+    NotCentred,
+    /// The crest is reachable but the train breaks the force budget elsewhere in the element.
+    ForceBudget,
+    /// The crest is too tight or too low for the model's minimum radius or exit height.
+    Geometry,
+}
+
+#[test]
+fn shaped_raven_turn_top_feels_reach_every_car_or_refuse_with_a_reason() {
+    use RavenTopFeelOutcome::{ForceBudget, Geometry, NotCentred, SpreadTooWide};
+    let expected_refusals: &[(&str, u8, f64, LoopTopFeel, RavenTopFeelOutcome)] = &[
+        ("velocity_viper", 3, 22.0, LoopTopFeel::Neutral, ForceBudget),
+        (
+            "velocity_viper",
+            3,
+            22.0,
+            LoopTopFeel::PressedIn,
+            ForceBudget,
+        ),
+        (
+            "velocity_viper",
+            3,
+            26.0,
+            LoopTopFeel::PressedIn,
+            ForceBudget,
+        ),
+        ("velocity_viper", 6, 22.0, LoopTopFeel::Floaty, NotCentred),
+        (
+            "velocity_viper",
+            6,
+            22.0,
+            LoopTopFeel::Neutral,
+            SpreadTooWide,
+        ),
+        (
+            "velocity_viper",
+            6,
+            22.0,
+            LoopTopFeel::PressedIn,
+            SpreadTooWide,
+        ),
+        (
+            "velocity_viper",
+            6,
+            26.0,
+            LoopTopFeel::Neutral,
+            SpreadTooWide,
+        ),
+        (
+            "velocity_viper",
+            6,
+            26.0,
+            LoopTopFeel::PressedIn,
+            SpreadTooWide,
+        ),
+        ("hybrid", 4, 22.0, LoopTopFeel::PressedIn, ForceBudget),
+        ("hybrid", 4, 26.0, LoopTopFeel::PressedIn, ForceBudget),
+        ("hybrid", 8, 22.0, LoopTopFeel::Floaty, SpreadTooWide),
+        ("hybrid", 8, 22.0, LoopTopFeel::Neutral, SpreadTooWide),
+        ("hybrid", 8, 22.0, LoopTopFeel::PressedIn, SpreadTooWide),
+        ("hybrid", 8, 26.0, LoopTopFeel::Floaty, SpreadTooWide),
+        ("hybrid", 8, 26.0, LoopTopFeel::Neutral, SpreadTooWide),
+        ("hybrid", 8, 26.0, LoopTopFeel::PressedIn, SpreadTooWide),
+        ("hybrid", 8, 30.0, LoopTopFeel::Neutral, SpreadTooWide),
+        ("hybrid", 8, 30.0, LoopTopFeel::PressedIn, SpreadTooWide),
+        ("hybrid", 8, 34.0, LoopTopFeel::PressedIn, SpreadTooWide),
+    ];
+    let mut mismatches = Vec::new();
+    for (base_model, cars) in [
+        (velocity_viper_model(), 3),
+        (velocity_viper_model(), 6),
+        (hybrid_model(), 4),
+        (hybrid_model(), 8),
+    ] {
+        let peak_g = default_raven_turn_peak_g(&base_model);
+        for speed_mps in [22.0, 26.0, 30.0, 34.0, 36.0] {
+            for top_feel in [
+                LoopTopFeel::Floaty,
+                LoopTopFeel::Neutral,
+                LoopTopFeel::PressedIn,
+            ] {
+                let expected = expected_refusals
+                    .iter()
+                    .find(|(key, expected_cars, expected_speed, expected_feel, _)| {
+                        *key == base_model.key
+                            && *expected_cars == cars
+                            && *expected_speed == speed_mps
+                            && *expected_feel == top_feel
+                    })
+                    .map_or(RavenTopFeelOutcome::Reached, |(.., outcome)| *outcome);
+                for hand in [Hand::Left, Hand::Right] {
+                    let label = format!(
+                        "{} {cars}-car {speed_mps:.0} m/s {top_feel:?} {hand:?}",
+                        base_model.key
+                    );
+                    let outcome = match solve_with_prefix(
+                        ElementIntent::RavenTurn {
+                            hand,
+                            peak_g,
+                            top_feel,
+                        },
+                        &base_model,
+                        cars,
+                        speed_mps,
+                    ) {
+                        Ok((model, prefix, solved)) => {
+                            let ElementSpec::RavenTurn {
+                                delivered_peak_g,
+                                peak_roll_rate_deg_s,
+                                exit_dz_half_tiles,
+                                ..
+                            } = solved.spec
+                            else {
+                                panic!("{label}: expected a RavenTurn spec");
+                            };
+                            let crest_g = raven_crest_vertical_g_by_car(
+                                &prefix,
+                                &model,
+                                &solved.piece,
+                                speed_mps,
+                            );
+                            eprintln!(
+                                "Raven top feel {label}: target {:.2} g, crest by car {:?}",
+                                top_feel.target_g(),
+                                crest_g
+                                    .iter()
+                                    .map(|g| format!("{g:.2}"))
+                                    .collect::<Vec<_>>()
+                            );
+                            for (car_index, car_crest_g) in crest_g.iter().enumerate() {
+                                assert!(
+                                    (car_crest_g - top_feel.target_g()).abs() <= 0.35,
+                                    "{label}: car {car_index} crest {car_crest_g:.3} g"
+                                );
+                            }
+                            assert!((delivered_peak_g - peak_g).abs() <= 0.20, "{label}");
+                            assert!(peak_roll_rate_deg_s <= 200.0, "{label}");
+                            assert!(exit_dz_half_tiles >= 3, "{label}");
+                            assert_inversion_envelope(
+                                &prefix,
+                                &model,
+                                &solved.piece,
+                                speed_mps,
+                                peak_g,
+                                true,
+                                &label,
+                            );
+                            RavenTopFeelOutcome::Reached
+                        }
+                        Err(SolveRefusal::TopFeelOutOfReach {
+                            target_top_g,
+                            lowest_car_top_g,
+                            highest_car_top_g,
+                        }) => {
+                            eprintln!(
+                                "Raven top feel {label}: refused, cars {lowest_car_top_g:.2} to {highest_car_top_g:.2} g"
+                            );
+                            assert_eq!(target_top_g, top_feel.target_g(), "{label}");
+                            assert!(
+                                (lowest_car_top_g - target_top_g).abs() > 0.35
+                                    || (highest_car_top_g - target_top_g).abs() > 0.35,
+                                "{label}: refused a band inside the tolerance"
+                            );
+                            if highest_car_top_g - lowest_car_top_g > 0.70 {
+                                SpreadTooWide
+                            } else {
+                                NotCentred
+                            }
+                        }
+                        Err(SolveRefusal::InfeasibleTarget { .. }) => ForceBudget,
+                        Err(SolveRefusal::InvalidGeometry) => Geometry,
+                        Err(refusal) => panic!("{label}: unexpected refusal {refusal:?}"),
+                    };
+                    if outcome != expected {
+                        mismatches.push(format!("{label}: {outcome:?}, expected {expected:?}"));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "Raven top-feel outcomes changed:\n{}",
+        mismatches.join("\n")
+    );
 }

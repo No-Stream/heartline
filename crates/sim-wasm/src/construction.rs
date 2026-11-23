@@ -112,6 +112,11 @@ pub enum ConstructionShapeRefusalWire {
     UnsupportedConnector,
     UnsupportedSizeOverride,
     InvalidGeometry,
+    TopFeelOutOfReach {
+        target_top_g: f64,
+        lowest_car_top_g: f64,
+        highest_car_top_g: f64,
+    },
     GeometryDigestMismatch {
         expected: u64,
         actual: u64,
@@ -550,6 +555,15 @@ fn solve_refusal_wire(refusal: SolveRefusal) -> ConstructionShapeRefusalWire {
             ConstructionShapeRefusalWire::UnsupportedSizeOverride
         }
         SolveRefusal::InvalidGeometry => ConstructionShapeRefusalWire::InvalidGeometry,
+        SolveRefusal::TopFeelOutOfReach {
+            target_top_g,
+            lowest_car_top_g,
+            highest_car_top_g,
+        } => ConstructionShapeRefusalWire::TopFeelOutOfReach {
+            target_top_g,
+            lowest_car_top_g,
+            highest_car_top_g,
+        },
         SolveRefusal::GeometryDigestMismatch { expected, actual } => {
             ConstructionShapeRefusalWire::GeometryDigestMismatch { expected, actual }
         }
@@ -582,6 +596,13 @@ fn solve_refusal_message(refusal: SolveRefusal) -> String {
         SolveRefusal::InvalidGeometry => {
             "The shaped element geometry cannot be integrated for this entry speed.".into()
         }
+        SolveRefusal::TopFeelOutOfReach {
+            target_top_g,
+            lowest_car_top_g,
+            highest_car_top_g,
+        } => format!(
+            "The cars feel {lowest_car_top_g:.2} to {highest_car_top_g:.2} g at the top; they cannot all be within 0.35 g of {target_top_g:.2} g at this speed."
+        ),
         SolveRefusal::GeometryDigestMismatch { .. } => {
             "The saved shaped geometry does not match its resolved parameters.".into()
         }

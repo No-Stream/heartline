@@ -1,8 +1,9 @@
 use crate::physics::{CandidateCarForces, GRAVITY};
+use crate::track::curves::{raven_crest_dive, raven_crest_dive_rail_drop_m};
 use crate::track::profile::{
-    OfflineSolveError, OfflineTrain, SolvedProfile, regenerate_shaped_half_loop_profile,
-    solve_shaped_full_loop_profile, solve_shaped_half_loop_profile,
-    solve_shaped_zero_g_hill_profile, zero_g_crest_duration_seconds,
+    OfflineSolveError, OfflineTrain, SolvedProfile, solve_shaped_full_loop_profile,
+    solve_shaped_raven_half_loop_profile, solve_shaped_zero_g_hill_profile,
+    zero_g_crest_duration_seconds,
 };
 use crate::track::shaped::precision::{canonicalize_element_spec, round_element_value};
 use crate::track::shaped::{
@@ -18,7 +19,16 @@ use crate::track::{
 
 pub(super) const MAXIMUM_INVERSION_PEAK_ERROR_G: f64 = 0.20;
 pub(super) const MAXIMUM_SHAPED_ROLL_RATE_DEG_S: f64 = 200.0;
+/// Every car's seat force at a Raven turn's inverted apex stays this close to the top feel.
+pub(super) const MAXIMUM_RAVEN_TOP_FEEL_ERROR_G: f64 = 0.35;
 const LOOP_DEFAULT_HOLD_DEGREES: f64 = 105.0;
+/// Seconds over which a Raven turn's crest curvature tapers out after the apex.
+const RAVEN_CREST_TAPER_SECONDS: f64 = 0.3;
+/// Riders feel a Raven crest about this much lighter than its profile schedule, mostly from the
+/// curvature taper inside the crest band and the 5 Hz rider filter, so the first try aims high.
+const RAVEN_CREST_SCHEDULE_OFFSET_G: f64 = 0.3;
+/// Shortest crest taper a low Raven turn may use to keep its exit off the ground.
+const MINIMUM_RAVEN_CREST_TAPER_SECONDS: f64 = 0.15;
 const MINIMUM_INVERSION_PEAK_TARGET_G: f64 = 2.5;
 const MAXIMUM_INVERSION_PEAK_TARGET_G: f64 = 5.0;
 const ZERO_G_TARGET_CREST_SECONDS: f64 = 2.60;
@@ -114,6 +124,23 @@ fn worst_inverted_vertical_g(cars: &[CandidateCarForces]) -> f64 {
             cars.iter()
                 .map(|car| car.peaks.minimum_vertical_g)
                 .fold(f64::INFINITY, f64::min)
+        })
+}
+
+/// Every car's crest force lies within the top-feel tolerance of the target.
+pub(super) fn raven_top_feel_reached(cars: &[CandidateCarForces], target_top_g: f64) -> bool {
+    crest_top_band_g(cars).is_some_and(|(low_g, high_g)| {
+        (low_g - target_top_g).abs() <= MAXIMUM_RAVEN_TOP_FEEL_ERROR_G
+            && (high_g - target_top_g).abs() <= MAXIMUM_RAVEN_TOP_FEEL_ERROR_G
+    })
+}
+
+/// Lowest and highest crest seat force among the cars.
+fn crest_top_band_g(cars: &[CandidateCarForces]) -> Option<(f64, f64)> {
+    cars.iter()
+        .try_fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), car| {
+            let apex_g = car.inverted_crest_vertical_g?;
+            Some((low.min(apex_g), high.max(apex_g)))
         })
 }
 
@@ -246,8 +273,9 @@ pub(super) fn regenerate_raven_turn_half_loop(
     bottom_g: f64,
     top_g: f64,
     hold_degrees: f64,
-    vertical_insert_m: f64,
     exit_dz_half_tiles: i32,
+    roll_dx_m: f64,
+    roll_lateral_m: f64,
 ) -> Result<SolvedProfile, String> {
     let entry_speed_mps = round_element_value(design_speed_mps);
     if cars == 0
@@ -259,9 +287,10 @@ pub(super) fn regenerate_raven_turn_half_loop(
         || !top_g.is_finite()
         || !hold_degrees.is_finite()
         || !(60.0..170.0).contains(&hold_degrees)
-        || !vertical_insert_m.is_finite()
-        || vertical_insert_m < 0.0
         || exit_dz_half_tiles < 3
+        || !roll_dx_m.is_finite()
+        || roll_dx_m <= 0.0
+        || !roll_lateral_m.is_finite()
     {
         return Err("shaped Raven turn recipe contains invalid parameters".into());
     }
@@ -269,18 +298,26 @@ pub(super) fn regenerate_raven_turn_half_loop(
         cars,
         length_metres: train_length_metres,
     };
-    let target_height_m = f64::from(exit_dz_half_tiles) * 2.0;
-    regenerate_shaped_half_loop_profile(
+    let half_loop = solve_shaped_raven_half_loop_profile(
         entry_speed_mps,
         bottom_g,
         top_g,
         hold_degrees,
-        vertical_insert_m,
-        target_height_m,
         train,
         PROFILE_STEPS,
     )
-    .map_err(|error| format!("could not regenerate shaped Raven turn geometry: {error:?}"))
+    .map_err(|error| format!("could not regenerate shaped Raven turn geometry: {error:?}"))?;
+    let rail_drop_m = half_loop.endpoint()[1] - f64::from(exit_dz_half_tiles) * 2.0;
+    if raven_crest_dive(
+        &half_loop,
+        crate::math::hypot(roll_dx_m, roll_lateral_m),
+        rail_drop_m,
+    )
+    .is_none()
+    {
+        return Err("shaped Raven turn recipe cannot dive from its crest to its exit".into());
+    }
+    Ok(half_loop)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -773,7 +810,7 @@ pub(super) fn solve_raven_turn(
     }
     let design_speed_mps = round_element_value(context.entry_speed_mps);
     let target_peak_g = round_element_value(peak_g);
-    let top_g = round_element_value(top_feel.target_g());
+    let target_top_g = round_element_value(top_feel.target_g());
     let within_vibe = inversion_within_model_vibe(context.model, target_peak_g);
     let diagonal = context.entry.heading.index() % 2 != 0;
     let grid_step_m = horizontal_grid_step(context.entry.heading);
@@ -786,13 +823,19 @@ pub(super) fn solve_raven_turn(
         let ElementSpec::RavenTurn {
             delivered_peak_g,
             bottom_g,
+            top_g,
             ..
         } = candidate.spec
         else {
             return None;
         };
         let seed = candidate.calibration_seed.as_ref()?;
-        Some((delivered_peak_g, bottom_g, seed))
+        let (crest_low_g, crest_high_g) = crest_top_band_g(&seed.preview.cars)?;
+        Some((
+            delivered_peak_g,
+            bottom_g,
+            top_g + target_top_g - 0.5 * (crest_low_g + crest_high_g),
+        ))
     });
 
     let mut preview_count = u8::from(seed.is_some());
@@ -803,62 +846,73 @@ pub(super) fn solve_raven_turn(
         }
         None => target_peak_g,
     };
+    let mut crest_top_g = seed.map_or(
+        target_top_g + RAVEN_CREST_SCHEDULE_OFFSET_G,
+        |(_, _, seed_top_g)| seed_top_g,
+    );
     let mut roll_length_scale = 3.2_f64;
     let mut last_headroom_g = f64::NEG_INFINITY;
     let mut last_delivered_g = None;
+    let mut last_crest_band_g = None;
 
     while preview_count < maximum_previews {
         bottom_g = round_element_value(bottom_g.clamp(2.0, 5.5));
-        let mut effective_top_g = top_g;
-        let mut half_loop_result = solve_shaped_half_loop_profile(
+        crest_top_g = round_element_value(crest_top_g);
+        let hold_degrees = LOOP_DEFAULT_HOLD_DEGREES;
+        let half_loop = solve_shaped_raven_half_loop_profile(
             design_speed_mps,
             bottom_g,
-            effective_top_g,
+            crest_top_g,
+            hold_degrees,
             train,
             PROFILE_STEPS,
-        );
-        if matches!(
-            half_loop_result,
-            Err(OfflineSolveError::NonPositiveSpeedSquared { .. })
-        ) {
-            for bonus_g in [0.4, 0.8, 1.2, 1.6] {
-                let candidate_top_g = round_element_value((top_g + bonus_g).min(bottom_g - 0.5));
-                if candidate_top_g <= effective_top_g {
-                    continue;
-                }
-                let attempt = solve_shaped_half_loop_profile(
-                    design_speed_mps,
-                    bottom_g,
-                    candidate_top_g,
-                    train,
-                    PROFILE_STEPS,
-                );
-                if attempt.is_ok() {
-                    effective_top_g = candidate_top_g;
-                    half_loop_result = attempt;
-                    break;
-                }
-            }
-        }
-        let (half_loop, hold_degrees, vertical_insert_m) =
-            half_loop_result.map_err(|error| map_offline_error(design_speed_mps, error))?;
+        )
+        .map_err(|error| map_offline_error(design_speed_mps, error))?;
         let apex = half_loop.endpoint();
-        let exit_dz_half_tiles = (apex[1] / 2.0).round() as i32;
-        if exit_dz_half_tiles < 3 {
-            return Err(SolveRefusal::InvalidGeometry);
-        }
-        let height_m = f64::from(exit_dz_half_tiles) * 2.0;
-        let top_speed_sq =
-            (crate::math::powi(design_speed_mps, 2) - 2.0 * GRAVITY * height_m).max(16.0);
-        let top_speed_mps = top_speed_sq.sqrt();
-        let min_roll_dx_m = (roll_length_scale * top_speed_mps).max(38.0);
-        let exit_dx_half_tiles = ((apex[0] - min_roll_dx_m) / grid_step_m).floor() as i32;
+        let height_m = round_element_value(apex[1]);
+        let crest_speed_mps = (crate::math::powi(design_speed_mps, 2) - 2.0 * GRAVITY * height_m)
+            .max(16.0)
+            .sqrt();
         let exit_dy_half_tiles = match hand {
             Hand::Left => -4,
             Hand::Right => 4,
         };
-        let roll_dx_m = apex[0] - f64::from(exit_dx_half_tiles) * grid_step_m;
         let roll_lateral_m = f64::from(exit_dy_half_tiles) * grid_step_m;
+        let roll_out_for_speed = |roll_speed_mps: f64| {
+            let min_roll_dx_m = (roll_length_scale * roll_speed_mps).max(38.0);
+            let exit_dx_half_tiles = ((apex[0] - min_roll_dx_m) / grid_step_m).floor() as i32;
+            let roll_dx_m = apex[0] - f64::from(exit_dx_half_tiles) * grid_step_m;
+            (
+                exit_dx_half_tiles,
+                roll_dx_m,
+                crate::math::hypot(roll_dx_m, roll_lateral_m),
+            )
+        };
+        let crest_dive_drop_m = |roll_scale: f64| {
+            let crest_fraction = RAVEN_CREST_TAPER_SECONDS * crest_speed_mps / roll_scale;
+            raven_crest_dive_rail_drop_m(&half_loop, roll_scale, crest_fraction)
+                .ok_or(SolveRefusal::InvalidGeometry)
+        };
+        // The train speeds up down the dive, so size the roll for its mid-roll speed.
+        let crest_roll_scale = roll_out_for_speed(crest_speed_mps).2;
+        let mid_roll_speed_mps = (crate::math::powi(crest_speed_mps, 2)
+            + GRAVITY * crest_dive_drop_m(crest_roll_scale)?)
+        .sqrt();
+        let (exit_dx_half_tiles, roll_dx_m, roll_scale) = roll_out_for_speed(mid_roll_speed_mps);
+        // A low crest shortens the taper to keep the exit at least 6 m up, down to a firm limit.
+        let exit_dz_half_tiles =
+            (((apex[1] - crest_dive_drop_m(roll_scale)?) / 2.0).floor() as i32).max(3);
+        let crest_dive = raven_crest_dive(
+            &half_loop,
+            roll_scale,
+            apex[1] - f64::from(exit_dz_half_tiles) * 2.0,
+        )
+        .ok_or(SolveRefusal::InvalidGeometry)?;
+        if crest_dive.crest_fraction() * roll_scale / crest_speed_mps
+            < MINIMUM_RAVEN_CREST_TAPER_SECONDS
+        {
+            return Err(SolveRefusal::InvalidGeometry);
+        }
         let span_m = roll_dx_m.max(apex[0]);
 
         let mut candidate_spec = ElementSpec::RavenTurn {
@@ -869,14 +923,13 @@ pub(super) fn solve_raven_turn(
             top_feel,
             target_peak_g,
             delivered_peak_g: target_peak_g,
-            delivered_top_g: effective_top_g,
+            delivered_top_g: target_top_g,
             peak_roll_rate_deg_s: 0.0,
             height_m,
             span_m,
             bottom_g,
-            top_g: effective_top_g,
-            hold_degrees: round_element_value(hold_degrees),
-            vertical_insert_m: round_element_value(vertical_insert_m),
+            top_g: crest_top_g,
+            hold_degrees,
             exit_dx_half_tiles,
             exit_dy_half_tiles,
             exit_dz_half_tiles,
@@ -897,7 +950,16 @@ pub(super) fn solve_raven_turn(
             return Err(SolveRefusal::PreviewTimedOut);
         }
         let delivered_peak_g = worst_peak_vertical_g(&preview.cars);
-        let delivered_top_g = worst_inverted_vertical_g(&preview.cars);
+        let (crest_low_g, crest_high_g) =
+            crest_top_band_g(&preview.cars).ok_or(SolveRefusal::InvalidGeometry)?;
+        let delivered_top_g =
+            if (crest_low_g - target_top_g).abs() >= (crest_high_g - target_top_g).abs() {
+                crest_low_g
+            } else {
+                crest_high_g
+            };
+        let crest_half_spread_g = 0.5 * (crest_high_g - crest_low_g);
+        let top_feel_ok = raven_top_feel_reached(&preview.cars, target_top_g);
         let peak_roll_rate_deg_s = worst_roll_rate_deg_s(&preview.cars);
         last_delivered_g = Some(delivered_peak_g);
         let (passes_budget, headroom_g) =
@@ -937,6 +999,7 @@ pub(super) fn solve_raven_turn(
         if passes_budget
             && rail_radius_ok
             && roll_rate_ok
+            && top_feel_ok
             && (delivered_peak_g - target_peak_g).abs() <= MAXIMUM_INVERSION_PEAK_ERROR_G
         {
             if let ElementSpec::RavenTurn {
@@ -962,6 +1025,23 @@ pub(super) fn solve_raven_turn(
                 calibration_seed: None,
             });
         }
+
+        // Cars cross the crest at different train speeds, and the band widens as the crest
+        // tightens, so a band too wide while centred at or below the target cannot be fixed.
+        let crest_centre_g = 0.5 * (crest_low_g + crest_high_g);
+        if crest_half_spread_g > MAXIMUM_RAVEN_TOP_FEEL_ERROR_G && crest_centre_g <= target_top_g {
+            return Err(SolveRefusal::TopFeelOutOfReach {
+                target_top_g,
+                lowest_car_top_g: crest_low_g,
+                highest_car_top_g: crest_high_g,
+            });
+        }
+        last_crest_band_g = (passes_budget
+            && rail_radius_ok
+            && roll_rate_ok
+            && (delivered_peak_g - target_peak_g).abs() <= MAXIMUM_INVERSION_PEAK_ERROR_G)
+            .then_some((crest_low_g, crest_high_g));
+        crest_top_g += target_top_g - crest_centre_g;
 
         if !roll_rate_ok {
             roll_length_scale *= (peak_roll_rate_deg_s / 175.0).clamp(1.1, 1.4);
@@ -993,6 +1073,14 @@ pub(super) fn solve_raven_turn(
         bottom_g = next_bottom_g;
     }
 
+    // The last try met every limit but the top feel, so the top feel is what is out of reach.
+    if let Some((lowest_car_top_g, highest_car_top_g)) = last_crest_band_g {
+        return Err(SolveRefusal::TopFeelOutOfReach {
+            target_top_g,
+            lowest_car_top_g,
+            highest_car_top_g,
+        });
+    }
     Err(SolveRefusal::InfeasibleTarget {
         target_g: last_delivered_g.unwrap_or(target_peak_g),
         available_headroom_g: last_headroom_g,

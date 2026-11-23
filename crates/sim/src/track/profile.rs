@@ -91,7 +91,11 @@ impl Schedule {
 
 #[derive(Clone, Copy, Debug)]
 enum Segment {
-    Arc { angle: f64, schedule: Schedule },
+    Arc {
+        angle: f64,
+        schedule: Schedule,
+    },
+    #[cfg(test)]
     Insert(f64),
 }
 
@@ -103,7 +107,9 @@ pub(crate) struct ProfileSpec {
     mirror_apex: bool,
     start_angle: f64,
     taper_angle: Option<f64>,
-    end_taper_angle: Option<f64>,
+    /// The last arc keeps its scheduled curvature to its end, for a crest that continues into the
+    /// next part of the piece instead of a straight join.
+    curved_end: bool,
     heart_speed_correction: bool,
     #[cfg(test)]
     name: &'static str,
@@ -126,7 +132,7 @@ impl ProfileSpec {
             mirror_apex: false,
             start_angle: 0.0,
             taper_angle: None,
-            end_taper_angle: None,
+            curved_end: false,
             heart_speed_correction: false,
             #[cfg(test)]
             name: "half loop",
@@ -144,7 +150,7 @@ impl ProfileSpec {
             mirror_apex: false,
             start_angle,
             taper_angle: None,
-            end_taper_angle: None,
+            curved_end: false,
             heart_speed_correction: false,
             name: "pull profile",
         }
@@ -168,7 +174,7 @@ impl ProfileSpec {
             mirror_apex: false,
             start_angle,
             taper_angle: None,
-            end_taper_angle: None,
+            curved_end: false,
             heart_speed_correction: false,
             name: "crest profile",
         }
@@ -206,7 +212,7 @@ impl ProfileSpec {
             mirror_apex: true,
             start_angle: 0.0,
             taper_angle: None,
-            end_taper_angle: None,
+            curved_end: false,
             heart_speed_correction: false,
             #[cfg(test)]
             name: "airtime hill",
@@ -228,7 +234,7 @@ impl ProfileSpec {
             mirror_apex: false,
             start_angle: 0.0,
             taper_angle: None,
-            end_taper_angle: None,
+            curved_end: false,
             heart_speed_correction: false,
             name: "test arc",
         }
@@ -776,6 +782,7 @@ struct PrecomputedArcStep {
 
 enum PrecomputedSegment {
     Arc(Vec<PrecomputedArcStep>),
+    #[cfg(test)]
     Insert(f64),
 }
 
@@ -799,6 +806,7 @@ impl PrecomputedProfileSchedule {
         let smooth = |t: f64| crate::math::powi(t, 3) * (10.0 + t * (-15.0 + 6.0 * t));
         for (segment_index, segment) in spec.segments.iter().enumerate() {
             match *segment {
+                #[cfg(test)]
                 Segment::Insert(length) => {
                     segments.push(PrecomputedSegment::Insert(length));
                 }
@@ -811,9 +819,8 @@ impl PrecomputedProfileSchedule {
                         0.3_f64
                             .min(delta.abs() / 4.0 * if delta.abs() < PI / 3.0 { 1.0 } else { 4.0 })
                     });
-                    let end_taper_angle = spec.end_taper_angle.unwrap_or(taper_angle);
-                    let last_mirrored =
-                        spec.mirror_apex && segment_index + 1 == spec.segments.len();
+                    let untapered_end = (spec.mirror_apex || spec.curved_end)
+                        && segment_index + 1 == spec.segments.len();
                     let mut arc_steps = Vec::with_capacity(steps);
                     for index in 0..steps {
                         let midpoint_parameter = (index as f64 + 0.5) / steps as f64;
@@ -830,11 +837,11 @@ impl PrecomputedProfileSchedule {
                             } else {
                                 crate::math::powf(start_ratio, 2.0 / 3.0)
                             };
-                            if last_mirrored {
+                            if untapered_end {
                                 start_taper
                             } else {
                                 let end_ratio =
-                                    (start_angle + delta - target_angle).abs() / end_taper_angle;
+                                    (start_angle + delta - target_angle).abs() / taper_angle;
                                 let end_taper = if end_ratio >= 1.0 {
                                     1.0
                                 } else {
@@ -903,6 +910,7 @@ fn integrate_precomputed_with_train(
         .iter()
         .map(|segment| match segment {
             PrecomputedSegment::Arc(arc_steps) => arc_steps.len(),
+            #[cfg(test)]
             PrecomputedSegment::Insert(_) => 1,
         })
         .sum();
@@ -917,9 +925,7 @@ fn integrate_precomputed_with_train(
     });
     let mut heart_x = -HEART_HEIGHT * schedule.start_sin;
     let mut heart_z = HEART_HEIGHT * schedule.start_cos;
-    let mut angle: f64 = schedule.start_angle;
     let mut cos_angle: f64 = schedule.start_cos;
-    let mut sin_angle: f64 = schedule.start_sin;
     let mut distance = 0.0;
     let mut height_hint = 0_usize;
     let mut cached_table_speed_squared = previous_heights.as_ref().map(|table| {
@@ -934,8 +940,11 @@ fn integrate_precomputed_with_train(
     });
     for segment in &schedule.segments {
         match segment {
+            #[cfg(test)]
             PrecomputedSegment::Insert(length) if *length > 0.0 => {
                 assert_eq!(points.last().unwrap().curvature, 0.0);
+                let angle = points.last().unwrap().angle;
+                let sin_angle = crate::math::sin(angle);
                 heart_x += *length * cos_angle;
                 heart_z += *length * sin_angle;
                 distance += *length;
@@ -958,6 +967,7 @@ fn integrate_precomputed_with_train(
                     curvature: 0.0,
                 });
             }
+            #[cfg(test)]
             PrecomputedSegment::Insert(_) => {}
             PrecomputedSegment::Arc(arc_steps) => {
                 let last_index = arc_steps.len().saturating_sub(1);
@@ -1006,8 +1016,6 @@ fn integrate_precomputed_with_train(
                     heart_x += heart_distance * step.mid_cos;
                     heart_z += heart_distance * step.mid_sin;
                     distance += heart_distance * (1.0 + HEART_HEIGHT * curvature);
-                    angle = step.end_angle;
-                    sin_angle = step.end_sin;
                     cos_angle = step.end_cos;
                     let end_point_speed_squared = schedule.maximum_entry_sq
                         - if schedule.fixed_speed {
@@ -1055,9 +1063,9 @@ fn integrate_precomputed_with_train(
                     };
                     let point = Point {
                         distance,
-                        x: heart_x + HEART_HEIGHT * sin_angle,
+                        x: heart_x + HEART_HEIGHT * step.end_sin,
                         z: heart_z - HEART_HEIGHT * cos_angle,
-                        angle,
+                        angle: step.end_angle,
                         heart_curvature,
                         curvature: heart_curvature / (1.0 + HEART_HEIGHT * heart_curvature),
                     };
@@ -1634,45 +1642,24 @@ fn loop_profile_spec(
     bottom_g: f64,
     top_g: f64,
     hold_degrees: f64,
-    vertical_insert_m: f64,
     mirror_apex: bool,
 ) -> ProfileSpec {
-    let schedule = Schedule::Loop {
-        bottom: bottom_g,
-        top: top_g,
-        hold: hold_degrees.to_radians(),
-    };
-    let segments = if vertical_insert_m > 0.0 {
-        vec![
-            Segment::Arc {
-                angle: PI / 2.0,
-                schedule,
-            },
-            Segment::Insert(vertical_insert_m),
-            Segment::Arc {
-                angle: PI / 2.0,
-                schedule,
-            },
-        ]
-    } else {
-        vec![Segment::Arc {
-            angle: PI,
-            schedule,
-        }]
-    };
     ProfileSpec {
-        segments,
+        segments: vec![Segment::Arc {
+            angle: PI,
+            schedule: Schedule::Loop {
+                bottom: bottom_g,
+                top: top_g,
+                hold: hold_degrees.to_radians(),
+            },
+        }],
         maximum_entry: entry_speed_mps,
         fixed_speed: false,
         mirror_apex,
         start_angle: 0.0,
-        taper_angle: (vertical_insert_m > 0.0).then_some(0.25),
-        end_taper_angle: if !mirror_apex && vertical_insert_m == 0.0 {
-            Some(0.52)
-        } else {
-            None
-        },
-        heart_speed_correction: false,
+        taper_angle: None,
+        curved_end: !mirror_apex,
+        heart_speed_correction: !mirror_apex,
         #[cfg(test)]
         name: if mirror_apex {
             "shaped full loop"
@@ -1692,307 +1679,24 @@ pub(crate) fn solve_shaped_full_loop_profile(
 ) -> Result<SolvedProfile, OfflineSolveError> {
     assert!(steps > 0);
     let train = profile_train(train);
-    let spec = loop_profile_spec(entry_speed_mps, bottom_g, top_g, hold_degrees, 0.0, true);
+    let spec = loop_profile_spec(entry_speed_mps, bottom_g, top_g, hold_degrees, true);
     let (half, _) = solve_with_profile_train(&spec, train, steps)?;
     Ok(reflect_hill(&half))
 }
 
-pub(crate) fn solve_shaped_half_loop_profile(
-    entry_speed_mps: f64,
-    bottom_g: f64,
-    top_g: f64,
-    train: OfflineTrain,
-    steps: usize,
-) -> Result<(SolvedProfile, f64, f64), OfflineSolveError> {
-    assert!(steps > 0);
-    let train_model = profile_train(train);
-    let coarse_steps = steps.min(128);
-    let default_hold_degrees = 105.0;
-    let height_for_hold = |hold_deg: f64| -> Result<f64, OfflineSolveError> {
-        let spec = loop_profile_spec(entry_speed_mps, bottom_g, top_g, hold_deg, 0.0, false);
-        let (profile, _) =
-            solve_with_profile_train_tolerance(&spec, train_model, coarse_steps, 1e-3)?;
-        Ok(profile.endpoint()[1])
-    };
-    let (base_hold_degrees, base_height_m) = match height_for_hold(default_hold_degrees) {
-        Ok(height) => (default_hold_degrees, height),
-        Err(_) => {
-            let height = height_for_hold(140.0)?;
-            (140.0, height)
-        }
-    };
-
-    // Longer hold angles produce shorter, faster-cresting loops; shorter hold angles produce taller loops.
-    let mut high_hold = base_hold_degrees;
-    let mut upper_h = base_height_m;
-    for candidate_hold in [120.0, 130.0, 140.0, 150.0, 160.0, 165.0, 168.0] {
-        if candidate_hold > high_hold
-            && let Ok(height) = height_for_hold(candidate_hold)
-            && height < upper_h
-        {
-            high_hold = candidate_hold;
-            upper_h = height;
-        }
-    }
-    let mut low_hold = base_hold_degrees;
-    let mut lower_h = base_height_m;
-    for candidate_hold in [95.0, 85.0, 75.0, 65.0] {
-        if candidate_hold < low_hold
-            && let Ok(height) = height_for_hold(candidate_hold)
-            && height > lower_h
-        {
-            low_hold = candidate_hold;
-            lower_h = height;
-        }
-    }
-
-    let max_safe_height_m =
-        (((crate::math::powi(entry_speed_mps, 2) / (2.0 * GRAVITY) - 2.6) / 2.0).floor() * 2.0)
-            .max(6.0);
-    let rounded_height_m = ((base_height_m / 2.0).round() * 2.0).clamp(6.0, max_safe_height_m);
-    let floored_height_m = ((base_height_m / 2.0).floor() * 2.0).clamp(6.0, max_safe_height_m);
-    let bracketed_target = [
-        floored_height_m,
-        rounded_height_m,
-        (floored_height_m - 2.0).max(6.0),
-    ]
-    .into_iter()
-    .find(|target| upper_h <= *target && *target <= lower_h);
-
-    if let Some(target_height_m) = bracketed_target {
-        let mut resolved_hold = base_hold_degrees;
-        for _ in 0..16 {
-            let secant = low_hold
-                + (target_height_m - lower_h) * (high_hold - low_hold) / (upper_h - lower_h);
-            let hold = if secant > low_hold && secant < high_hold {
-                secant
-            } else {
-                0.5 * (low_hold + high_hold)
-            };
-            resolved_hold = hold;
-            let height = height_for_hold(hold)?;
-            if (height - target_height_m).abs() < 1e-3 {
-                break;
-            }
-            if height > target_height_m {
-                low_hold = hold;
-                lower_h = height;
-            } else {
-                high_hold = hold;
-                upper_h = height;
-            }
-        }
-        // Final polish at full resolution so the half-loop lands on the 2 m height grid without
-        // mutating spline knot heights.
-        let full_height_for_hold = |hold_deg: f64| -> Result<SolvedProfile, OfflineSolveError> {
-            let spec = loop_profile_spec(entry_speed_mps, bottom_g, top_g, hold_deg, 0.0, false);
-            let (profile, _) = solve_with_profile_train(&spec, train_model, steps)?;
-            Ok(profile)
-        };
-        let mut full_low = (resolved_hold - 6.0).max(61.0);
-        let mut full_high = (resolved_hold + 6.0).min(169.0);
-        let mut best_hold = resolved_hold;
-        let initial_profile = full_height_for_hold(resolved_hold)?;
-        if (initial_profile.endpoint()[1] - target_height_m).abs() > 1e-5
-            && let (Ok(low_prof), Ok(high_prof)) = (
-                full_height_for_hold(full_low),
-                full_height_for_hold(full_high),
-            )
-        {
-            let mut fl = low_prof.endpoint()[1];
-            let mut fh = high_prof.endpoint()[1];
-            if fh <= target_height_m && target_height_m <= fl {
-                for _ in 0..14 {
-                    let secant =
-                        full_low + (target_height_m - fl) * (full_high - full_low) / (fh - fl);
-                    let hold = if secant > full_low && secant < full_high {
-                        secant
-                    } else {
-                        0.5 * (full_low + full_high)
-                    };
-                    let prof = full_height_for_hold(hold)?;
-                    let h = prof.endpoint()[1];
-                    best_hold = hold;
-                    if (h - target_height_m).abs() <= 1e-5 {
-                        break;
-                    }
-                    if h > target_height_m {
-                        full_low = hold;
-                        fl = h;
-                    } else {
-                        full_high = hold;
-                        fh = h;
-                    }
-                }
-            }
-        }
-        let rounded_hold = (best_hold * 1_000_000.0).round() / 1_000_000.0;
-        let mut final_profile = full_height_for_hold(rounded_hold)?;
-        final_profile.round_to_nine_decimal_places();
-        return Ok((final_profile, rounded_hold, 0.0));
-    }
-
-    // Fallback: insert a vertical segment at 90 degrees to snap upward to the 2 m height grid.
-    // Start at a tiny positive insert so both endpoints use the same split-arc schedule continuously.
-    let insert_hold_degrees = {
-        let test_base = loop_profile_spec(
-            entry_speed_mps,
-            bottom_g,
-            top_g,
-            base_hold_degrees,
-            1e-3,
-            false,
-        );
-        let base_ok =
-            solve_with_profile_train_tolerance(&test_base, train_model, coarse_steps, 1e-3)
-                .ok()
-                .is_some_and(|(p, _)| ((p.endpoint()[1] / 2.0).ceil() * 2.0) <= max_safe_height_m);
-        if base_ok {
-            base_hold_degrees
-        } else {
-            high_hold
-        }
-    };
-    let height_for_insert = |insert_m: f64| -> Result<f64, OfflineSolveError> {
-        let spec = loop_profile_spec(
-            entry_speed_mps,
-            bottom_g,
-            top_g,
-            insert_hold_degrees,
-            insert_m,
-            false,
-        );
-        let (profile, _) =
-            solve_with_profile_train_tolerance(&spec, train_model, coarse_steps, 1e-3)?;
-        Ok(profile.endpoint()[1])
-    };
-    let mut low_insert = 1e-3_f64;
-    let mut low_h = height_for_insert(low_insert)?;
-    let snapped_height_m = ((low_h / 2.0).ceil() * 2.0).max(6.0);
-    if snapped_height_m > max_safe_height_m {
-        return Err(OfflineSolveError::NonPositiveSpeedSquared {
-            height_metres: snapped_height_m,
-        });
-    }
-    let mut high_insert = (snapped_height_m - low_h).max(0.5);
-    let mut high_h = height_for_insert(high_insert)?;
-    while high_h < snapped_height_m && high_insert < 32.0 {
-        high_insert *= 2.0;
-        high_h = height_for_insert(high_insert)?;
-    }
-    if high_h < snapped_height_m {
-        return Err(OfflineSolveError::DidNotConverge);
-    }
-    let mut resolved_insert = low_insert;
-    if (low_h - snapped_height_m).abs() >= 1e-3 {
-        for _ in 0..16 {
-            let secant = low_insert
-                + (snapped_height_m - low_h) * (high_insert - low_insert) / (high_h - low_h);
-            let insert = if secant > low_insert && secant < high_insert {
-                secant
-            } else {
-                0.5 * (low_insert + high_insert)
-            };
-            resolved_insert = insert;
-            let height = height_for_insert(insert)?;
-            if (height - snapped_height_m).abs() < 1e-3 {
-                break;
-            }
-            if height < snapped_height_m {
-                low_insert = insert;
-                low_h = height;
-            } else {
-                high_insert = insert;
-                high_h = height;
-            }
-        }
-    }
-    // Polish at full resolution so the half-loop lands cleanly on snapped_height_m.
-    let full_height_for_insert = |insert_m: f64| -> Result<SolvedProfile, OfflineSolveError> {
-        let spec = loop_profile_spec(
-            entry_speed_mps,
-            bottom_g,
-            top_g,
-            insert_hold_degrees,
-            insert_m,
-            false,
-        );
-        let (profile, _) = solve_with_profile_train(&spec, train_model, steps)?;
-        Ok(profile)
-    };
-    let mut full_low = (resolved_insert - 0.5).max(1e-4);
-    let mut full_high = resolved_insert + 0.5;
-    let mut best_insert = resolved_insert;
-    if let (Ok(low_prof), Ok(high_prof)) = (
-        full_height_for_insert(full_low),
-        full_height_for_insert(full_high),
-    ) {
-        let mut fl = low_prof.endpoint()[1];
-        let mut fh = high_prof.endpoint()[1];
-        if fl <= snapped_height_m && snapped_height_m <= fh {
-            for _ in 0..10 {
-                let secant =
-                    full_low + (snapped_height_m - fl) * (full_high - full_low) / (fh - fl);
-                let insert = if secant > full_low && secant < full_high {
-                    secant
-                } else {
-                    0.5 * (full_low + full_high)
-                };
-                let prof = full_height_for_insert(insert)?;
-                let h = prof.endpoint()[1];
-                best_insert = insert;
-                if (h - snapped_height_m).abs() <= 1e-5 {
-                    break;
-                }
-                if h < snapped_height_m {
-                    full_low = insert;
-                    fl = h;
-                } else {
-                    full_high = insert;
-                    fh = h;
-                }
-            }
-        }
-    }
-    let rounded_insert = ((best_insert * 1_000_000.0).round() / 1_000_000.0).max(1e-4);
-    let profile = regenerate_shaped_half_loop_profile(
-        entry_speed_mps,
-        bottom_g,
-        top_g,
-        insert_hold_degrees,
-        rounded_insert,
-        snapped_height_m,
-        train,
-        steps,
-    )?;
-    Ok((profile, insert_hold_degrees, rounded_insert))
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn regenerate_shaped_half_loop_profile(
+/// Climbing half-loop for a Raven turn. It ends inverted on a curved crest whose curvature delivers
+/// `top_g` of seat force at the apex speed, so the crest radius sets the top feel.
+pub(crate) fn solve_shaped_raven_half_loop_profile(
     entry_speed_mps: f64,
     bottom_g: f64,
     top_g: f64,
     hold_degrees: f64,
-    vertical_insert_m: f64,
-    target_height_m: f64,
     train: OfflineTrain,
     steps: usize,
 ) -> Result<SolvedProfile, OfflineSolveError> {
     assert!(steps > 0);
-    let train_model = profile_train(train);
-    let spec = loop_profile_spec(
-        entry_speed_mps,
-        bottom_g,
-        top_g,
-        hold_degrees,
-        vertical_insert_m,
-        false,
-    );
-    let (mut profile, _) = solve_with_profile_train(&spec, train_model, steps)?;
-    if (profile.endpoint()[1] - target_height_m).abs() > 0.25 {
-        return Err(OfflineSolveError::DidNotConverge);
-    }
+    let spec = loop_profile_spec(entry_speed_mps, bottom_g, top_g, hold_degrees, false);
+    let (mut profile, _) = solve_with_profile_train(&spec, profile_train(train), steps)?;
     profile.round_to_nine_decimal_places();
     Ok(profile)
 }
@@ -3936,7 +3640,7 @@ mod tests {
             mirror_apex: false,
             start_angle: 0.0,
             taper_angle: None,
-            end_taper_angle: None,
+            curved_end: false,
             heart_speed_correction: false,
             name: "half loop test",
         };

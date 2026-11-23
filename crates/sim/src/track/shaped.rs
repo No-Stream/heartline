@@ -294,7 +294,6 @@ pub enum ElementSpec {
         bottom_g: f64,
         top_g: f64,
         hold_degrees: f64,
-        vertical_insert_m: f64,
         exit_dx_half_tiles: i32,
         exit_dy_half_tiles: i32,
         exit_dz_half_tiles: i32,
@@ -420,8 +419,6 @@ enum HumanReadableElementSpec {
         top_g: f64,
         #[serde(with = "recipe_f64")]
         hold_degrees: f64,
-        #[serde(with = "recipe_f64")]
-        vertical_insert_m: f64,
         exit_dx_half_tiles: i32,
         exit_dy_half_tiles: i32,
         exit_dz_half_tiles: i32,
@@ -575,7 +572,6 @@ enum BinaryElementSpec {
         bottom_g: f64,
         top_g: f64,
         hold_degrees: f64,
-        vertical_insert_m: f64,
         exit_dx_half_tiles: i32,
         exit_dy_half_tiles: i32,
         exit_dz_half_tiles: i32,
@@ -783,7 +779,6 @@ fn resolve_human_readable_spec(
             bottom_g,
             top_g,
             hold_degrees,
-            vertical_insert_m,
             exit_dx_half_tiles,
             exit_dy_half_tiles,
             exit_dz_half_tiles,
@@ -806,7 +801,6 @@ fn resolve_human_readable_spec(
             bottom_g,
             top_g,
             hold_degrees,
-            vertical_insert_m,
             exit_dx_half_tiles,
             exit_dy_half_tiles,
             exit_dz_half_tiles,
@@ -821,8 +815,9 @@ fn resolve_human_readable_spec(
                 bottom_g,
                 top_g,
                 hold_degrees,
-                vertical_insert_m,
                 exit_dz_half_tiles,
+                roll_dx_m,
+                roll_lateral_m,
             )
             .map_err(ElementSpecLoadError::InvalidRecipe)?,
         },
@@ -1046,7 +1041,6 @@ impl Serialize for ElementSpec {
                     bottom_g,
                     top_g,
                     hold_degrees,
-                    vertical_insert_m,
                     exit_dx_half_tiles,
                     exit_dy_half_tiles,
                     exit_dz_half_tiles,
@@ -1070,7 +1064,6 @@ impl Serialize for ElementSpec {
                     bottom_g: *bottom_g,
                     top_g: *top_g,
                     hold_degrees: *hold_degrees,
-                    vertical_insert_m: *vertical_insert_m,
                     exit_dx_half_tiles: *exit_dx_half_tiles,
                     exit_dy_half_tiles: *exit_dy_half_tiles,
                     exit_dz_half_tiles: *exit_dz_half_tiles,
@@ -1236,7 +1229,6 @@ impl Serialize for ElementSpec {
                     bottom_g,
                     top_g,
                     hold_degrees,
-                    vertical_insert_m,
                     exit_dx_half_tiles,
                     exit_dy_half_tiles,
                     exit_dz_half_tiles,
@@ -1260,7 +1252,6 @@ impl Serialize for ElementSpec {
                     bottom_g: *bottom_g,
                     top_g: *top_g,
                     hold_degrees: *hold_degrees,
-                    vertical_insert_m: *vertical_insert_m,
                     exit_dx_half_tiles: *exit_dx_half_tiles,
                     exit_dy_half_tiles: *exit_dy_half_tiles,
                     exit_dz_half_tiles: *exit_dz_half_tiles,
@@ -1483,7 +1474,6 @@ impl<'de> Deserialize<'de> for ElementSpec {
                     bottom_g,
                     top_g,
                     hold_degrees,
-                    vertical_insert_m,
                     exit_dx_half_tiles,
                     exit_dy_half_tiles,
                     exit_dz_half_tiles,
@@ -1506,7 +1496,6 @@ impl<'de> Deserialize<'de> for ElementSpec {
                     bottom_g,
                     top_g,
                     hold_degrees,
-                    vertical_insert_m,
                     exit_dx_half_tiles,
                     exit_dy_half_tiles,
                     exit_dz_half_tiles,
@@ -1521,8 +1510,9 @@ impl<'de> Deserialize<'de> for ElementSpec {
                         bottom_g,
                         top_g,
                         hold_degrees,
-                        vertical_insert_m,
                         exit_dz_half_tiles,
+                        roll_dx_m,
+                        roll_lateral_m,
                     )
                     .map_err(D::Error::custom)?,
                 },
@@ -1899,6 +1889,13 @@ pub enum SolveRefusal {
     BelowMinimumSpeed {
         entry_speed_mps: f64,
         minimum_speed_mps: f64,
+    },
+    /// Cars cross a Raven turn's crest at different train speeds, so their apex seat forces spread
+    /// wider than the top-feel tolerance allows on both sides of the target.
+    TopFeelOutOfReach {
+        target_top_g: f64,
+        lowest_car_top_g: f64,
+        highest_car_top_g: f64,
     },
     UnsupportedScope,
     PreviewTimedOut,
@@ -2280,6 +2277,12 @@ fn preview_candidate_is_confirmed(
         }
         (ElementSpec::ZeroGRoll { target_peak_g, .. }, ElementIntent::ZeroGRoll { .. })
         | (ElementSpec::RavenTurn { target_peak_g, .. }, ElementIntent::RavenTurn { .. }) => {
+            let raven_top_feel_ok = match &candidate.spec {
+                ElementSpec::RavenTurn { top_feel, .. } => {
+                    inversions::raven_top_feel_reached(&seed.preview.cars, top_feel.target_g())
+                }
+                _ => true,
+            };
             let delivered = seed
                 .preview
                 .cars
@@ -2294,6 +2297,7 @@ fn preview_candidate_is_confirmed(
                 .fold(0.0_f64, f64::max);
             (delivered - target_peak_g).abs() <= inversions::MAXIMUM_INVERSION_PEAK_ERROR_G
                 && peak_roll_rate <= inversions::MAXIMUM_SHAPED_ROLL_RATE_DEG_S
+                && raven_top_feel_ok
                 && candidate.piece.maximum_curvature() <= 1.0 / context.model.minimum_radius_metres
         }
         _ => false,
