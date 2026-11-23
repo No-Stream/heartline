@@ -121,16 +121,16 @@ e2e-feature: build
 	npm run e2e -- --project=feature
 
 e2e-feature-docker: build design-tools
-	THEME_PARK_PLAYWRIGHT_DOCKER=1 npm run e2e -- --project=feature
+	THEME_PARK_PLAYWRIGHT_DOCKER=1 THEME_PARK_DESIGN_TOOLS_PREBUILT=1 npm run e2e -- --project=feature
 
 e2e-feature-docker-update-snapshots: build design-tools
-	THEME_PARK_PLAYWRIGHT_DOCKER=1 npm run e2e -- --project=feature --update-snapshots
+	THEME_PARK_PLAYWRIGHT_DOCKER=1 THEME_PARK_DESIGN_TOOLS_PREBUILT=1 npm run e2e -- --project=feature --update-snapshots
 
 e2e-journey-docker: build design-tools
-	THEME_PARK_PLAYWRIGHT_DOCKER=1 npm run e2e -- --project=journey
+	THEME_PARK_PLAYWRIGHT_DOCKER=1 THEME_PARK_DESIGN_TOOLS_PREBUILT=1 npm run e2e -- --project=journey
 
 e2e-journey-docker-update-snapshots: build design-tools
-	THEME_PARK_PLAYWRIGHT_DOCKER=1 npm run e2e -- --project=journey --update-snapshots
+	THEME_PARK_PLAYWRIGHT_DOCKER=1 THEME_PARK_DESIGN_TOOLS_PREBUILT=1 npm run e2e -- --project=journey --update-snapshots
 
 e2e-journey: build
 	npm run e2e -- --project=journey
