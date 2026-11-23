@@ -633,17 +633,23 @@ const MASTER_V9_SHAPED_HILLS_CONSTRUCTION_HASHES: [(u32, &str, usize, u64); 2] =
 
 #[test]
 fn master_v9_save_with_shaped_hills_loads_and_survives_v10_save_cycles() {
-    let v9_bytes = decompress_save_fixture(include_bytes!(
-        "../tests/fixtures/shaped-hills-v9.save.xz"
-    ));
+    let v9_bytes =
+        decompress_save_fixture(include_bytes!("../tests/fixtures/shaped-hills-v9.save.xz"));
     assert!(v9_bytes.starts_with(b"TPSAVE\x09"));
     let mut loaded = WasmSimulation::load_state_native(&v9_bytes).unwrap();
-    assert_eq!(loaded.state_hash(), MASTER_V9_SHAPED_HILLS_LOADED_STATE_HASH);
+    assert_eq!(
+        loaded.state_hash(),
+        MASTER_V9_SHAPED_HILLS_LOADED_STATE_HASH
+    );
     for (id, name, piece_count, construction_hash) in MASTER_V9_SHAPED_HILLS_CONSTRUCTION_HASHES {
         let coaster = loaded.coaster(CoasterId(id)).unwrap();
         assert_eq!(coaster.name, name);
         assert_eq!(coaster.construction.pieces().len(), piece_count);
-        assert_eq!(coaster.construction.state_hash(), construction_hash, "{name}");
+        assert_eq!(
+            coaster.construction.state_hash(),
+            construction_hash,
+            "{name}"
+        );
     }
 
     let v10_bytes = loaded.save_state().unwrap();
@@ -673,7 +679,10 @@ fn master_builder_snapshot_with_shaped_hills_loads() {
         "../tests/fixtures/shaped-hills-v9.builder-snapshot.xz"
     ));
     let session = crate::builder_session::BuilderSession::load_native_snapshot(&snapshot).unwrap();
-    assert_eq!(session.state_hash(), MASTER_V9_SHAPED_HILLS_LOADED_STATE_HASH);
+    assert_eq!(
+        session.state_hash(),
+        MASTER_V9_SHAPED_HILLS_LOADED_STATE_HASH
+    );
 }
 
 #[test]

@@ -970,6 +970,7 @@ fn resolve_human_readable_spec(
     Ok(spec)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn regenerate_hill_profile(
     cars: u8,
     design_speed_mps: f64,
@@ -2860,19 +2861,21 @@ fn hill_profile_for_height(
         flank_angle_radians: flank_degrees.to_radians(),
         taper_angle_radians: Some(SHAPED_HILL_TAPER_ANGLE),
     };
-    let (mut profile, _, _) = solve_shaped_hill_offline_profile(profile_spec, train, PROFILE_STEPS, true)
-        .map_err(|failure| match failure {
-            crate::track::profile::OfflineSolveError::NonPositiveSpeedSquared { height_metres } => {
-                SolveRefusal::Stall {
+    let (mut profile, _, _) =
+        solve_shaped_hill_offline_profile(profile_spec, train, PROFILE_STEPS, true).map_err(
+            |failure| match failure {
+                crate::track::profile::OfflineSolveError::NonPositiveSpeedSquared {
+                    height_metres,
+                } => SolveRefusal::Stall {
                     entry_speed_mps: design_speed_mps,
                     height_m: height_metres,
+                },
+                crate::track::profile::OfflineSolveError::InvalidCurvature { .. }
+                | crate::track::profile::OfflineSolveError::DidNotConverge => {
+                    SolveRefusal::InvalidGeometry
                 }
-            }
-            crate::track::profile::OfflineSolveError::InvalidCurvature { .. }
-            | crate::track::profile::OfflineSolveError::DidNotConverge => {
-                SolveRefusal::InvalidGeometry
-            }
-        })?;
+            },
+        )?;
     let diagonal_scale = if context.entry.heading.index() % 2 == 0 {
         1.0
     } else {
@@ -2915,19 +2918,19 @@ pub(crate) fn synthesize_hill_profile(
     };
     let (mut profile, _, _) = solve_shaped_hill_offline_profile(spec, train, PROFILE_STEPS, true)
         .map_err(|failure| match failure {
-            crate::track::profile::OfflineSolveError::NonPositiveSpeedSquared { height_metres } => {
-                SolveRefusal::Stall {
-                    entry_speed_mps: design_speed_mps,
-                    height_m: height_metres,
-                }
+        crate::track::profile::OfflineSolveError::NonPositiveSpeedSquared { height_metres } => {
+            SolveRefusal::Stall {
+                entry_speed_mps: design_speed_mps,
+                height_m: height_metres,
             }
-            crate::track::profile::OfflineSolveError::InvalidCurvature { .. } => {
-                SolveRefusal::InvalidGeometry
-            }
-            crate::track::profile::OfflineSolveError::DidNotConverge => {
-                unreachable!("single profile integration does not iterate")
-            }
-        })?;
+        }
+        crate::track::profile::OfflineSolveError::InvalidCurvature { .. } => {
+            SolveRefusal::InvalidGeometry
+        }
+        crate::track::profile::OfflineSolveError::DidNotConverge => {
+            unreachable!("single profile integration does not iterate")
+        }
+    })?;
     let endpoint_x = profile.endpoint()[0];
     let span_metres = (endpoint_x * connector_grid_scale / connector_grid_span_metres).ceil()
         * connector_grid_span_metres;
