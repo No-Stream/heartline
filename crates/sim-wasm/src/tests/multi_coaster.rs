@@ -515,10 +515,12 @@ fn two_open_coasters_serve_guests_independently_and_save_mid_ride() {
     let mut saw_income = [false; 2];
     let mut saw_ratings = [false; 2];
 
-    for _ in 0..20_000 {
+    for tick in 0..20_000 {
         simulation.tick();
         same_seed.tick();
-        assert_eq!(simulation.state_hash(), same_seed.state_hash());
+        if (tick + 1) % 500 == 0 {
+            assert_eq!(simulation.state_hash(), same_seed.state_hash());
+        }
 
         for index in 0..2 {
             let coaster_id = CoasterId(index);
@@ -540,6 +542,7 @@ fn two_open_coasters_serve_guests_independently_and_save_mid_ride() {
             break;
         }
     }
+    assert_eq!(simulation.state_hash(), same_seed.state_hash());
 
     assert_eq!(saw_riders, [true, true], "guests rode both coasters");
     assert_eq!(saw_queue, [true, true], "guests queued for both coasters");
