@@ -4,7 +4,7 @@ title: Add shaped inversions with peak-force intent
 status: In Progress
 assignee: []
 created_date: '2026-11-22 04:58'
-updated_date: '2026-11-23 05:24'
+updated_date: '2026-11-23 05:26'
 labels:
   - shaped-elements
 dependencies: []
@@ -35,6 +35,8 @@ Initial reassessment at 09740d4: the branch contains broad solver, UI, design-to
 Assessment: solver, wire, UI, design-tool and save changes are present. The visible acceptance matrix covers loop models and defaults broadly, but zero-g-roll peak steps, Raven peak/top-feel and hand combinations, speed perturbations, and a Hybrid browser route are not evidently covered to the full extent described by the plan. Build and test results remain pending.
 
 Correction: assert_inversion_envelope does test ±0.5 m/s under both physics configurations. The remaining visible matrix gaps are the zero-g-roll and Raven force/top-feel combinations and Hybrid browser coverage; save tests also need placed-piece coverage against current master versions.
+
+Baseline at 09740d4: tools/run-in-budget.sh cargo test -p theme-park-sim --test shaped_elements passed all 28 tests in 127.37 seconds; the integration test target compiled. Full build and broader suites were not yet assessed.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
