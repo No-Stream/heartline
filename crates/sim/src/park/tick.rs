@@ -71,29 +71,6 @@ pub(super) fn add_proximity_and_theming(
     }
 }
 
-/// Advances a demo train one physics step and describes where each car is.
-pub(super) fn step_demo_train(circuit: &Circuit, train: &mut Train) -> Vec<TrainPosition> {
-    train.step(circuit);
-    let positions = train
-        .readings()
-        .last()
-        .expect("step produces readings")
-        .iter()
-        .map(|reading| {
-            let sample = circuit.sample(reading.distance);
-            TrainPosition {
-                position: sample.position,
-                tangent: sample.tangent,
-                piece_index: circuit.piece_index(reading.distance),
-                distance: reading.distance.rem_euclid(circuit.length()),
-                speed: reading.speed,
-            }
-        })
-        .collect();
-    train.take_readings();
-    positions
-}
-
 pub(super) fn train_positions_for_train(
     circuit: &Circuit,
     train: &Train,
@@ -207,13 +184,6 @@ impl Park {
             .tick_with(&self.world, &facilities, 100, Some(population), executor);
         self.physics_remainder += 200;
         while self.physics_remainder >= 30 {
-            let demo_trains = self.demo_coaster.as_ref().map_or_else(Vec::new, |coaster| {
-                train_positions_for_train(
-                    &coaster.circuit,
-                    &coaster.train,
-                    &coaster.train_configuration,
-                )
-            });
             let coaster_trains: BTreeMap<CoasterId, Vec<TrainPosition>> = self
                 .coasters
                 .iter()
@@ -232,11 +202,8 @@ impl Park {
                     (id, positions)
                 })
                 .collect();
-            if let Some(coaster) = &mut self.demo_coaster {
-                step_demo_train(&coaster.circuit, &mut coaster.train);
-            }
             for id in &coaster_ids {
-                let mut other_trains = demo_trains.clone();
+                let mut other_trains = Vec::new();
                 for (&other_id, positions) in &coaster_trains {
                     if other_id != *id {
                         other_trains.extend_from_slice(positions);
@@ -434,10 +401,7 @@ impl Park {
     }
 
     pub(super) fn other_tracks(&self, id: CoasterId) -> Vec<Piece> {
-        let mut pieces = self
-            .demo_coaster
-            .as_ref()
-            .map_or_else(Vec::new, |coaster| coaster.circuit.pieces().to_vec());
+        let mut pieces = Vec::new();
         for (&other_id, coaster) in &self.coasters {
             if other_id == id {
                 continue;
@@ -592,12 +556,6 @@ impl Park {
         excluded_id: CoasterId,
     ) -> Vec<SupportObstacle> {
         let mut obstacles = self.facility_obstacles();
-        if let Some(coaster) = &self.demo_coaster {
-            obstacles.extend(track_support_obstacles(
-                coaster.circuit.pieces(),
-                &coaster.train_configuration,
-            ));
-        }
         for (&id, coaster) in &self.coasters {
             if id == excluded_id {
                 continue;
@@ -845,7 +803,6 @@ mod tests {
     use super::{CoasterId, OwnedSupportSegment, Park, SupportRenderCache, SupportSegment, Vec3};
     use crate::facilities::{FacilityKind, ParkFacilities};
     use crate::guests::park::ParkGuests;
-    use crate::physics::{PhysicsConfig, Train, demo_circuit};
     use crate::track::hybrid_model;
     use crate::world::{Direction, Path, PathKind, Position, Surface, World};
 
@@ -883,10 +840,7 @@ mod tests {
             .unwrap();
         facilities.set_price(entrance_id, 7).unwrap();
         let simulation = ParkGuests::new(42, 1, &world, entrance_path, 1);
-        let circuit = demo_circuit();
-        let configuration = hybrid_model().train;
-        let train = Train::new(&circuit, &configuration, PhysicsConfig::default(), 0.0, 0.0);
-        let mut park = Park::new(world, facilities, simulation, circuit, train, configuration);
+        let mut park = Park::new_empty(world, facilities, simulation);
 
         park.tick();
 
@@ -912,17 +866,7 @@ mod tests {
             .build_path_route(entrance, entrance, PathKind::Normal, 0)
             .unwrap();
         let guests = ParkGuests::new(42, 0, &world, entrance, 1);
-        let circuit = demo_circuit();
-        let configuration = hybrid_model().train;
-        let train = Train::new(&circuit, &configuration, PhysicsConfig::default(), 0.0, 0.0);
-        let mut park = Park::new(
-            world,
-            ParkFacilities::new(),
-            guests,
-            circuit,
-            train,
-            configuration,
-        );
+        let mut park = Park::new_empty(world, ParkFacilities::new(), guests);
         park.replace_coaster(
             CoasterId(0),
             crate::track::construction::Construction::new(

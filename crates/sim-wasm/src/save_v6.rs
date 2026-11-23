@@ -4,7 +4,6 @@ use serde::Deserialize;
 use theme_park_sim::facilities::ParkFacilities;
 use theme_park_sim::guests::GuestId;
 use theme_park_sim::guests::behavior::Facility;
-use theme_park_sim::park::DemoCoaster;
 use theme_park_sim::park::{Coaster, CoasterId, Park};
 use theme_park_sim::park_guests::ParkGuests;
 use theme_park_sim::physics::{
@@ -20,6 +19,7 @@ use theme_park_sim::track::{Piece, PieceId};
 use theme_park_sim::world::{Position, World};
 
 use crate::WasmSimulation;
+use crate::save_v8::LegacyDemoCoaster;
 
 /// Version 6 of the postcard save layout. Keep field order aligned with the
 /// version 6 `WasmSimulation` and `Park` declarations.
@@ -57,7 +57,7 @@ pub(super) struct ParkV6 {
     pub(super) world: World,
     pub(super) facilities: ParkFacilities,
     pub(super) simulation: ParkGuests,
-    pub(super) demo_coaster: Option<DemoCoaster>,
+    pub(super) demo_coaster: Option<LegacyDemoCoaster>,
     pub(super) construction: Option<Construction>,
     pub(super) automatic_tunnel_owners:
         BTreeMap<TerrainCell, BTreeSet<crate::save_v7::TunnelOwnerV7>>,
@@ -215,12 +215,10 @@ impl WasmSimulationV6 {
         }
 
         let mut park = Park::new_empty(world, facilities, simulation);
-        park.demo_coaster = demo_coaster;
         park.automatic_tunnel_owners = automatic_tunnel_owners;
         park.manual_tunnel_cells = manual_tunnel_cells;
         park.physics_remainder = physics_remainder;
         park.construction_message = construction_message;
-        park.demo_report = demo_report;
         park.pending_coaster_price = coaster_price;
 
         if let Some(construction) = construction {
@@ -257,7 +255,7 @@ impl WasmSimulationV6 {
             park.next_coaster_id = 1;
         }
 
-        Ok(WasmSimulation {
+        let simulation = WasmSimulation {
             park,
             editing: has_construction.then_some(CoasterId(0)),
             facility_message,
@@ -278,7 +276,8 @@ impl WasmSimulationV6 {
             construction_preview_supports_cache,
             construction_placed_supports_cache,
             recovered_station,
-        })
+        };
+        crate::save_v8::migrate_legacy_demo(simulation, demo_coaster, demo_report)
     }
 }
 
@@ -305,12 +304,14 @@ pub(super) fn serialize_v6_for_test(simulation: &WasmSimulation) -> Vec<u8> {
         })
         .collect();
     let construction_tunnel_generation = 0;
+    let no_legacy_demo = None::<LegacyDemoCoaster>;
+    let no_demo_report = None::<TestRun>;
     let snapshot = WasmSimulationV6Ref {
         park: ParkV6Ref {
             world: &park.world,
             facilities: &park.facilities,
             simulation: &park.simulation,
-            demo_coaster: &park.demo_coaster,
+            demo_coaster: &no_legacy_demo,
             construction: Some(&coaster.construction),
             automatic_tunnel_owners: &automatic_tunnel_owners,
             manual_tunnel_cells: &park.manual_tunnel_cells,
@@ -322,7 +323,7 @@ pub(super) fn serialize_v6_for_test(simulation: &WasmSimulation) -> Vec<u8> {
             construction_outcome: &coaster.construction_outcome,
             construction_recorder: &coaster.construction_recorder,
             construction_report: &coaster.construction_report,
-            demo_report: &park.demo_report,
+            demo_report: &no_demo_report,
             coaster_open: &coaster.coaster_open,
             coaster_price: &coaster.coaster_price,
             coaster_operation: &coaster.coaster_operation,
@@ -394,7 +395,7 @@ struct ParkV6Ref<'a> {
     world: &'a World,
     facilities: &'a ParkFacilities,
     simulation: &'a ParkGuests,
-    demo_coaster: &'a Option<DemoCoaster>,
+    demo_coaster: &'a Option<LegacyDemoCoaster>,
     construction: Option<&'a Construction>,
     automatic_tunnel_owners: &'a BTreeMap<TerrainCell, BTreeSet<crate::save_v7::TunnelOwnerV7>>,
     manual_tunnel_cells: &'a BTreeSet<TerrainCell>,

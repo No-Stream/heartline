@@ -3,6 +3,7 @@ import {
   firstCheckpointMismatch,
   parseReplaySession,
   prepareReplayCommand,
+  replaySessionGameSpeed,
   replayExpectationFailures,
 } from "./session-replay";
 
@@ -67,6 +68,27 @@ describe("session replay helpers", () => {
     });
 
     expect(prepareReplayCommand(session.commands[0]!.command)).toEqual(command);
+  });
+
+  it("restores the final game speed from replayed commands", () => {
+    const session = parseReplaySession({
+      ...validSession,
+      commands: [
+        { tick: 10, command: { type: "set-speed", speed: 4 } },
+        { tick: 20, command: { type: "set-speed", speed: 3 } },
+      ],
+      checkpoints: [],
+      finalTick: 20,
+    });
+
+    expect(replaySessionGameSpeed(session)).toBe(3);
+    expect(replaySessionGameSpeed(parseReplaySession({ ...validSession, commands: [], checkpoints: [] }))).toBe(1);
+    expect(() => parseReplaySession({
+      ...validSession,
+      commands: [{ tick: 0, command: { type: "set-speed", speed: 17 } }],
+      checkpoints: [],
+      finalTick: 0,
+    })).toThrow(/speed must be an integer from 1 through 16/);
   });
 
   it("validates and preserves stable coaster IDs in recorded ride commands", () => {

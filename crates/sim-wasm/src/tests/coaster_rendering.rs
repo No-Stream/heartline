@@ -47,17 +47,17 @@ fn entry_for(entries: &Value, id: u32) -> &Value {
 }
 
 #[test]
-fn render_list_includes_the_reserved_demo_id_and_each_built_coaster() {
+fn render_list_includes_the_starter_and_each_built_coaster() {
     let demo = WasmSimulation::new(17, 0, String::from("demo"));
     let demo_entries = render_list(&demo);
     assert_eq!(demo_entries.as_array().unwrap().len(), 1);
-    let demo_entry = entry_for(&demo_entries, u32::MAX);
+    let demo_entry = entry_for(&demo_entries, 0);
     assert_eq!(demo_entry["colors"]["track"], "coral");
     assert!(demo_entry["trainLayout"].is_object());
-    assert!(!demo.coaster_geometry(u32::MAX).is_empty());
-    assert!(!demo.coaster_rails(u32::MAX).is_empty());
-    assert!(!demo.coaster_ties(u32::MAX).is_empty());
-    assert!(!demo.coaster_supports(u32::MAX).is_empty());
+    assert!(!demo.coaster_geometry(0).is_empty());
+    assert!(!demo.coaster_rails(0).is_empty());
+    assert!(!demo.coaster_ties(0).is_empty());
+    assert!(!demo.coaster_supports(0).is_empty());
     assert_eq!(demo.editing_coaster_id_value(), None);
 
     let mut simulation = WasmSimulation::new(17, 0, String::from("new"));

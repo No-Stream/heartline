@@ -110,7 +110,7 @@ pub(crate) fn run_park_report(arguments: &[String], json_mode: bool) -> Result<S
                 "park coaster {index} could not be selected for testing"
             ));
         }
-        let error = simulation.ride_test("player");
+        let error = simulation.coaster_test(coaster_id.0);
         if !error.is_empty() {
             return Err(format!("park coaster {} test failed: {error}", ride.name));
         }

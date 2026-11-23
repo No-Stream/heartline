@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { openTool } from "./game-page";
+import { openTool, startCoasterTestLap } from "./game-page";
 import { browserLaunchOptions } from "./fixtures/browser-launch-options";
 
 test.use({
@@ -101,19 +101,23 @@ test.describe("day and night", () => {
     await expect(scrub).toBeVisible();
   });
 
-  test("the demo coaster throws confetti once per lap at the top of its lift hill @fast", async ({ page }) => {
+  test("a builder test lap throws confetti at the top of the coaster's lift hill @fast", async ({ page }) => {
     test.setTimeout(30_000);
     await startPaused(page);
-    // Any crest with a large enough climb throws confetti (lift hills and launched hills alike), so only the lift crests are counted here.
+    await startCoasterTestLap(page);
+    // Any crest with a large enough climb throws confetti (lift hills and launched hills alike), so only the lift crest is counted here.
     const liftCrestBursts = () => page.evaluate(() => window.gameTest.crestBursts().filter((burst) => burst.z > 12));
     for (let advancedTicks = 0; advancedTicks < 30_000; advancedTicks += 100) {
-      if ((await liftCrestBursts()).length >= 2) break;
+      if ((await liftCrestBursts()).length >= 1) break;
       await page.evaluate(() => window.gameTest.advanceTicks(100));
     }
     const bursts = await liftCrestBursts();
-    expect(bursts).toHaveLength(2);
-    const ticksBetweenBursts = bursts[1].tick - bursts[0].tick;
-    expect(ticksBetweenBursts).toBeGreaterThan(1_000);
-    expect(ticksBetweenBursts).toBeLessThan(10_000);
+    const trainState = await page.evaluate(() => ({
+      poses: window.gameTest.constructionTrainPoses(),
+      states: window.gameTest.trainStates().construction,
+      report: window.gameTest.testingReport(),
+    }));
+    expect(bursts, JSON.stringify(trainState)).toHaveLength(1);
+    expect(bursts[0].tick).toBeGreaterThan(0);
   });
 });

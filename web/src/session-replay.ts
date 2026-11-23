@@ -1,3 +1,5 @@
+import { isGameSpeed } from "./game-speed";
+
 export interface RecordedSessionCommand {
   readonly tick: number;
   readonly command: Record<string, unknown> & { readonly type: string };
@@ -90,7 +92,21 @@ function validateCoasterCommand(command: Record<string, unknown> & { readonly ty
       break;
     case "ride-stop-editing":
       break;
+    case "set-speed":
+      if (!isGameSpeed(command.speed)) throw new TypeError(`${description}.speed must be an integer from 1 through 16`);
+      break;
   }
+}
+
+export function replaySessionGameSpeed(session: ReplaySession): number {
+  let speed = 1;
+  for (const { command } of session.commands) {
+    if (command.type === "set-speed") {
+      if (!isGameSpeed(command.speed)) throw new TypeError("Session game speed must be an integer from 1 through 16");
+      speed = command.speed;
+    }
+  }
+  return speed;
 }
 
 function validateExpectations(value: unknown): ReplayExpectations {

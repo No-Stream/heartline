@@ -4,7 +4,7 @@ import type { SoundFrame, TrainSound } from "../src/audio/mapping";
 const frame = (crowd: SoundFrame["crowd"], ambience: SoundFrame["ambience"], trains: TrainSound[] = []): SoundFrame => ({
   trains, screams: [], crowd, ambience, ui: [], eventsMuted: false,
 });
-const train = (changes: Partial<TrainSound>): TrainSound => ({ train: "4294967295:0", pan: 0, audibility: 1, speed: 0, material: "steel", onLift: false, clackRate: 0, launch: false, brake: 0, depart: false, arrive: false, ...changes });
+const train = (changes: Partial<TrainSound>): TrainSound => ({ train: "0:0", pan: 0, audibility: 1, speed: 0, material: "steel", onLift: false, clackRate: 0, launch: false, brake: 0, depart: false, arrive: false, ...changes });
 
 test("crowd murmur follows its level and the ambience is the same wind by day and night @fast", async ({ page }) => {
   await page.goto("/?test=1");

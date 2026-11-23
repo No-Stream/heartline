@@ -1,11 +1,14 @@
 use crate::WasmSimulation;
 use crate::builder_session::BuilderSession;
+use theme_park_sim::park::CoasterId;
+use theme_park_sim::park_guests::ParkGuests;
 use theme_park_sim::track::ride_file::{RideFile, RideShapeStep, RideStep};
 use theme_park_sim::track::shaped::{
     ElementIntent, ElementSpec, HillSizeHint, ResolvedHillProfile, ResolvedTurnGeometry,
     TurnSizeHint,
 };
 use theme_park_sim::track::{Hand, HillFeel, PieceFamily, PieceId};
+use theme_park_sim::world::Position;
 
 #[derive(serde::Serialize)]
 enum LegacyV4ElementSpec {
@@ -242,12 +245,20 @@ fn replace_saved_spec_with_legacy_v4_geometry(
 }
 
 fn append_timber_tumbler_fixture(simulation: &mut WasmSimulation) -> Vec<PieceId> {
+    append_timber_tumbler_fixture_at(simulation, 200, 200)
+}
+
+fn append_timber_tumbler_fixture_at(
+    simulation: &mut WasmSimulation,
+    x: i32,
+    y: i32,
+) -> Vec<PieceId> {
     let ride: RideFile = serde_json::from_str(include_str!(
         "../../../content/rides/timber-tumbler.ride.json"
     ))
     .expect("Timber Tumbler ride file is valid");
     simulation.construction_select(&format!("model:{}", ride.model));
-    simulation.construction_start(200, 200, 40, 2);
+    simulation.construction_start(x, y, 40, 2);
 
     for step in &ride.steps {
         match step {
@@ -364,6 +375,45 @@ fn save_restores_live_state_and_continues_deterministically() {
 }
 
 #[test]
+fn generated_park_save_reinitializes_guests_for_the_requested_seed_and_count() {
+    let template = WasmSimulation::new(42, 0, String::from("demo"));
+    let template_bytes = template.save_state_native().unwrap();
+
+    for (seed, guest_count) in [(17, 0), (2026, 24)] {
+        let loaded = WasmSimulation::from_park_save_native(seed, guest_count, &template_bytes)
+            .expect("generated park save loads");
+        let entrance = loaded
+            .park
+            .facilities
+            .entrance(&loaded.park.world)
+            .expect("starter park entrance path");
+        let guest_facilities = loaded.park.facilities.guest_facilities(&loaded.park.world);
+        let mut expected_guests = ParkGuests::new(
+            seed,
+            guest_count,
+            &loaded.park.world,
+            entrance,
+            guest_count.max(1),
+        );
+        expected_guests.open_with_guests(&guest_facilities);
+
+        assert_eq!(
+            loaded.park.world.state_hash(),
+            template.park.world.state_hash()
+        );
+        assert_eq!(
+            loaded.park.facilities.state_hash(),
+            template.park.facilities.state_hash()
+        );
+        assert_eq!(
+            loaded.park.simulation.state_hash(),
+            expected_guests.state_hash()
+        );
+        assert_eq!(loaded.editing_coaster_id_value(), None);
+    }
+}
+
+#[test]
 fn save_preserves_construction_and_a_stale_path_graph() {
     let mut original = WasmSimulation::new(42, 5, String::from("new"));
     original.construction_start(100, 100, 20, 0);
@@ -436,51 +486,155 @@ fn save_round_trips_built_timber_tumbler_with_ejector_hill() {
 }
 
 #[test]
-fn save_keeps_demo_and_player_test_reports() {
+fn save_keeps_reports_for_the_starter_and_built_coasters() {
     let mut original = WasmSimulation::new(42, 0, String::from("demo"));
     append_timber_tumbler_fixture(&mut original);
-    assert_eq!(original.ride_test("demo"), "");
-    assert_eq!(original.ride_test("player"), "");
+    assert_eq!(original.coaster_test(0), "");
+    assert_eq!(original.coaster_test(1), "");
 
     let restored = WasmSimulation::load_state(&original.save_state().unwrap()).unwrap();
     assert_eq!(original.state_hash(), restored.state_hash());
-    for ride in ["demo", "player"] {
+    for coaster_id in [0, 1] {
         let report: serde_json::Value =
-            serde_json::from_str(&restored.ride_info_json(ride)).unwrap();
+            serde_json::from_str(&restored.coaster_ride_info_json(coaster_id)).unwrap();
         assert!(
             report["report"]["rating"]["excitement"].is_number(),
-            "{ride}"
+            "{coaster_id}"
         );
-        assert_eq!(restored.ride_info_json(ride), original.ride_info_json(ride));
+        assert_eq!(
+            restored.coaster_ride_info_json(coaster_id),
+            original.coaster_ride_info_json(coaster_id)
+        );
     }
 }
 
 #[test]
-fn saves_use_v9_and_round_trip() {
+fn saves_use_v10_and_round_trip() {
     let compatible_v6_bytes = decompress_save_fixture(include_bytes!(
         "../tests/fixtures/coaster-grouping-v6-compatible.save.xz"
     ));
     assert!(compatible_v6_bytes.starts_with(b"TPSAVE\x06"));
     let expected = WasmSimulation::load_state_native(&compatible_v6_bytes).unwrap();
-    let saved_v9 = expected.save_state().unwrap();
-    assert!(saved_v9.starts_with(b"TPSAVE\x09"));
-    let v9_round_trip = WasmSimulation::load_state_native(&saved_v9).unwrap();
-    assert_eq!(expected.state_hash(), v9_round_trip.state_hash());
+    let saved_v10 = expected.save_state().unwrap();
+    assert!(saved_v10.starts_with(b"TPSAVE\x0a"));
+    let v10_round_trip = WasmSimulation::load_state_native(&saved_v10).unwrap();
+    assert_eq!(expected.state_hash(), v10_round_trip.state_hash());
 }
 
 #[test]
-fn frozen_v8_save_layout_loads_and_continues() {
+fn v8_demo_save_migrates_to_a_closed_ordinary_coaster_with_a_stationary_train() {
+    let v8_bytes = decompress_save_fixture(include_bytes!(
+        "../tests/fixtures/starter-park-demo-v8.save.xz"
+    ));
+    assert!(v8_bytes.starts_with(b"TPSAVE\x08"));
+
+    let mut simulation = WasmSimulation::load_state_native(&v8_bytes).unwrap();
+    assert!(simulation.save_state().unwrap().starts_with(b"TPSAVE\x0a"));
+    assert_eq!(simulation.coasters().count(), 1);
+    let coaster = simulation
+        .coaster(CoasterId(0))
+        .expect("migrated coaster exists");
+    assert_eq!(coaster.construction.model().key, "hybrid");
+    assert!(coaster.construction.is_closed());
+    assert!(!coaster.coaster_open);
+    assert!(coaster.coaster_operation.is_none());
+    assert!(coaster.construction_train.is_none());
+
+    let parked_train_poses = simulation.coaster_train_poses(0);
+    assert!(
+        !parked_train_poses.is_empty(),
+        "closed coaster renders its parked train"
+    );
+    for _ in 0..180 {
+        simulation.tick();
+    }
+    assert_eq!(simulation.coaster_train_poses(0), parked_train_poses);
+
+    let saved_v10 = simulation.save_state().unwrap();
+    let restored = WasmSimulation::load_state_native(&saved_v10).unwrap();
+    assert_eq!(simulation.state_hash(), restored.state_hash());
+    assert_eq!(restored.coaster_train_poses(0), parked_train_poses);
+}
+
+#[test]
+fn v8_demo_migration_preserves_guest_state_and_assigns_the_next_coaster_id() {
+    let v8_fixture = decompress_save_fixture(include_bytes!(
+        "../tests/fixtures/starter-park-demo-v8.save.xz"
+    ));
+    let (_, payload) = super::save::checked_payload(&v8_fixture).unwrap();
+    let (mut legacy, remaining) =
+        postcard::take_from_bytes::<super::save_v8::WasmSimulationV8>(payload).unwrap();
+    assert!(remaining.is_empty());
+    let legacy_demo = legacy
+        .park
+        .demo_coaster
+        .take()
+        .expect("fixture contains the legacy demo coaster");
+    let mut guests = ParkGuests::new(
+        42,
+        7,
+        &legacy.park.world,
+        Position {
+            x: 218,
+            y: 250,
+            height: 8,
+        },
+        7,
+    );
+    guests.open_with_guests(&legacy.park.facilities.guest_facilities(&legacy.park.world));
+    legacy.park.simulation = guests;
+    let mut simulation = legacy.into_current().unwrap();
+
+    append_timber_tumbler_fixture_at(&mut simulation, 200, 200);
+    let existing_coaster_id = simulation.editing_coaster_id().unwrap();
+    assert_eq!(existing_coaster_id, CoasterId(0));
+    simulation.pending_coaster_price = 17;
+    let existing_track_hash = simulation
+        .coaster(existing_coaster_id)
+        .unwrap()
+        .construction
+        .state_hash();
+    let guest_state_hash = simulation.simulation.state_hash();
+
+    let v8_payload = super::save_v8::serialize_v8_for_test(&simulation, &Some(legacy_demo), &None);
+    let mut mixed_v8_bytes = b"TPSAVE\x08".to_vec();
+    mixed_v8_bytes.extend(super::save::checksum(&v8_payload).to_le_bytes());
+    mixed_v8_bytes.extend(v8_payload);
+    let restored = WasmSimulation::load_state_native(&mixed_v8_bytes).unwrap();
+
+    assert_eq!(restored.editing_coaster_id(), Some(existing_coaster_id));
+    assert_eq!(restored.next_coaster_id, 2);
+    assert_eq!(restored.coasters().count(), 2);
+    assert_eq!(
+        restored
+            .coaster(existing_coaster_id)
+            .unwrap()
+            .construction
+            .state_hash(),
+        existing_track_hash
+    );
+    assert_eq!(
+        restored.coaster(CoasterId(1)).unwrap().coaster_price,
+        6,
+        "legacy demo price matches the starter park"
+    );
+    assert_eq!(restored.pending_coaster_price, 17);
+    assert_eq!(restored.simulation.state_hash(), guest_state_hash);
+}
+
+#[test]
+fn frozen_v9_save_layout_loads_and_continues() {
     let v7_bytes = decompress_save_fixture(include_bytes!(
         "../tests/fixtures/coaster-grouping-v7.save.xz"
     ));
     let mut expected = WasmSimulation::load_state_native(&v7_bytes).unwrap();
-    let mut legacy_v8 = expected.save_state().unwrap();
-    assert!(legacy_v8.starts_with(b"TPSAVE\x09"));
+    let mut legacy_v9 = expected.save_state().unwrap();
+    assert!(legacy_v9.starts_with(b"TPSAVE\x0a"));
 
-    // V8 and V9 have the same payload field layout. Relabel a V9 payload with the
-    // old header to exercise the frozen V8 decoder and its conversion path.
-    legacy_v8[6] = 8;
-    let mut restored = WasmSimulation::load_state_native(&legacy_v8).unwrap();
+    // V9 and V10 have the same payload field layout. Relabel a V10 payload with the
+    // old header to exercise the frozen V9 decoder and its conversion path.
+    legacy_v9[6] = 9;
+    let mut restored = WasmSimulation::load_state_native(&legacy_v9).unwrap();
     assert_eq!(expected.state_hash(), restored.state_hash());
     assert_eq!(
         expected.editing_construction().unwrap().pieces().len(),
@@ -552,14 +706,14 @@ fn tested_open_v6_fixture_keeps_its_typed_v4_v5_rejection() {
 }
 
 #[test]
-fn tested_open_v6_fixture_saves_and_reloads_as_v9_without_changing_hash() {
+fn tested_open_v6_fixture_saves_and_reloads_as_v10_without_changing_hash() {
     let rich_v6_bytes = decompress_save_fixture(include_bytes!(
         "../tests/fixtures/coaster-grouping-v6.save.xz"
     ));
     let mut original = WasmSimulation::load_state_native(&rich_v6_bytes).unwrap();
-    let saved_v9 = original.save_state().unwrap();
-    assert!(saved_v9.starts_with(b"TPSAVE\x09"));
-    let mut restored = WasmSimulation::load_state_native(&saved_v9).unwrap();
+    let saved_v10 = original.save_state().unwrap();
+    assert!(saved_v10.starts_with(b"TPSAVE\x0a"));
+    let mut restored = WasmSimulation::load_state_native(&saved_v10).unwrap();
     assert_eq!(original.state_hash(), restored.state_hash());
 
     for _ in 0..10 {
@@ -570,14 +724,14 @@ fn tested_open_v6_fixture_saves_and_reloads_as_v9_without_changing_hash() {
 }
 
 #[test]
-fn v7_fixture_migrates_to_v9_and_continues_after_reload() {
+fn v7_fixture_migrates_to_v10_and_continues_after_reload() {
     let v7_bytes = decompress_save_fixture(include_bytes!(
         "../tests/fixtures/coaster-grouping-v7.save.xz"
     ));
     let mut original = WasmSimulation::load_state_native(&v7_bytes).unwrap();
-    let v9_bytes = original.save_state().unwrap();
-    assert!(v9_bytes.starts_with(b"TPSAVE\x09"));
-    let mut restored = WasmSimulation::load_state_native(&v9_bytes).unwrap();
+    let v10_bytes = original.save_state().unwrap();
+    assert!(v10_bytes.starts_with(b"TPSAVE\x0a"));
+    let mut restored = WasmSimulation::load_state_native(&v10_bytes).unwrap();
     assert_eq!(original.state_hash(), restored.state_hash());
 
     for _ in 0..30 {
@@ -728,7 +882,7 @@ fn save_round_trips_horizon_hawk_shaped_ride_under_two_mebibytes() {
 }
 
 #[test]
-fn v9_save_round_trips_shaped_inversion_intents_and_pieces() {
+fn v10_save_round_trips_shaped_inversion_intents_and_pieces() {
     for (model_key, selection, expected_piece_id) in [
         (
             "velocity_viper",
@@ -806,7 +960,7 @@ fn v9_save_round_trips_shaped_inversion_intents_and_pieces() {
         );
 
         let selected_save = simulation.save_state_native().unwrap();
-        assert!(selected_save.starts_with(b"TPSAVE\x09"));
+        assert!(selected_save.starts_with(b"TPSAVE\x0a"));
         let selected_restore = WasmSimulation::load_state_native(&selected_save).unwrap();
         let selected = selected_restore
             .construction_selected_shape_wire(true)
@@ -832,7 +986,7 @@ fn v9_save_round_trips_shaped_inversion_intents_and_pieces() {
         );
 
         let saved = simulation.save_state_native().unwrap();
-        assert!(saved.starts_with(b"TPSAVE\x09"));
+        assert!(saved.starts_with(b"TPSAVE\x0a"));
         let restored = WasmSimulation::load_state_native(&saved).unwrap();
         assert_eq!(
             restored

@@ -326,6 +326,7 @@ test("the app pauses WebGL drawing while it replays a recorded session @fast", a
     );
   }, session);
   await expect.poll(() => page.evaluate(() => window.replayRenderingDone), { timeout: 120_000 }).toBe(true);
+  await expect(page.getByRole("button", { name: "Game speed" })).toHaveText("×16");
 
   const replayResult = await page.evaluate(() => ({
     drawSamples: window.replayDrawSamples,

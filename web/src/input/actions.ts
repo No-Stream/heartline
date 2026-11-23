@@ -8,7 +8,6 @@ import type { SceneryKind } from "../scenery-tool";
 import type { TestingMetric } from "../coaster-testing";
 import type { Theme } from "../theme";
 import type { Tool } from "../toolbar";
-import type { RideKey } from "../ride-window/protocol";
 import type { Units } from "../units";
 import type { CoasterPart } from "../coaster-colors";
 import type { UndergroundCutawayMode } from "../underground-cutaway";
@@ -53,12 +52,12 @@ export type InputAction =
   | { readonly type: "sound-volume"; readonly volume: number }
   | { readonly type: "guest-select"; readonly guestId: string }
   | { readonly type: "guest-close" }
-  | { readonly type: "ride-select" | "ride-test"; readonly ride: RideKey }
-  | { readonly type: "ride-set-open"; readonly ride: RideKey; readonly open: boolean }
-  | { readonly type: "ride-set-price"; readonly ride: RideKey; readonly price: number }
-  | { readonly type: "ride-edit"; readonly ride: RideKey }
-  | { readonly type: "ride-demolish"; readonly ride: RideKey }
-  | { readonly type: "ride-rename"; readonly ride: RideKey; readonly name: string }
+  | { readonly type: "ride-select" | "ride-test"; readonly ride: number }
+  | { readonly type: "ride-set-open"; readonly ride: number; readonly open: boolean }
+  | { readonly type: "ride-set-price"; readonly ride: number; readonly price: number }
+  | { readonly type: "ride-edit"; readonly ride: number }
+  | { readonly type: "ride-demolish"; readonly ride: number }
+  | { readonly type: "ride-rename"; readonly ride: number; readonly name: string }
   | { readonly type: "ride-close" }
   | { readonly type: "landscaping-activate"; readonly selection: LandscapingSelection }
   | { readonly type: "landscaping-cancel" }

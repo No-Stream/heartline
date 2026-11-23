@@ -4,7 +4,7 @@ use serde::Deserialize;
 use theme_park_sim::facilities::ParkFacilities;
 use theme_park_sim::guests::GuestId;
 use theme_park_sim::guests::behavior::Facility;
-use theme_park_sim::park::{Coaster, CoasterId, DemoCoaster, Park};
+use theme_park_sim::park::{Coaster, CoasterId, Park};
 use theme_park_sim::park_guests::ParkGuests;
 use theme_park_sim::physics::{
     BlockOperation, Circuit, ConstructionTestRunRecorder, TestRun, Train,
@@ -19,6 +19,7 @@ use theme_park_sim::track::{Piece, PieceId};
 use theme_park_sim::world::{Position, World};
 
 use crate::WasmSimulation;
+use crate::save_v8::LegacyDemoCoaster;
 
 /// Frozen version 7 postcard layout. Field order is the save format.
 #[derive(Deserialize)]
@@ -56,7 +57,7 @@ pub(super) struct ParkV7 {
     pub(super) world: World,
     pub(super) facilities: ParkFacilities,
     pub(super) simulation: ParkGuests,
-    pub(super) demo_coaster: Option<DemoCoaster>,
+    pub(super) demo_coaster: Option<LegacyDemoCoaster>,
     pub(super) coasters: BTreeMap<CoasterId, CoasterV7>,
     pub(super) next_coaster_id: u32,
     pub(super) automatic_tunnel_owners: BTreeMap<TerrainCell, BTreeSet<TunnelOwnerV7>>,
@@ -191,17 +192,15 @@ impl WasmSimulationV7 {
         }
 
         let mut park = Park::new_empty(world, facilities, simulation);
-        park.demo_coaster = demo_coaster;
         park.coasters = coasters;
         park.next_coaster_id = next_coaster_id;
         park.automatic_tunnel_owners = automatic_tunnel_owners;
         park.manual_tunnel_cells = manual_tunnel_cells;
         park.physics_remainder = physics_remainder;
         park.construction_message = construction_message;
-        park.demo_report = demo_report;
         park.pending_coaster_price = pending_coaster_price;
 
-        Ok(WasmSimulation {
+        let simulation = WasmSimulation {
             park,
             editing,
             facility_message,
@@ -222,7 +221,8 @@ impl WasmSimulationV7 {
             construction_preview_supports_cache,
             construction_placed_supports_cache,
             recovered_station,
-        })
+        };
+        crate::save_v8::migrate_legacy_demo(simulation, demo_coaster, demo_report)
     }
 }
 

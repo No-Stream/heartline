@@ -9,7 +9,6 @@ import type { TerrainEditCommand } from "./landscaping-tool";
 import { validateBlockAnalysisBudget } from "./game-test";
 import { pathPreviewMessage } from "./render/path-ghost";
 import { SessionRecorder } from "./session-recording";
-import { coasterListEntries } from "./coaster-list-data";
 import { parseCoasterColors } from "./coaster-colors";
 import { parseTrainLayout, type TrainLayout } from "./train-layout";
 import { shouldInvalidateConstructionFinishSearch } from "./construction-finish-search";
@@ -17,11 +16,11 @@ import { applyConstructionAction, readBuilderEstimates, sendsIncompleteConstruct
 import type { ConstructionFinishOptionsWire } from "./generated/ConstructionFinishOptionsWire";
 import type { RideInfoReport } from "./generated/RideInfoReport";
 
-import { sendWorkerMessage, type WorkerAction, type WorkerMessage, type PathAction, type PathPosition, type PlacementOutcome, type CoasterListEntry, type CoasterRenderManifest, DEMO_COASTER_ID } from "./protocol";
+import { sendWorkerMessage, type WorkerAction, type WorkerMessage, type PathAction, type PathPosition, type PlacementOutcome, type CoasterListEntry, type CoasterRenderManifest } from "./protocol";
 import type { BlockReport } from "./construction-protocol";
 import type { TestingReport } from "./coaster-testing";
 import type { GuestDetail } from "./guest-panel/protocol";
-import type { RideInfo, RideKey } from "./ride-window/protocol";
+import type { RideInfo } from "./ride-window/protocol";
 
 const tickRate = 30;
 const finishSearchSliceMs = 4;
@@ -48,7 +47,7 @@ let lastConstructionEconomy = "";
 let lastCoastersJson = "";
 let lastCoasters: CoasterListEntry[] = [];
 let selectedGuestId: number | undefined;
-let selectedRide: RideKey | undefined;
+let selectedRide: number | undefined;
 let lastGuestDetailSentAt = 0;
 let lastFacilityRevenue = "";
 let lastFacilitiesJson = "";
@@ -145,10 +144,7 @@ function wake(forceSnapshot = false, scheduleNext = true): void {
 function sendCoasters(force = false): boolean {
   const json = simulation.coasters_json();
   if (!force && json === lastCoastersJson) return false;
-  const coasters = coasterListEntries(
-    JSON.parse(json) as CoasterListEntry[],
-    JSON.parse(simulation.coaster_render_list_json()) as CoasterRenderManifest[],
-  );
+  const coasters = JSON.parse(json) as CoasterListEntry[];
   const previousSelectedIncome = lastCoasters.find(({ id }) => id === selectedRide)?.income;
   const nextSelectedIncome = coasters.find(({ id }) => id === selectedRide)?.income;
   const selectedRideIncomeChanged = selectedRide !== undefined && previousSelectedIncome !== nextSelectedIncome;
@@ -168,18 +164,16 @@ function sendGuestDetail(guestId = selectedGuestId): void {
 function sendRideInfo(testMessage = ""): void {
   if (selectedRide === undefined) return;
   const report = JSON.parse(simulation.coaster_ride_info_json(selectedRide)) as RideInfoReport;
-  const coaster = selectedRide === DEMO_COASTER_ID
-    ? undefined
-    : (JSON.parse(simulation.coasters_json()) as CoasterListEntry[]).find(({ id }) => id === selectedRide);
-  if (selectedRide !== DEMO_COASTER_ID && !coaster) throw new Error(`Ride info requested for missing coaster ${selectedRide}`);
+  const coaster = (JSON.parse(simulation.coasters_json()) as CoasterListEntry[]).find(({ id }) => id === selectedRide);
+  if (!coaster) throw new Error(`Ride info requested for missing coaster ${selectedRide}`);
   const info = {
     ...report,
-    name: coaster?.name ?? report.modelName,
-    open: coaster?.open ?? false,
-    price: coaster?.price ?? 0,
-    income: coaster?.income ?? 0,
-    complete: coaster?.complete ?? true,
-    editable: coaster !== undefined,
+    name: coaster.name,
+    open: coaster.open,
+    price: coaster.price,
+    income: coaster.income,
+    complete: coaster.complete,
+    editable: true,
   } as RideInfo;
   sendWorkerMessage(outputScope, { type: "ride-info", info, testMessage });
 }
@@ -201,12 +195,6 @@ function readCoasterActionMessage(message: string, fallback: string): string {
 
 function coasterIdForRideAction(ride: unknown): number {
   if (typeof ride === "number" && Number.isInteger(ride) && ride >= 0 && ride <= 0xffff_ffff) return ride;
-  if (ride === "demo") return DEMO_COASTER_ID;
-  if (ride === "player") {
-    const editingCoasterId = simulation.editing_coaster_id_value();
-    if (editingCoasterId !== null && editingCoasterId !== undefined) return editingCoasterId;
-    throw new Error("Legacy ride command refers to a player coaster, but no coaster is being edited");
-  }
   throw new TypeError(`Invalid coaster ride ID: ${JSON.stringify(ride)}`);
 }
 
@@ -376,6 +364,9 @@ workerScope.addEventListener("message", (event) => {
         if (action.park === "description") {
           simulation = WasmSimulation.from_park_description(action.seed, action.guestCount, action.descriptionJson);
           sessionRecordingAvailable = false;
+        } else if (action.park === "save") {
+          simulation = WasmSimulation.from_park_save(action.seed, action.guestCount, action.saveBytes);
+          recorder = new SessionRecorder({ seed: action.seed.toString(), park: "demo", guestCount: action.guestCount });
         } else {
           simulation = new WasmSimulation(action.seed, action.guestCount, action.park);
           recorder = new SessionRecorder({ seed: action.seed.toString(), park: action.park, guestCount: action.guestCount });
@@ -648,13 +639,10 @@ workerScope.addEventListener("message", (event) => {
     }
     if (action.type === "ride-set-open") {
       const coasterId = coasterIdForRideAction(action.ride);
-      const validTarget = coasterId !== DEMO_COASTER_ID;
-      const success = validTarget && simulation.coaster_set_open(coasterId, action.open);
+      const success = simulation.coaster_set_open(coasterId, action.open);
       const message = success
         ? (action.open ? "Ride opened." : "Ride closed.")
-        : validTarget
-          ? readCoasterActionMessage(simulation.construction_message(), "Ride could not be changed.")
-          : "The demo coaster cannot be changed.";
+        : readCoasterActionMessage(simulation.construction_message(), "Ride could not be changed.");
       sendCoasters(true);
       if (simulation.editing_coaster_id_value() === coasterId) sendConstruction();
       if (success) sendWorld();
@@ -665,15 +653,12 @@ workerScope.addEventListener("message", (event) => {
     if (action.type === "ride-set-price") {
       const coasterId = coasterIdForRideAction(action.ride);
       const validPrice = Number.isInteger(action.price) && action.price >= 0 && action.price <= 65_535;
-      const validTarget = coasterId !== DEMO_COASTER_ID;
-      const success = validTarget && validPrice && simulation.coaster_set_price(coasterId, action.price);
+      const success = validPrice && simulation.coaster_set_price(coasterId, action.price);
       const message = success
         ? "Ticket price updated."
-        : !validTarget
-          ? "The demo coaster cannot be changed."
-          : !validPrice
-            ? "Ticket price must be an integer between 0 and 65,535."
-            : "Ticket price could not be changed.";
+        : !validPrice
+          ? "Ticket price must be an integer between 0 and 65,535."
+          : "Ticket price could not be changed.";
       sendCoasters(true);
       if (simulation.editing_coaster_id_value() === coasterId) sendConstruction();
       sendRideInfo();
@@ -682,8 +667,7 @@ workerScope.addEventListener("message", (event) => {
     }
     if (action.type === "ride-edit") {
       const coasterId = coasterIdForRideAction(action.ride);
-      const validTarget = coasterId !== DEMO_COASTER_ID;
-      const success = validTarget && simulation.coaster_edit(coasterId);
+      const success = simulation.coaster_edit(coasterId);
       if (success) {
         builderSession.invalidate();
         sendWorld();
@@ -693,7 +677,7 @@ workerScope.addEventListener("message", (event) => {
         scheduleFinishSearch();
         scheduleBlockAnalysis();
       }
-      sendCoasterActionResult("edit", coasterId, success, success ? "Editing coaster." : validTarget ? "Coaster could not be edited." : "The demo coaster cannot be edited.");
+      sendCoasterActionResult("edit", coasterId, success, success ? "Editing coaster." : "Coaster could not be edited.");
       return;
     }
     if (action.type === "ride-stop-editing") {
@@ -707,16 +691,13 @@ workerScope.addEventListener("message", (event) => {
     }
     if (action.type === "ride-rename") {
       const coasterId = coasterIdForRideAction(action.ride);
-      const validTarget = coasterId !== DEMO_COASTER_ID;
       const validName = action.name.trim().length > 0;
-      const success = validTarget && validName && simulation.coaster_rename(coasterId, action.name);
+      const success = validName && simulation.coaster_rename(coasterId, action.name);
       const message = success
         ? "Coaster renamed."
-        : !validTarget
-          ? "The demo coaster cannot be renamed."
-          : !validName
-            ? "Coaster name cannot be empty."
-            : "Coaster could not be renamed.";
+        : !validName
+          ? "Coaster name cannot be empty."
+          : "Coaster could not be renamed.";
       sendCoasters(true);
       sendRideInfo();
       sendCoasterActionResult("rename", coasterId, success, message);
@@ -724,8 +705,7 @@ workerScope.addEventListener("message", (event) => {
     }
     if (action.type === "ride-demolish") {
       const coasterId = coasterIdForRideAction(action.ride);
-      const validTarget = coasterId !== DEMO_COASTER_ID;
-      const success = validTarget && simulation.coaster_demolish(coasterId);
+      const success = simulation.coaster_demolish(coasterId);
       if (success) {
         if (selectedRide === coasterId) selectedRide = undefined;
         sendWorld();
@@ -733,7 +713,7 @@ workerScope.addEventListener("message", (event) => {
         sendConstruction();
         if (selectedRide !== undefined) sendRideInfo();
       }
-      const message = success ? "Coaster demolished." : validTarget ? "Coaster could not be demolished." : "The demo coaster cannot be demolished.";
+      const message = success ? "Coaster demolished." : "Coaster could not be demolished.";
       sendCoasterActionResult("demolish", coasterId, success, message);
       return;
     }

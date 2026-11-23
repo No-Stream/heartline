@@ -1,11 +1,9 @@
 use crate::facilities::{FacilityKind, ParkFacilities, PlacementError};
 use crate::guests::park::ParkGuests;
 use crate::park::{CoasterId, Park, commands::ParkCommandError};
-use crate::physics::{PhysicsConfig, Train, demo_circuit};
 use crate::track::clearance::TunnelPlan;
 use crate::track::construction::Construction;
-use crate::track::{PieceId, TrackState};
-use crate::track::{TrainConfiguration, hybrid_model};
+use crate::track::{PieceId, TrackState, hybrid_model};
 use crate::world::{
     Direction, Path, PathBuildError, PathKind, Position, Scenery, SceneryKind,
     SceneryPlacementError, Surface, TerrainCommand, TerrainEditError, World,
@@ -32,10 +30,7 @@ fn park_with_small_world() -> Park {
     });
     let facilities = ParkFacilities::new();
     let simulation = ParkGuests::new(42, 0, &world, entrance, 1);
-    let circuit = demo_circuit();
-    let configuration: TrainConfiguration = hybrid_model().train;
-    let train = Train::new(&circuit, &configuration, PhysicsConfig::default(), 0.0, 0.0);
-    Park::new(world, facilities, simulation, circuit, train, configuration)
+    Park::new_empty(world, facilities, simulation)
 }
 
 fn tunnel_fixture() -> (World, TunnelPlan) {

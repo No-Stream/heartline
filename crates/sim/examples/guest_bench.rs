@@ -1,12 +1,14 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use theme_park_sim::demo_world::demo_world;
 use theme_park_sim::executor::ThreadedExecutor;
 use theme_park_sim::guests::behavior::{Facility, KnownPlace, PlaceKind};
 use theme_park_sim::guests::park::ParkGuests;
 use theme_park_sim::guests::walking::WalkingSimulation;
 use theme_park_sim::world::Position;
+
+#[path = "support/park_world.rs"]
+mod park_world;
 
 const GUEST_COUNT: usize = 10_000;
 const WARMUP_TICKS: usize = 20;
@@ -14,7 +16,7 @@ const MEASURED_TICKS: usize = 200;
 const SEED: u64 = 42;
 
 fn main() {
-    let world = demo_world();
+    let world = park_world::starter_park_world();
     println!(
         "Guests: {GUEST_COUNT}; warmup ticks: {WARMUP_TICKS}; measured ticks: {MEASURED_TICKS}; seed: {SEED}"
     );

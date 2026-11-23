@@ -5,14 +5,13 @@ import type { TerrainEditCommand, TerrainEditResult } from "./landscaping-tool";
 import type { PathToolCommand, PathToolMessage, PathPosition } from "./path-tool";
 import type { SetSurfaceMessage, WorldSnapshot } from "./world-snapshot";
 import type { GuestDetail } from "./guest-panel/protocol";
-import type { RideInfo, RideKey } from "./ride-window/protocol";
+import type { RideInfo } from "./ride-window/protocol";
 import type { GuestSnapshot } from "./render/people";
 import type { CoasterColorScheme } from "./coaster-colors";
 import type { TrainLayout } from "./train-layout";
 import type { WorkerRecording } from "./session-recording";
 
 export type { PathPosition };
-export const DEMO_COASTER_ID = 0xffff_ffff;
 export type PathAction = PathToolCommand;
 export interface CoasterListEntry {
   readonly id: number;
@@ -27,6 +26,7 @@ export interface CoasterListEntry {
 
 export type WorkerAction =
   | { type: "init"; seed: bigint; park: "new" | "demo"; guestCount: number; frozen: boolean; manualBlockAnalysis: boolean }
+  | { type: "init"; seed: bigint; park: "save"; saveBytes: Uint8Array; guestCount: number; frozen: boolean; manualBlockAnalysis: boolean }
   | { type: "init"; seed: bigint; park: "description"; descriptionJson: string; guestCount: number; frozen: boolean; manualBlockAnalysis: boolean }
   | { type: "construction-input-barrier" }
   | { type: "export-session"; requestId: number }
@@ -37,7 +37,7 @@ export type WorkerAction =
   | { type: "set-paused"; paused: boolean }
   | SceneryCommand | SetSurfaceMessage | TerrainEditCommand | PathAction | ConstructionAction | FacilityAction
   | { type: "guest-detail-request"; guestId: string }
-  | { type: "ride-info-request"; ride: RideKey } | { type: "ride-info-close" } | { type: "ride-test"; ride: RideKey }
+  | { type: "ride-info-request"; ride: number } | { type: "ride-info-close" } | { type: "ride-test"; ride: number }
   | { type: "ride-set-open"; ride: number; open: boolean }
   | { type: "ride-set-price"; ride: number; price: number }
   | { type: "ride-edit"; ride: number }
