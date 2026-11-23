@@ -2193,9 +2193,7 @@ mod tests {
         trace_call(
             trace,
             "world: coaster_supports",
-            simulation
-                .editing_coaster_id()
-                .map_or_else(Vec::new, |id| simulation.coaster_supports(id.0)),
+            simulation.coaster_supports(crate::guests::DEMO_COASTER_RENDER_ID),
         );
     }
 
