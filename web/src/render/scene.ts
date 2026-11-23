@@ -532,7 +532,13 @@ export function pickScene(scene: Scene, x: number, y: number, rasterTolerance = 
       [first, second, third] = nearestWeights;
     }
     const depth = first*a.depth + second*b.depth + third*c.depth;
-    if (depth >= selectedDepth) { selected = triangle; selectedDepth = depth; selectedHeight = first*a.height + second*b.height + third*c.height; }
+    if (depth >= selectedDepth) {
+      selected = triangle;
+      selectedDepth = depth;
+      selectedHeight = a.height === b.height && b.height === c.height
+        ? a.height
+        : first*a.height + second*b.height + third*c.height;
+    }
   }
   if (!selected) return null;
   if (selected.id !== undefined) return { kind: selected.kind, id: selected.id, x: selected.tileX, y: selected.tileY, height: selectedHeight };

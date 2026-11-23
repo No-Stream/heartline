@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { build, preview, type PreviewServer } from "vite";
 import { expect, test } from "@playwright/test";
 import { COASTER_MODELS } from "../src/generated/coaster-models";
-import { choosePiece, closeCircuit, openRide, placePiece, placeStation, showBuilderTab, startPark, testRide } from "./player/driver";
+import { choosePiece, closeCircuit, placePiece, placeStation, showBuilderTab, startPark, testRide } from "./player/driver";
 
 let server: PreviewServer;
 let outDir: string;
@@ -172,14 +172,14 @@ test("player driver uses the construction steppers and actions", async ({ page }
   await page.evaluate(() => (window as unknown as Window).setConstructionState({ canClose: true, canTest: true }));
   await closeCircuit(page);
   await testRide(page);
-  await openRide(page);
+  await page.getByRole("button", { name: "Ride info", exact: true }).click();
   expect(await recorded(page)).toEqual([
     { type: "piece-step", attribute: "turn", step: -1 },
     { type: "construction-select", piece: "TurnSmallStandalone", exact: true },
     { type: "construction-append" },
     { type: "construction-close" },
     { type: "construction-test" },
-    { type: "construction-open-toggle" },
+    { type: "ride-select", ride: 0 },
   ]);
 });
 

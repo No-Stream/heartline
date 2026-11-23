@@ -73,5 +73,6 @@ test("the construction panel repaints a built coaster's track, supports and trai
   await openTool(page, "Coaster");
   await page.locator('[data-coaster-id="0"]').click();
   await page.getByRole("button", { name: "Edit coaster", exact: true }).click();
+  await showBuilderTab(page, "Colours");
   await expect(swatch("Track", "Teal")).toHaveAttribute("aria-checked", "true");
 });

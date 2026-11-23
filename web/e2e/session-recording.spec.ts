@@ -100,11 +100,13 @@ test("exports the UI-built command count and final simulation tick", async ({ pa
   await expect(track, `Station did not start construction. Browser errors: ${browserErrors.join(" | ")}`).toHaveCount(1);
 
   const expectedCommandTypes = [
+    "ride-stop-editing",
     "construction-start",
     "construction-select",
     "construction-append",
     "construction-select",
     "construction-append",
+    "ride-stop-editing",
   ];
   const pieces = ["TurnSmallStandalone", "Straight"] as const;
   for (const [index, piece] of pieces.entries()) {
@@ -136,6 +138,14 @@ test("exports the UI-built command count and final simulation tick", async ({ pa
   expect(session.version).toBe(1);
   expect(session.commands).toHaveLength(expectedCommandTypes.length);
   expect(session.commands.map(({ command }) => command.type)).toEqual(expectedCommandTypes);
-  expect(session.commands.every(({ tick }) => tick === tickBeforeAdvance)).toBe(true);
+  expect(session.commands.map(({ tick }) => tick)).toEqual([
+    tickBeforeAdvance,
+    tickBeforeAdvance,
+    tickBeforeAdvance,
+    tickBeforeAdvance,
+    tickBeforeAdvance,
+    tickBeforeAdvance,
+    observedFinalTick,
+  ]);
   expect(session.finalTick).toBe(observedFinalTick);
 });
