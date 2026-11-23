@@ -198,7 +198,11 @@ for (const { stem, ride } of rides) {
       : null;
     if (stem === "velocity-viper") await setGameSpeed(page, 16);
     if (stem === "velocity-viper") {
+      // Changing game speed leaves the builder; the Coaster tool then reopens on the park ride list.
       await openTool(page, "Coaster");
+      await page.getByRole("button", { name: new RegExp(`^View ${ride.name},`) }).click();
+      await page.getByTestId("ride-edit").click();
+      await expect(page.getByRole("region", { name: "Coaster construction", exact: true })).toBeVisible();
       await page.locator("canvas").focus();
       await page.keyboard.press("t");
     } else {
