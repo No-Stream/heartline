@@ -1,8 +1,6 @@
 import { expect, test } from "@playwright/test";
-import { readFileSync } from "node:fs";
 import type { SoundFrame } from "../src/audio/mapping";
-import { parseReplaySession } from "../src/session-replay";
-import { flattenTerrainTiles, gotoGame, layPath, layQueue, openRide, setGameSpeed } from "./player/driver";
+import { setGameSpeed } from "./player/driver";
 
 const frame = (screams: SoundFrame["screams"] = []): SoundFrame => ({ trains: [], screams, crowd: { level: 0, pan: 0 }, ambience: { day: 0, night: 0, distance: 0 }, ui: [], eventsMuted: false });
 
@@ -48,24 +46,23 @@ test("simultaneous drops occupy separate groups and a suppressed repeat adds non
 
 test("guests riding an open coaster produce a live scream @slow", async ({ page }) => {
   test.setTimeout(150_000);
-  const session = parseReplaySession(JSON.parse(readFileSync(new URL("./sessions/timber-tumbler-built.json", import.meta.url), "utf8")) as unknown);
-  const params = new URLSearchParams({ test: "1", manualBlockAnalysis: "1", park: session.park, seed: session.seed, agents: String(session.guestCount) });
   await page.setViewportSize({ width: 1280, height: 720 });
-  await gotoGame(page, `/?${params}`);
+  await page.goto("/?park=horizon-hawk");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
-  await page.evaluate((recordedSession) => window.gameTest.replaySession(recordedSession), session);
-  await setGameSpeed(page, 1);
-  await flattenTerrainTiles(page, [
-    ...Array.from({ length: 6 }, (_, index) => 255 - index).flatMap((y, index) => [238, 244].map((x) => ({ x, y, height: Math.min(12, 8 + index) }))),
-    { x: 239, y: 250, height: 12 }, { x: 243, y: 250, height: 12 },
-  ]);
   await setGameSpeed(page, 16);
-  await page.setViewportSize({ width: 1280, height: 720 });
-  await layPath(page, { x: 218, y: 256, z: 2 }, { x: 244, y: 256, z: 2 });
-  await layQueue(page, { x: 243, y: 250, z: 3 }, { x: 244, y: 256, z: 2 });
-  await layPath(page, { x: 239, y: 250, z: 3 }, { x: 238, y: 256, z: 2 });
-  await openRide(page);
-  await page.evaluate(() => window.gameTest.audio.unlock());
+  await expect.poll(() => page.evaluate(() => window.gameTest.audio.state()), { timeout: 15_000 }).toBe("running");
+  await expect.poll(() => page.evaluate(() => window.gameTest.riders().length), { timeout: 60_000 }).toBeGreaterThan(0);
   await setGameSpeed(page, 4);
-  await expect.poll(() => page.evaluate(() => window.gameTest.riders().length > 0 && window.gameTest.audio.activeVoices().screams > 0), { timeout: 90_000, intervals: [50] }).toBe(true);
+  await page.evaluate(() => {
+    const rider = window.gameTest.riders()[0]!;
+    window.gameTest.setCamera({ centerX: rider.x - rider.z, centerY: rider.y - rider.z, zoom: 2, rotation: 0 });
+  });
+  await page.getByRole("button", { name: "Watch", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.gameTest.audio.state()), { timeout: 15_000 }).toBe("running");
+  await expect.poll(() => page.evaluate(() => {
+    const rider = window.gameTest.riders()[0];
+    if (!rider) return false;
+    window.gameTest.setCamera({ centerX: rider.x - rider.z, centerY: rider.y - rider.z, zoom: 2, rotation: 0 });
+    return window.gameTest.audio.activeVoices().screams > 0;
+  }), { timeout: 90_000, intervals: [50] }).toBe(true);
 });

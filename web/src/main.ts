@@ -52,7 +52,7 @@ import { createSceneryPanel } from "./scenery-panel";
 import { createToolbar, type Tool } from "./toolbar";
 import { createThemeToggle } from "./theme";
 import type { WorkerRecording } from "./session-recording";
-import { parseReplaySession, type ReplaySession } from "./session-replay";
+import { parseReplaySession, replaySessionGameSpeed, type ReplaySession } from "./session-replay";
 import { createGamePauseState } from "./game-pause";
 import { replaySessionIntoWorker } from "./session-replay-worker";
 import { constructionHeights, type HeightExtremum, type HeightMarker } from "./height-markers";
@@ -1060,6 +1060,9 @@ async function replayLiveSession(value: ReplaySession): Promise<void> {
   replayInProgress = true;
   try {
     await replaySessionIntoWorker(worker, session, { action: { type: "test-resume" }, replyType: "test-resumed" });
+    gameSpeed = replaySessionGameSpeed(session);
+    dayClock.setGameSpeed(gameSpeed);
+    renderClock.setSpeed(gameSpeed);
     frozen = false;
     manualBlockAnalysis = false;
     dayTick = undefined;
