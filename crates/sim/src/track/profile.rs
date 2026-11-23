@@ -111,6 +111,11 @@ pub(crate) struct ProfileSpec {
     /// next part of the piece instead of a straight join.
     curved_end: bool,
     heart_speed_correction: bool,
+    /// Integrates step lengths exactly through the taper, keeps nodes at least a centimetre apart
+    /// and rebuilds node curvatures and positions so the interpolating segments agree with them.
+    /// Without it the rider-force model reads several g of heart-line noise; the frozen catalog
+    /// tables were generated without it.
+    consistent_nodes: bool,
     #[cfg(test)]
     name: &'static str,
 }
@@ -134,6 +139,7 @@ impl ProfileSpec {
             taper_angle: None,
             curved_end: false,
             heart_speed_correction: false,
+            consistent_nodes: false,
             #[cfg(test)]
             name: "half loop",
         }
@@ -152,6 +158,7 @@ impl ProfileSpec {
             taper_angle: None,
             curved_end: false,
             heart_speed_correction: false,
+            consistent_nodes: false,
             name: "pull profile",
         }
     }
@@ -176,6 +183,7 @@ impl ProfileSpec {
             taper_angle: None,
             curved_end: false,
             heart_speed_correction: false,
+            consistent_nodes: false,
             name: "crest profile",
         }
     }
@@ -214,6 +222,7 @@ impl ProfileSpec {
             taper_angle: None,
             curved_end: false,
             heart_speed_correction: false,
+            consistent_nodes: false,
             #[cfg(test)]
             name: "airtime hill",
         }
@@ -236,6 +245,7 @@ impl ProfileSpec {
             taper_angle: None,
             curved_end: false,
             heart_speed_correction: false,
+            consistent_nodes: false,
             name: "test arc",
         }
     }
@@ -795,6 +805,7 @@ struct PrecomputedProfileSchedule {
     fixed_speed: bool,
     mirror_apex: bool,
     heart_speed_correction: bool,
+    consistent_nodes: bool,
     segments: Vec<PrecomputedSegment>,
 }
 
@@ -825,11 +836,7 @@ impl PrecomputedProfileSchedule {
                     for index in 0..steps {
                         let midpoint_parameter = (index as f64 + 0.5) / steps as f64;
                         let midpoint_angle = start_angle + delta * smooth(midpoint_parameter);
-                        let angle_step = delta
-                            * 30.0
-                            * crate::math::powi(midpoint_parameter, 2)
-                            * crate::math::powi(1.0 - midpoint_parameter, 2)
-                            / steps as f64;
+                        let step_start_angle = angle;
                         let taper_at = |target_angle: f64| -> f64 {
                             let start_ratio = (target_angle - start_angle).abs() / taper_angle;
                             let start_taper = if start_ratio >= 1.0 {
@@ -850,11 +857,49 @@ impl PrecomputedProfileSchedule {
                                 start_taper.min(end_taper)
                             }
                         };
+                        let turn_over_taper = |target_angle: f64| -> f64 {
+                            let arc_turn = delta.abs();
+                            let taper_switch = if untapered_end {
+                                arc_turn
+                            } else {
+                                arc_turn / 2.0
+                            };
+                            let one_sided = |turn: f64| {
+                                if turn <= taper_angle {
+                                    3.0 * crate::math::powf(taper_angle, 2.0 / 3.0)
+                                        * crate::math::powf(turn, 1.0 / 3.0)
+                                } else {
+                                    2.0 * taper_angle + turn
+                                }
+                            };
+                            let turn = (target_angle - start_angle).abs().min(arc_turn);
+                            if turn <= taper_switch {
+                                one_sided(turn)
+                            } else {
+                                one_sided(taper_switch) + one_sided(arc_turn - taper_switch)
+                                    - one_sided(arc_turn - turn)
+                            }
+                        };
                         let taper = taper_at(midpoint_angle);
                         let (mid_sin, mid_cos) = crate::math::sin_cos(midpoint_angle);
                         let mid_force_term =
                             GRAVITY * (schedule.force(midpoint_angle) - mid_cos) * taper;
                         angle = start_angle + delta * smooth((index + 1) as f64 / steps as f64);
+                        // The heart distance of a step is the integral of dangle / curvature. The
+                        // curvature is a smooth schedule times the taper, so integrating 1 / taper
+                        // exactly keeps both a curved end, where the turn rate falls to zero, and a
+                        // tapered end, where the curvature does, from bending the step lengths.
+                        let angle_step = if spec.consistent_nodes {
+                            (turn_over_taper(angle) - turn_over_taper(step_start_angle))
+                                * delta.signum()
+                                * taper
+                        } else {
+                            delta
+                                * 30.0
+                                * crate::math::powi(midpoint_parameter, 2)
+                                * crate::math::powi(1.0 - midpoint_parameter, 2)
+                                / steps as f64
+                        };
                         let end_taper = taper_at(angle);
                         let (end_sin, end_cos) = crate::math::sin_cos(angle);
                         let end_force_term =
@@ -884,6 +929,7 @@ impl PrecomputedProfileSchedule {
             fixed_speed: spec.fixed_speed,
             mirror_apex: spec.mirror_apex,
             heart_speed_correction: spec.heart_speed_correction,
+            consistent_nodes: spec.consistent_nodes,
             segments,
         }
     }
@@ -1069,8 +1115,13 @@ fn integrate_precomputed_with_train(
                         heart_curvature,
                         curvature: heart_curvature / (1.0 + HEART_HEIGHT * heart_curvature),
                     };
-                    const MINIMUM_POINT_SPACING: f64 = 0.001_000_001;
-                    if distance - points.last().unwrap().distance < MINIMUM_POINT_SPACING {
+                    // Shorter segments let the nine-decimal rounding of saved profiles tilt the heart line.
+                    let minimum_point_spacing = if schedule.consistent_nodes {
+                        0.01
+                    } else {
+                        0.001_000_001
+                    };
+                    if distance - points.last().unwrap().distance < minimum_point_spacing {
                         if index == last_index {
                             assert!(
                                 points.len() > 1,
@@ -1086,12 +1137,89 @@ fn integrate_precomputed_with_train(
             }
         }
     }
+    if schedule.consistent_nodes {
+        make_profile_points_consistent(&mut points, schedule.mirror_apex);
+    }
     Ok(SolvedProfile {
         points,
         cached_minimum_entry: None,
         cached_minimum_radius: None,
         segment_cache: Arc::new(OnceLock::new()),
     })
+}
+
+/// Rebuilds node curvatures and positions from the node angles and distances so every segment's
+/// quintic interpolates consistent data. Integration steps leave first-order mismatches between a
+/// segment's turn, its end curvatures and its chord; on short segments the quintic turns those into
+/// large curvature-rate wiggles, which the rider-force model reads as heart-line tangential force.
+fn make_profile_points_consistent(points: &mut [Point], mirror_apex: bool) {
+    if points.len() < 3 {
+        return;
+    }
+    let segment_lengths: Vec<f64> = points
+        .windows(2)
+        .map(|pair| pair[1].distance - pair[0].distance)
+        .collect();
+    let segment_curvatures: Vec<f64> = points
+        .windows(2)
+        .zip(&segment_lengths)
+        .map(|(pair, length)| (pair[1].angle - pair[0].angle) / length)
+        .collect();
+    let last = points.len() - 1;
+    // Zero scheduled curvature marks a taper end or a straight, which must stay straight to join
+    // its neighbour; every other node takes the curvature its two segments imply.
+    for index in 1..last {
+        if points[index].curvature == 0.0 {
+            continue;
+        }
+        let (previous_length, next_length) = (segment_lengths[index - 1], segment_lengths[index]);
+        points[index].curvature = (segment_curvatures[index - 1] * next_length
+            + segment_curvatures[index] * previous_length)
+            / (previous_length + next_length);
+    }
+    if points[0].curvature != 0.0 {
+        points[0].curvature = segment_curvatures[0]
+            - (segment_curvatures[1] - segment_curvatures[0]) * segment_lengths[0]
+                / (segment_lengths[0] + segment_lengths[1]);
+    }
+    if mirror_apex {
+        // The reflected half continues with the same segment curvature, so the apex sits between equal ones.
+        points[last].curvature = segment_curvatures[last - 1];
+    } else if points[last].curvature != 0.0 {
+        points[last].curvature = segment_curvatures[last - 1]
+            + (segment_curvatures[last - 1] - segment_curvatures[last - 2])
+                * segment_lengths[last - 1]
+                / (segment_lengths[last - 1] + segment_lengths[last - 2]);
+    }
+    const GAUSS_NODES: [(f64, f64); 3] = [
+        (0.112_701_665_379_258_31, 0.277_777_777_777_777_8),
+        (0.5, 0.444_444_444_444_444_4),
+        (0.887_298_334_620_741_7, 0.277_777_777_777_777_8),
+    ];
+    for index in 0..last {
+        let (start, end) = (points[index], points[index + 1]);
+        let length = segment_lengths[index];
+        let turn = end.angle - start.angle;
+        let start_slope = start.curvature * length;
+        let end_slope = end.curvature * length;
+        let (mut dx, mut dz) = (0.0, 0.0);
+        for (u, weight) in GAUSS_NODES {
+            let u2 = u * u;
+            let u3 = u2 * u;
+            let angle = start.angle
+                + turn * (3.0 * u2 - 2.0 * u3)
+                + start_slope * (u3 - 2.0 * u2 + u)
+                + end_slope * (u3 - u2);
+            let (sin, cos) = crate::math::sin_cos(angle);
+            dx += weight * cos;
+            dz += weight * sin;
+        }
+        points[index + 1].x = start.x + length * dx;
+        points[index + 1].z = start.z + length * dz;
+    }
+    for point in points.iter_mut() {
+        point.heart_curvature = point.curvature / (1.0 - HEART_HEIGHT * point.curvature);
+    }
 }
 
 fn heart_speed_corrected_curvature(scheduled_curvature: f64) -> f64 {
@@ -1579,6 +1707,14 @@ fn offline_hill_spec(spec: OfflineHillSpec, heart_speed_correction: bool) -> Pro
     profile_spec
 }
 
+/// A hill spec for the runtime shaped solver, which keeps the heart line free of node noise.
+fn shaped_hill_spec(spec: OfflineHillSpec, heart_speed_correction: bool) -> ProfileSpec {
+    ProfileSpec {
+        consistent_nodes: true,
+        ..offline_hill_spec(spec, heart_speed_correction)
+    }
+}
+
 pub fn solve_hill_offline(
     spec: OfflineHillSpec,
     train: OfflineTrain,
@@ -1614,7 +1750,7 @@ pub(crate) fn solve_shaped_hill_apex_height_offline(
 ) -> Result<f64, OfflineSolveError> {
     assert!(steps > 0);
     let train = profile_train(train);
-    let spec = offline_hill_spec(spec, true);
+    let spec = shaped_hill_spec(spec, true);
     let (half, _) = solve_with_profile_train_tolerance(&spec, train, steps, 1e-3)?;
     Ok(half
         .points
@@ -1630,7 +1766,7 @@ pub(crate) fn solve_shaped_hill_offline_profile(
 ) -> Result<(SolvedProfile, u8, f64), OfflineSolveError> {
     assert!(steps > 0);
     let train = profile_train(train);
-    let spec = offline_hill_spec(spec, true);
+    let spec = shaped_hill_spec(spec, true);
     let (half, iterations) = solve_with_profile_train(&spec, train, steps)?;
     let mut profile = reflect_hill(&half);
     let connector_insert_metres = snap_hill_profile_to_grid(&mut profile);
@@ -1660,6 +1796,7 @@ fn loop_profile_spec(
         taper_angle: None,
         curved_end: !mirror_apex,
         heart_speed_correction: !mirror_apex,
+        consistent_nodes: true,
         #[cfg(test)]
         name: if mirror_apex {
             "shaped full loop"
@@ -1710,7 +1847,7 @@ pub(crate) fn solve_shaped_zero_g_hill_profile(
 ) -> Result<(SolvedProfile, f64, f64), OfflineSolveError> {
     assert!(steps > 0);
     let train_model = profile_train(train);
-    let spec = offline_hill_spec(
+    let spec = shaped_hill_spec(
         OfflineHillSpec {
             entry_speed_mps,
             pull_g,
@@ -2562,6 +2699,7 @@ pub(crate) fn test_profile() -> SolvedProfile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use std::f64::consts::FRAC_PI_2;
     use std::fmt::Write as _;
 
@@ -3642,6 +3780,7 @@ mod tests {
             taper_angle: None,
             curved_end: false,
             heart_speed_correction: false,
+            consistent_nodes: false,
             name: "half loop test",
         };
         let mut profile = integrate(&spec, None, 2048);

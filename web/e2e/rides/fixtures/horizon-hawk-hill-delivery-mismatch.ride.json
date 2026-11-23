@@ -83,7 +83,7 @@
         "cars": 8,
         "target_g": -0.85,
         "delivered_g": -0.850316,
-        "height_m": 24.135444,
+        "height_m": 24.13545,
         "span_m": 180,
         "train_length_metres": "20",
         "target_height_m": "24",
@@ -92,7 +92,7 @@
         "flank_angle_degrees": "25.953125",
         "profile_grid_half_tiles": 90,
         "diagonal": false,
-        "geometry_digest": "14219915931233730499"
+        "geometry_digest": "8441859550806870307"
       }
     },
     {
@@ -161,7 +161,7 @@
         "cars": 8,
         "target_g": -0.95,
         "delivered_g": -0.937225,
-        "height_m": 12.006146,
+        "height_m": 12.006147,
         "span_m": 142,
         "train_length_metres": "20",
         "target_height_m": "12",
@@ -170,7 +170,7 @@
         "flank_angle_degrees": "16.2578125",
         "profile_grid_half_tiles": 71,
         "diagonal": false,
-        "geometry_digest": "5817743414571716044"
+        "geometry_digest": "5948903761530930790"
       }
     },
     {
@@ -239,7 +239,7 @@
         "cars": 8,
         "target_g": -0.95,
         "delivered_g": -0.940819,
-        "height_m": 12.052896,
+        "height_m": 12.052898,
         "span_m": 132,
         "train_length_metres": "20",
         "target_height_m": "12",
@@ -248,7 +248,7 @@
         "flank_angle_degrees": "17.68359375",
         "profile_grid_half_tiles": 66,
         "diagonal": false,
-        "geometry_digest": "17101338205326032527"
+        "geometry_digest": "14466819594295905464"
       }
     },
     {
@@ -326,7 +326,7 @@
         "cars": 8,
         "target_g": -0.95,
         "delivered_g": -0.935855,
-        "height_m": 9.917805,
+        "height_m": 9.917806,
         "span_m": 116,
         "train_length_metres": "20",
         "target_height_m": "10",
@@ -335,7 +335,7 @@
         "flank_angle_degrees": "16.54296875",
         "profile_grid_half_tiles": 58,
         "diagonal": false,
-        "geometry_digest": "10646393669565545734"
+        "geometry_digest": "10557086015679123225"
       }
     },
     {

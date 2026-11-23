@@ -197,7 +197,7 @@ fn horizon_hawk_five_steps_from_closed_finishes_with_a_straight_and_a_shaped_tur
 /// the force limits and no shaped turn the search tries leads back.
 #[test]
 fn horizon_hawk_before_its_brakes_explains_it_is_too_fast() {
-    let ride = TempRide::truncated("horizon-hawk", 27);
+    let ride = TempRide::truncated("horizon-hawk", 28);
 
     let error = ride.run(&["finish"]).unwrap_err();
 
@@ -241,7 +241,7 @@ fn state_reports_the_searched_finish_result_instead_of_a_pending_search() {
         "{state}"
     );
 
-    let too_fast = TempRide::truncated("horizon-hawk", 27);
+    let too_fast = TempRide::truncated("horizon-hawk", 28);
     let state = too_fast.run(&["state"]).unwrap();
     assert!(
         state.contains("can finish: false (No safe finish found"),

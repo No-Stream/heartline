@@ -55,8 +55,8 @@
         "design_speed_mps": 21.007032,
         "cars": 10,
         "target_g": -0.25,
-        "delivered_g": -0.213867,
-        "height_m": 12.379827,
+        "delivered_g": -0.213914,
+        "height_m": 12.379837,
         "span_m": 100.0,
         "train_length_metres": "15",
         "target_height_m": "12.37066597334165",
@@ -65,7 +65,7 @@
         "flank_angle_degrees": "24.2421875",
         "profile_grid_half_tiles": 50,
         "diagonal": false,
-        "geometry_digest": "8286661470598850460"
+        "geometry_digest": "15675483188001192434"
       }
     },
     {
@@ -86,7 +86,7 @@
         "design_speed_mps": 20.685848,
         "cars": 10,
         "hand": "Left",
-        "vertical_g": 1.80778,
+        "vertical_g": 1.807733,
         "lateral_g": 0.091038,
         "radius_m": 46.0,
         "bank_degrees": 58.243136,
@@ -110,17 +110,17 @@
         "design_speed_mps": 20.343691,
         "cars": 10,
         "target_g": -0.25,
-        "delivered_g": -0.237182,
-        "height_m": 11.588481,
+        "delivered_g": -0.237202,
+        "height_m": 11.588537,
         "span_m": 92.0,
         "train_length_metres": "15",
         "target_height_m": "11.601741586489018",
         "pull_g": "2.5",
-        "crest_g": "-0.311503",
+        "crest_g": "-0.311488",
         "flank_angle_degrees": "24.52734375",
         "profile_grid_half_tiles": 46,
         "diagonal": false,
-        "geometry_digest": "4217262132171424721"
+        "geometry_digest": "9197940676315604012"
       }
     },
     {
@@ -144,8 +144,8 @@
         "design_speed_mps": 19.853045,
         "cars": 10,
         "hand": "Left",
-        "vertical_g": 1.822608,
-        "lateral_g": 0.092617,
+        "vertical_g": 1.822578,
+        "lateral_g": 0.09223,
         "radius_m": 42.0,
         "bank_degrees": 58.243136,
         "train_length_metres": "15",
@@ -165,20 +165,20 @@
       },
       "spec": {
         "kind": "hill",
-        "design_speed_mps": 19.529713,
+        "design_speed_mps": 19.529714,
         "cars": 10,
         "target_g": -0.25,
-        "delivered_g": -0.248129,
-        "height_m": 10.735561,
+        "delivered_g": -0.24815,
+        "height_m": 10.735536,
         "span_m": 86.0,
         "train_length_metres": "15",
-        "target_height_m": "10.69191281469434",
+        "target_height_m": "10.691913909632405",
         "pull_g": "2.5",
-        "crest_g": "-0.318993",
+        "crest_g": "-0.319001",
         "flank_angle_degrees": "24.52734375",
         "profile_grid_half_tiles": 43,
         "diagonal": false,
-        "geometry_digest": "17236201704949554650"
+        "geometry_digest": "14165462748258197728"
       }
     },
     {
@@ -191,20 +191,20 @@
       },
       "spec": {
         "kind": "hill",
-        "design_speed_mps": 19.156591,
+        "design_speed_mps": 19.156592,
         "cars": 10,
         "target_g": -0.25,
-        "delivered_g": -0.245795,
-        "height_m": 10.240335,
+        "delivered_g": -0.245819,
+        "height_m": 10.240347,
         "span_m": 82.0,
         "train_length_metres": "15",
-        "target_height_m": "10.287270046264247",
+        "target_height_m": "10.28727112028314",
         "pull_g": "2.5",
-        "crest_g": "-0.318039",
+        "crest_g": "-0.318038",
         "flank_angle_degrees": "24.2421875",
         "profile_grid_half_tiles": 41,
         "diagonal": false,
-        "geometry_digest": "9833617588115079923"
+        "geometry_digest": "5699363731458144911"
       }
     },
     {
@@ -222,8 +222,8 @@
         "design_speed_mps": 18.853975,
         "cars": 10,
         "hand": "Left",
-        "vertical_g": 1.79807,
-        "lateral_g": 0.097074,
+        "vertical_g": 1.798251,
+        "lateral_g": 0.097073,
         "radius_m": 38.0,
         "bank_degrees": 58.243136,
         "train_length_metres": "15",
@@ -246,17 +246,17 @@
         "design_speed_mps": 18.562162,
         "cars": 10,
         "target_g": -0.25,
-        "delivered_g": -0.246393,
-        "height_m": 9.666618,
+        "delivered_g": -0.246416,
+        "height_m": 9.666645,
         "span_m": 78.0,
         "train_length_metres": "15",
         "target_height_m": "9.658747296780541",
         "pull_g": "2.5",
-        "crest_g": "-0.3203",
+        "crest_g": "-0.320294",
         "flank_angle_degrees": "24.2421875",
         "profile_grid_half_tiles": 39,
         "diagonal": false,
-        "geometry_digest": "7438634762877901119"
+        "geometry_digest": "9633454451056641552"
       }
     },
     {

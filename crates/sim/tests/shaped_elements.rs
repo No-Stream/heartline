@@ -2761,3 +2761,68 @@ fn shaped_raven_turn_top_feels_reach_every_car_or_refuse_with_a_reason() {
         mismatches.join("\n")
     );
 }
+
+/// Largest change in heart-line tangential acceleration, in g at the frictionless speed for the
+/// given entry speed, between rail samples 0.01 m apart, using the same 0.02 m central differences
+/// the rider-force model uses.
+fn largest_heart_tangential_jump_g(piece: &Piece, entry_speed_mps: f64) -> (f64, f64) {
+    let difference_step_m = 0.02;
+    let sample_step_m = 0.01;
+    let entry_height_m = piece.sample(0.0).heart.z;
+    let tangential_g = |distance: f64| {
+        let previous = piece.sample(distance - difference_step_m).heart;
+        let current = piece.sample(distance);
+        let next = piece.sample(distance + difference_step_m).heart;
+        let heart_second = (previous - current.heart * 2.0 + next)
+            * (1.0 / (difference_step_m * difference_step_m));
+        let speed_squared =
+            entry_speed_mps * entry_speed_mps - 2.0 * 9.81 * (current.heart.z - entry_height_m);
+        heart_second.dot(current.tangent) * speed_squared.max(0.0) / 9.81
+    };
+    let sample_count = ((piece.length() - 4.0 * difference_step_m) / sample_step_m) as usize;
+    let readings: Vec<f64> = (0..sample_count)
+        .map(|index| tangential_g(2.0 * difference_step_m + index as f64 * sample_step_m))
+        .collect();
+    let (worst_index, worst_jump) = readings
+        .windows(2)
+        .map(|pair| (pair[1] - pair[0]).abs())
+        .enumerate()
+        .fold((0, 0.0_f64), |best, (index, jump)| {
+            if jump > best.1 { (index, jump) } else { best }
+        });
+    (
+        worst_jump,
+        2.0 * difference_step_m + worst_index as f64 * sample_step_m,
+    )
+}
+
+/// Before the shared profile nodes were made consistent, neighbouring samples on these pieces
+/// differed by up to 4.7 g. What remains is a sawtooth of about 0.15 g where the 512-step schedule
+/// discretises a fast curvature rise just after a taper starts, which the 5 Hz force filter removes.
+#[test]
+fn loop_and_raven_heart_lines_have_no_sample_to_sample_force_noise() {
+    let viper = velocity_viper_model();
+    let loop_intent = ElementIntent::Loop {
+        hand: Hand::Left,
+        peak_g: default_loop_peak_g(&viper),
+        top_feel: LoopTopFeel::Neutral,
+    };
+    let raven_intent = ElementIntent::RavenTurn {
+        hand: Hand::Left,
+        peak_g: default_raven_turn_peak_g(&viper),
+        top_feel: LoopTopFeel::Floaty,
+    };
+    for (description, intent, speed_mps) in [
+        ("loop", loop_intent.clone(), 30.0),
+        ("slow loop", loop_intent, 22.0),
+        ("Raven turn", raven_intent, 30.0),
+    ] {
+        let (_, _, solved) = solve_with_prefix(intent, &viper, 3, speed_mps)
+            .unwrap_or_else(|refusal| panic!("{description} refused: {refusal:?}"));
+        let (worst_jump_g, at_m) = largest_heart_tangential_jump_g(&solved.piece, speed_mps);
+        assert!(
+            worst_jump_g <= 0.25,
+            "{description} heart-line tangential force jumps {worst_jump_g:.2} g between samples 0.01 m apart at {at_m:.2} m"
+        );
+    }
+}
