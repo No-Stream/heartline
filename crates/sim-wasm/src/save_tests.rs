@@ -622,30 +622,58 @@ fn v8_demo_migration_preserves_guest_state_and_assigns_the_next_coaster_id() {
     assert_eq!(restored.simulation.state_hash(), guest_state_hash);
 }
 
+/// Made by master 6c7dadd (save version 9) from the Horizon Hawk and Daisy Dash park, open, with
+/// 12 guests and 600 ticks. Both rides have shaped hills built before node-consistent profiles.
+const MASTER_V9_SHAPED_HILLS_LOADED_STATE_HASH: u64 = 9673806636469140253;
+const MASTER_V9_SHAPED_HILLS_STATE_HASH_AFTER_300_TICKS: u64 = 10677785211317160263;
+const MASTER_V9_SHAPED_HILLS_CONSTRUCTION_HASHES: [(u32, &str, usize, u64); 2] = [
+    (0, "Horizon Hawk", 42, 4204688025986493489),
+    (1, "Daisy Dash", 26, 12442706703477066370),
+];
+
 #[test]
-fn frozen_v9_save_layout_loads_and_continues() {
-    let v7_bytes = decompress_save_fixture(include_bytes!(
-        "../tests/fixtures/coaster-grouping-v7.save.xz"
+fn master_v9_save_with_shaped_hills_loads_and_survives_v10_save_cycles() {
+    let v9_bytes = decompress_save_fixture(include_bytes!(
+        "../tests/fixtures/shaped-hills-v9.save.xz"
     ));
-    let mut expected = WasmSimulation::load_state_native(&v7_bytes).unwrap();
-    let mut legacy_v9 = expected.save_state().unwrap();
-    assert!(legacy_v9.starts_with(b"TPSAVE\x0a"));
-
-    // V9 and V10 have the same payload field layout. Relabel a V10 payload with the
-    // old header to exercise the frozen V9 decoder and its conversion path.
-    legacy_v9[6] = 9;
-    let mut restored = WasmSimulation::load_state_native(&legacy_v9).unwrap();
-    assert_eq!(expected.state_hash(), restored.state_hash());
-    assert_eq!(
-        expected.editing_construction().unwrap().pieces().len(),
-        restored.editing_construction().unwrap().pieces().len()
-    );
-
-    for _ in 0..10 {
-        expected.tick();
-        restored.tick();
-        assert_eq!(expected.state_hash(), restored.state_hash());
+    assert!(v9_bytes.starts_with(b"TPSAVE\x09"));
+    let mut loaded = WasmSimulation::load_state_native(&v9_bytes).unwrap();
+    assert_eq!(loaded.state_hash(), MASTER_V9_SHAPED_HILLS_LOADED_STATE_HASH);
+    for (id, name, piece_count, construction_hash) in MASTER_V9_SHAPED_HILLS_CONSTRUCTION_HASHES {
+        let coaster = loaded.coaster(CoasterId(id)).unwrap();
+        assert_eq!(coaster.name, name);
+        assert_eq!(coaster.construction.pieces().len(), piece_count);
+        assert_eq!(coaster.construction.state_hash(), construction_hash, "{name}");
     }
+
+    let v10_bytes = loaded.save_state().unwrap();
+    assert!(v10_bytes.starts_with(b"TPSAVE\x0a"));
+    let mut reloaded = WasmSimulation::load_state_native(&v10_bytes).unwrap();
+    assert_eq!(reloaded.state_hash(), loaded.state_hash());
+    let mut reloaded_twice =
+        WasmSimulation::load_state_native(&reloaded.save_state().unwrap()).unwrap();
+    assert_eq!(reloaded_twice.state_hash(), loaded.state_hash());
+
+    for _ in 0..300 {
+        loaded.tick();
+        reloaded.tick();
+        reloaded_twice.tick();
+    }
+    assert_eq!(
+        loaded.state_hash(),
+        MASTER_V9_SHAPED_HILLS_STATE_HASH_AFTER_300_TICKS
+    );
+    assert_eq!(reloaded.state_hash(), loaded.state_hash());
+    assert_eq!(reloaded_twice.state_hash(), loaded.state_hash());
+}
+
+#[test]
+fn master_builder_snapshot_with_shaped_hills_loads() {
+    let snapshot = decompress_save_fixture(include_bytes!(
+        "../tests/fixtures/shaped-hills-v9.builder-snapshot.xz"
+    ));
+    let session = crate::builder_session::BuilderSession::load_native_snapshot(&snapshot).unwrap();
+    assert_eq!(session.state_hash(), MASTER_V9_SHAPED_HILLS_LOADED_STATE_HASH);
 }
 
 #[test]

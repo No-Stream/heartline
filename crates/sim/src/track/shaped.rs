@@ -30,6 +30,27 @@ std::thread_local! {
     static LEGACY_V4_SAVE_DECODE_ACTIVE: Cell<Option<bool>> = const { Cell::new(None) };
     static CURRENT_SAVE_DECODE_ACTIVE: Cell<bool> = const { Cell::new(false) };
     static CURRENT_SAVE_DIGEST_MISMATCH: RefCell<Option<GeometryDigestMismatch>> = const { RefCell::new(None) };
+    static SAVE_BEFORE_HILL_PROFILE_NODES_DECODE_ACTIVE: Cell<bool> = const { Cell::new(false) };
+}
+
+struct SaveBeforeHillProfileNodesDecodeGuard;
+
+impl Drop for SaveBeforeHillProfileNodesDecodeGuard {
+    fn drop(&mut self) {
+        SAVE_BEFORE_HILL_PROFILE_NODES_DECODE_ACTIVE.with(|active| active.set(false));
+    }
+}
+
+/// Decodes a save from before version 10: shaped elements use the frozen layout without hill profile
+/// nodes, and their hills are rebuilt with nodes as integrated, the geometry those saves were made with.
+pub fn with_save_before_hill_profile_nodes_decode_context<T>(decode: impl FnOnce() -> T) -> T {
+    let entered = SAVE_BEFORE_HILL_PROFILE_NODES_DECODE_ACTIVE.with(|active| !active.replace(true));
+    assert!(
+        entered,
+        "decode contexts for saves before hill profile nodes cannot be nested"
+    );
+    let _guard = SaveBeforeHillProfileNodesDecodeGuard;
+    decode()
 }
 
 struct LegacyV4SaveDecodeGuard;
@@ -221,6 +242,7 @@ pub enum ElementSpec {
         profile_grid_half_tiles: u16,
         diagonal: bool,
         geometry_digest: u64,
+        profile_nodes: HillProfileNodes,
         profile: ResolvedHillProfile,
     },
     Turn {
@@ -486,6 +508,123 @@ mod digest_u64 {
     }
 }
 
+/// How a shaped hill's profile nodes were built. Saves before version 10 hold hills built with the
+/// nodes exactly as the step integrator left them; those keep that geometry so their stored digests
+/// still match. Every new solve and every ride file uses consistent nodes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HillProfileNodes {
+    AsIntegrated,
+    Consistent,
+}
+
+impl HillProfileNodes {
+    fn consistent(self) -> bool {
+        self == Self::Consistent
+    }
+}
+
+/// Frozen binary layout of shaped elements in saves before version 10, which only had hills and
+/// turns and stored no hill profile nodes.
+#[derive(Deserialize)]
+enum BinaryElementSpecBeforeHillProfileNodes {
+    Hill {
+        design_speed_mps: f64,
+        cars: u8,
+        target_g: f64,
+        delivered_g: f64,
+        height_m: f64,
+        span_m: f64,
+        train_length_metres: f64,
+        target_height_m: f64,
+        pull_g: f64,
+        crest_g: f64,
+        flank_angle_degrees: f64,
+        profile_grid_half_tiles: u16,
+        diagonal: bool,
+        geometry_digest: u64,
+    },
+    Turn {
+        design_speed_mps: f64,
+        cars: u8,
+        hand: Hand,
+        vertical_g: f64,
+        lateral_g: f64,
+        radius_m: f64,
+        bank_degrees: f64,
+        train_length_metres: f64,
+        geometry_peak_bank_radians: f64,
+        geometry_speed_loss_fraction: f64,
+        geometry_radius_m: f64,
+        geometry_digest: u64,
+    },
+}
+
+impl BinaryElementSpecBeforeHillProfileNodes {
+    fn into_current(self) -> BinaryElementSpec {
+        match self {
+            Self::Hill {
+                design_speed_mps,
+                cars,
+                target_g,
+                delivered_g,
+                height_m,
+                span_m,
+                train_length_metres,
+                target_height_m,
+                pull_g,
+                crest_g,
+                flank_angle_degrees,
+                profile_grid_half_tiles,
+                diagonal,
+                geometry_digest,
+            } => BinaryElementSpec::Hill {
+                design_speed_mps,
+                cars,
+                target_g,
+                delivered_g,
+                height_m,
+                span_m,
+                train_length_metres,
+                target_height_m,
+                pull_g,
+                crest_g,
+                flank_angle_degrees,
+                profile_grid_half_tiles,
+                diagonal,
+                geometry_digest,
+                profile_nodes: HillProfileNodes::AsIntegrated,
+            },
+            Self::Turn {
+                design_speed_mps,
+                cars,
+                hand,
+                vertical_g,
+                lateral_g,
+                radius_m,
+                bank_degrees,
+                train_length_metres,
+                geometry_peak_bank_radians,
+                geometry_speed_loss_fraction,
+                geometry_radius_m,
+                geometry_digest,
+            } => BinaryElementSpec::Turn {
+                design_speed_mps,
+                cars,
+                hand,
+                vertical_g,
+                lateral_g,
+                radius_m,
+                bank_degrees,
+                train_length_metres,
+                geometry_peak_bank_radians,
+                geometry_speed_loss_fraction,
+                geometry_radius_m,
+                geometry_digest,
+            },
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 enum BinaryElementSpec {
     Hill {
@@ -503,6 +642,7 @@ enum BinaryElementSpec {
         profile_grid_half_tiles: u16,
         diagonal: bool,
         geometry_digest: u64,
+        profile_nodes: HillProfileNodes,
     },
     Turn {
         design_speed_mps: f64,
@@ -616,6 +756,7 @@ fn resolve_human_readable_spec(
             profile_grid_half_tiles,
             diagonal,
             geometry_digest,
+            profile_nodes: HillProfileNodes::Consistent,
             profile: regenerate_hill_profile(
                 cars,
                 design_speed_mps,
@@ -624,6 +765,7 @@ fn resolve_human_readable_spec(
                 crest_g,
                 flank_angle_degrees,
                 profile_grid_half_tiles,
+                HillProfileNodes::Consistent,
             )
             .map_err(ElementSpecLoadError::InvalidRecipe)?,
         },
@@ -836,6 +978,7 @@ fn regenerate_hill_profile(
     crest_g: f64,
     flank_angle_degrees: f64,
     profile_grid_half_tiles: u16,
+    profile_nodes: HillProfileNodes,
 ) -> Result<ResolvedHillProfile, String> {
     let entry_speed_mps = round_element_value(design_speed_mps);
     if cars == 0
@@ -862,8 +1005,13 @@ fn regenerate_hill_profile(
         cars,
         length_metres: train_length_metres,
     };
-    let (mut profile, _, _) = solve_shaped_hill_offline_profile(profile_spec, train, PROFILE_STEPS)
-        .map_err(|error| format!("could not regenerate shaped hill geometry: {error:?}"))?;
+    let (mut profile, _, _) = solve_shaped_hill_offline_profile(
+        profile_spec,
+        train,
+        PROFILE_STEPS,
+        profile_nodes.consistent(),
+    )
+    .map_err(|error| format!("could not regenerate shaped hill geometry: {error:?}"))?;
     let snapped_span_metres = f64::from(profile_grid_half_tiles) * 2.0;
     let connector_insert_metres = snapped_span_metres - profile.endpoint()[0];
     if !connector_insert_metres.is_finite() || connector_insert_metres < 0.0 {
@@ -1091,6 +1239,7 @@ impl Serialize for ElementSpec {
                     profile_grid_half_tiles,
                     diagonal,
                     geometry_digest,
+                    profile_nodes,
                     ..
                 } => BinaryElementSpec::Hill {
                     design_speed_mps: *design_speed_mps,
@@ -1107,6 +1256,7 @@ impl Serialize for ElementSpec {
                     profile_grid_half_tiles: *profile_grid_half_tiles,
                     diagonal: *diagonal,
                     geometry_digest: *geometry_digest,
+                    profile_nodes: *profile_nodes,
                 },
                 Self::Turn {
                     design_speed_mps,
@@ -1280,7 +1430,12 @@ impl<'de> Deserialize<'de> for ElementSpec {
                     "version 4 saves with shaped coaster elements are unsupported",
                 ));
             }
-            let mut spec = match BinaryElementSpec::deserialize(deserializer)? {
+            let binary_spec = if SAVE_BEFORE_HILL_PROFILE_NODES_DECODE_ACTIVE.with(Cell::get) {
+                BinaryElementSpecBeforeHillProfileNodes::deserialize(deserializer)?.into_current()
+            } else {
+                BinaryElementSpec::deserialize(deserializer)?
+            };
+            let mut spec = match binary_spec {
                 BinaryElementSpec::Hill {
                     design_speed_mps,
                     cars,
@@ -1296,6 +1451,7 @@ impl<'de> Deserialize<'de> for ElementSpec {
                     profile_grid_half_tiles,
                     diagonal,
                     geometry_digest,
+                    profile_nodes,
                 } => Self::Hill {
                     design_speed_mps,
                     cars,
@@ -1311,6 +1467,7 @@ impl<'de> Deserialize<'de> for ElementSpec {
                     profile_grid_half_tiles,
                     diagonal,
                     geometry_digest,
+                    profile_nodes,
                     profile: regenerate_hill_profile(
                         cars,
                         design_speed_mps,
@@ -1319,6 +1476,7 @@ impl<'de> Deserialize<'de> for ElementSpec {
                         crest_g,
                         flank_angle_degrees,
                         profile_grid_half_tiles,
+                        profile_nodes,
                     )
                     .map_err(D::Error::custom)?,
                 },
@@ -1635,6 +1793,8 @@ impl ElementSpec {
                 profile_grid_half_tiles: _,
                 diagonal: _,
                 geometry_digest: _,
+                // The profile is hashed, and it already differs between the two node builds.
+                profile_nodes: _,
                 profile,
             } => {
                 hash.write_u8(0);
@@ -2479,6 +2639,7 @@ fn solve_hill_analytically(
             profile_grid_half_tiles,
             diagonal,
             geometry_digest: 0,
+            profile_nodes: HillProfileNodes::Consistent,
             profile,
         };
         canonicalize_element_spec(&mut candidate_spec);
@@ -2699,7 +2860,7 @@ fn hill_profile_for_height(
         flank_angle_radians: flank_degrees.to_radians(),
         taper_angle_radians: Some(SHAPED_HILL_TAPER_ANGLE),
     };
-    let (mut profile, _, _) = solve_shaped_hill_offline_profile(profile_spec, train, PROFILE_STEPS)
+    let (mut profile, _, _) = solve_shaped_hill_offline_profile(profile_spec, train, PROFILE_STEPS, true)
         .map_err(|failure| match failure {
             crate::track::profile::OfflineSolveError::NonPositiveSpeedSquared { height_metres } => {
                 SolveRefusal::Stall {
@@ -2752,7 +2913,7 @@ pub(crate) fn synthesize_hill_profile(
         flank_angle_radians: flank_angle,
         taper_angle_radians: Some(SHAPED_HILL_TAPER_ANGLE),
     };
-    let (mut profile, _, _) = solve_shaped_hill_offline_profile(spec, train, PROFILE_STEPS)
+    let (mut profile, _, _) = solve_shaped_hill_offline_profile(spec, train, PROFILE_STEPS, true)
         .map_err(|failure| match failure {
             crate::track::profile::OfflineSolveError::NonPositiveSpeedSquared { height_metres } => {
                 SolveRefusal::Stall {

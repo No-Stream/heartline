@@ -231,23 +231,31 @@ impl WasmSimulation {
     pub fn load_state_native_typed(bytes: &[u8]) -> Result<WasmSimulation, SaveLoadError> {
         let (version, payload) = checked_payload(bytes)?;
         let decode_v6 = || {
-            theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
-                postcard::take_from_bytes::<save_v6::WasmSimulationV6>(payload)
+            theme_park_sim::track::shaped::with_save_before_hill_profile_nodes_decode_context(|| {
+                theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
+                    postcard::take_from_bytes::<save_v6::WasmSimulationV6>(payload)
+                })
             })
         };
         let decode_v7 = || {
-            theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
-                postcard::take_from_bytes::<save_v7::WasmSimulationV7>(payload)
+            theme_park_sim::track::shaped::with_save_before_hill_profile_nodes_decode_context(|| {
+                theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
+                    postcard::take_from_bytes::<save_v7::WasmSimulationV7>(payload)
+                })
             })
         };
         let decode_v8 = || {
-            theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
-                postcard::take_from_bytes::<save_v8::WasmSimulationV8>(payload)
+            theme_park_sim::track::shaped::with_save_before_hill_profile_nodes_decode_context(|| {
+                theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
+                    postcard::take_from_bytes::<save_v8::WasmSimulationV8>(payload)
+                })
             })
         };
         let decode_v9 = || {
-            theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
-                postcard::take_from_bytes::<save_v9::WasmSimulationV9>(payload)
+            theme_park_sim::track::shaped::with_save_before_hill_profile_nodes_decode_context(|| {
+                theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
+                    postcard::take_from_bytes::<save_v9::WasmSimulationV9>(payload)
+                })
             })
         };
         let decode_current = || {

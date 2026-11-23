@@ -1708,9 +1708,13 @@ fn offline_hill_spec(spec: OfflineHillSpec, heart_speed_correction: bool) -> Pro
 }
 
 /// A hill spec for the runtime shaped solver, which keeps the heart line free of node noise.
-fn shaped_hill_spec(spec: OfflineHillSpec, heart_speed_correction: bool) -> ProfileSpec {
+fn shaped_hill_spec(
+    spec: OfflineHillSpec,
+    heart_speed_correction: bool,
+    consistent_nodes: bool,
+) -> ProfileSpec {
     ProfileSpec {
-        consistent_nodes: true,
+        consistent_nodes,
         ..offline_hill_spec(spec, heart_speed_correction)
     }
 }
@@ -1750,7 +1754,7 @@ pub(crate) fn solve_shaped_hill_apex_height_offline(
 ) -> Result<f64, OfflineSolveError> {
     assert!(steps > 0);
     let train = profile_train(train);
-    let spec = shaped_hill_spec(spec, true);
+    let spec = shaped_hill_spec(spec, true, true);
     let (half, _) = solve_with_profile_train_tolerance(&spec, train, steps, 1e-3)?;
     Ok(half
         .points
@@ -1759,14 +1763,16 @@ pub(crate) fn solve_shaped_hill_apex_height_offline(
         .fold(f64::NEG_INFINITY, f64::max))
 }
 
+/// `consistent_nodes` is false only to rebuild hills from saves made before consistent nodes.
 pub(crate) fn solve_shaped_hill_offline_profile(
     spec: OfflineHillSpec,
     train: OfflineTrain,
     steps: usize,
+    consistent_nodes: bool,
 ) -> Result<(SolvedProfile, u8, f64), OfflineSolveError> {
     assert!(steps > 0);
     let train = profile_train(train);
-    let spec = shaped_hill_spec(spec, true);
+    let spec = shaped_hill_spec(spec, true, consistent_nodes);
     let (half, iterations) = solve_with_profile_train(&spec, train, steps)?;
     let mut profile = reflect_hill(&half);
     let connector_insert_metres = snap_hill_profile_to_grid(&mut profile);
@@ -1856,6 +1862,7 @@ pub(crate) fn solve_shaped_zero_g_hill_profile(
             taper_angle_radians: Some((flank_angle_radians / 3.0).min(0.3)),
         },
         false,
+        true,
     );
     let (half, _) = solve_with_profile_train(&spec, train_model, steps)?;
     let crest_start = half
