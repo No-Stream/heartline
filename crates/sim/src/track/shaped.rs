@@ -116,8 +116,8 @@ fn capture_current_save_digest_mismatch(mismatch: GeometryDigestMismatch) -> boo
 }
 use crate::world::World;
 
-mod inversions;
 mod crest_turn;
+mod inversions;
 mod precision;
 
 pub use crest_turn::{
