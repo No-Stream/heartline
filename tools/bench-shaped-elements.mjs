@@ -19,6 +19,8 @@ if (process.argv[2] === '--wasm-single') {
   checkHorizonHawkArcParity(process.argv[3], process.argv[4]);
 } else if (process.argv[2] === '--wasm-try-single') {
   runWasmTrySingle(process.argv[3], process.argv[4]);
+} else if (process.argv[2] === '--wasm-preview-single') {
+  runWasmPreviewSingle(process.argv[3], process.argv[4]);
 } else if (process.argv[2] === '--cold-wasm') {
   runColdWasmSuite(process.argv[3]);
 } else if (process.argv[2] === '--wasm-calibration-single') {
@@ -170,7 +172,28 @@ function runWasmTrySingle(modulePath, kind) {
   benchmark.try_solve_and_commit();
   const elapsedMs = performance.now() - startedAt;
   const result = JSON.parse(benchmark.result_json());
-  process.stdout.write(`${JSON.stringify({ ...result, elapsed_ms: elapsedMs })}\n`);
+  process.stdout.write(`${JSON.stringify({
+    ...result,
+    operation: 'confirm-solve-and-commit',
+    elapsed_ms: elapsedMs,
+  })}\n`);
+}
+
+function runWasmPreviewSingle(modulePath, kind) {
+  const resolvedModulePath = path.resolve(modulePath);
+  const requireFromModule = createRequire(resolvedModulePath);
+  const wasm = requireFromModule(resolvedModulePath);
+  const benchmark = new wasm.ShapedSolveBenchmark(kind);
+  benchmark.prepare();
+  const startedAt = performance.now();
+  benchmark.try_solve_preview();
+  const elapsedMs = performance.now() - startedAt;
+  const result = JSON.parse(benchmark.result_json());
+  process.stdout.write(`${JSON.stringify({
+    ...result,
+    operation: 'browse-solve-preview',
+    elapsed_ms: elapsedMs,
+  })}\n`);
 }
 
 function runColdWasmSuite(wasmModulePath) {
@@ -183,6 +206,7 @@ function runColdWasmSuite(wasmModulePath) {
   }
   const casesRun = [];
   const allSuccessfulSamples = [];
+  const allSuccessfulBrowseSamples = [];
 
   for (const benchmarkCase of cases) {
     const samples = Array.from({ length: COLD_WASM_RUNS }, () => {
@@ -195,33 +219,48 @@ function runColdWasmSuite(wasmModulePath) {
       return JSON.parse(output);
     });
     validateTrySamples(benchmarkCase, samples);
-    const timing = summarize(samples);
+    const browseSamples = Array.from({ length: COLD_WASM_RUNS }, () => {
+      const output = runProcess(process.execPath, [
+        scriptPath,
+        '--wasm-preview-single',
+        resolvedModulePath,
+        benchmarkCase.id,
+      ]);
+      return JSON.parse(output);
+    });
+    validatePreviewSamples(benchmarkCase, browseSamples);
     casesRun.push({
       id: benchmarkCase.id,
       model: benchmarkCase.model,
       cars: benchmarkCase.cars,
       element: benchmarkCase.element,
       requested_speed_mps: benchmarkCase.requested_speed_mps,
-      cold_node_wasm: timing,
+      cold_node_wasm: summarize(samples),
+      browse_solve_preview: summarize(browseSamples),
     });
     allSuccessfulSamples.push(...samples);
+    allSuccessfulBrowseSamples.push(...browseSamples);
   }
 
-  const worstCaseP95Ms = Math.max(...casesRun.map((item) => item.cold_node_wasm.p95_ms));
+  const worstCaseConfirmP95Ms = Math.max(...casesRun.map((item) => item.cold_node_wasm.p95_ms));
+  const worstCaseBrowseP95Ms = Math.max(...casesRun.map((item) => item.browse_solve_preview.p95_ms));
   const report = {
     mode: 'cold-node-wasm',
     samples_per_case: COLD_WASM_RUNS,
     scope: 'hyper, 4/6/8 cars, 22/26/30/34/36 m/s, floater/strong-floater/turn',
     timed_operation: 'production solve, calibration previews, corrections, and Construction::append_resolved',
+    browse_timed_operation: 'production solve_preview with one preview and no construction append',
     target_p95_ms: 250,
     all_successful_samples: summarize(allSuccessfulSamples),
-    worst_case_cold_p95_ms: worstCaseP95Ms,
-    within_target: worstCaseP95Ms <= 250,
+    browse_all_successful_samples: summarize(allSuccessfulBrowseSamples),
+    worst_case_cold_p95_ms: worstCaseConfirmP95Ms,
+    worst_case_browse_p95_ms: worstCaseBrowseP95Ms,
+    within_target: worstCaseConfirmP95Ms <= 250,
     cases: casesRun,
   };
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   if (!report.within_target) {
-    throw new Error(`Cold Node/WASM solve p95 ${worstCaseP95Ms.toFixed(2)} ms exceeded 250 ms`);
+    throw new Error(`Cold Node/WASM confirm p95 ${worstCaseConfirmP95Ms.toFixed(2)} ms exceeded 250 ms`);
   }
 }
 
@@ -231,6 +270,9 @@ function validateTrySamples(benchmarkCase, samples) {
   }
   const first = samples[0];
   for (const sample of samples) {
+    if (sample.operation !== 'confirm-solve-and-commit') {
+      throw new Error(`Unexpected timed operation: ${JSON.stringify(sample)}`);
+    }
     if (sample.kind !== benchmarkCase.id
       || sample.model !== benchmarkCase.model
       || sample.cars !== benchmarkCase.cars) {
@@ -255,6 +297,44 @@ function validateTrySamples(benchmarkCase, samples) {
     if (sample.status !== first.status
       || sample.spec_hash !== first.spec_hash) {
       throw new Error(`${benchmarkCase.id} changed solve outcome between samples`);
+    }
+  }
+}
+
+function validatePreviewSamples(benchmarkCase, samples) {
+  if (samples.length !== COLD_WASM_RUNS) {
+    throw new Error(`${benchmarkCase.id} produced ${samples.length} browse samples`);
+  }
+  const first = samples[0];
+  for (const sample of samples) {
+    if (sample.operation !== 'browse-solve-preview') {
+      throw new Error(`Unexpected timed operation: ${JSON.stringify(sample)}`);
+    }
+    if (sample.kind !== benchmarkCase.id
+      || sample.model !== benchmarkCase.model
+      || sample.cars !== benchmarkCase.cars) {
+      throw new Error(`Unexpected browse benchmark case: ${JSON.stringify(sample)}`);
+    }
+    if (sample.status !== 'solved') {
+      throw new Error(`Unexpected browse solve status: ${JSON.stringify(sample)}`);
+    }
+    if (sample.construction_append_would_tunnel !== null) {
+      throw new Error(`Browse solve unexpectedly validated construction append: ${JSON.stringify(sample)}`);
+    }
+    if (sample.requested_entry_speed_mps !== benchmarkCase.requested_speed_mps
+      || Math.abs(sample.observed_entry_speed_mps - benchmarkCase.requested_speed_mps) > 0.01) {
+      throw new Error(`Browse solve missed entry speed target: ${JSON.stringify(sample)}`);
+    }
+    if (!Number.isFinite(sample.elapsed_ms) || sample.elapsed_ms <= 0) {
+      throw new Error(`Invalid browse timing sample: ${JSON.stringify(sample)}`);
+    }
+    if (!Number.isInteger(sample.calibration_runs) || sample.calibration_runs > 1) {
+      throw new Error(`Browse solve used more than one preview: ${JSON.stringify(sample)}`);
+    }
+    if (sample.status !== first.status
+      || sample.spec_hash !== first.spec_hash
+      || sample.calibration_runs !== first.calibration_runs) {
+      throw new Error(`${benchmarkCase.id} changed browse outcome between samples`);
     }
   }
 }

@@ -7,7 +7,7 @@ use theme_park_sim::track::ride_file::{RideFile, RideStep};
 use theme_park_sim::track::shaped::{
     ElementIntent, ElementSpec, HillSizeHint, LoopTopFeel, SolveContext, SolvedElement,
     TurnSizeHint, default_hill_strength, default_loop_peak_g, default_raven_turn_peak_g,
-    default_zero_g_roll_peak_g, solve,
+    default_zero_g_roll_peak_g, solve, solve_preview,
 };
 use theme_park_sim::track::{
     Hand, HillFeel, Inversion, Piece, PieceId, PieceKind, TrackState, catalog, coaster_models,
@@ -219,6 +219,15 @@ impl ShapedSolveBenchmark {
 
     /// Runs one solve while returning typed refusals as benchmark data.
     pub fn try_solve(&mut self) {
+        self.try_solve_with_mode(false);
+    }
+
+    /// Runs the production one-preview shaped solve used while browsing candidates.
+    pub fn try_solve_preview(&mut self) {
+        self.try_solve_with_mode(true);
+    }
+
+    fn try_solve_with_mode(&mut self, provisional: bool) {
         assert!(
             self.observed_entry_speed_mps.is_finite(),
             "call prepare first"
@@ -237,6 +246,7 @@ impl ShapedSolveBenchmark {
                 preview_cache: &mut self.preview_cache,
                 physics: self.physics,
             };
+            let solve = if provisional { solve_preview } else { solve };
             match solve(&self.intent, &mut context) {
                 Ok(solved) => solved,
                 Err(refusal) => {
@@ -769,4 +779,22 @@ fn stable_hash(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf29ce484222325, |hash, byte| {
         (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ShapedSolveBenchmark;
+    use serde_json::{Value, from_str};
+
+    #[test]
+    fn browse_benchmark_records_a_single_preview_without_committing() {
+        let mut benchmark = ShapedSolveBenchmark::new("hyper-strong-floater-hill");
+        benchmark.prepare();
+        benchmark.try_solve_preview();
+
+        let result: Value = from_str(&benchmark.result_json()).expect("benchmark result is JSON");
+        assert_eq!(result["status"], "solved");
+        assert_eq!(result["calibration_runs"], 1);
+        assert_eq!(result["construction_append_would_tunnel"], Value::Null);
+    }
 }
