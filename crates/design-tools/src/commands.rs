@@ -14,10 +14,12 @@ use theme_park_sim::track::ride_file::{
     RideFile, RideFileFormat, RideHeading, RidePlaceStep, RideShapeStep, RideStation, RideStep,
 };
 use theme_park_sim::track::shaped::{
-    ElementIntent, ElementSpec, HillSizeHint, TurnSizeHint, default_hill_strength,
+    ElementIntent, ElementSpec, HillSizeHint, LoopTopFeel, TurnSizeHint, default_hill_strength,
+    default_loop_peak_g, default_raven_turn_peak_g, default_zero_g_roll_peak_g,
 };
 use theme_park_sim::track::{
-    CoasterModel, Hand, Heading as TrackHeading, Heartlining, HillFeel, PieceId, coaster_models,
+    CoasterModel, Hand, Heading as TrackHeading, Heartlining, HillFeel, Inversion, PieceId,
+    coaster_models,
 };
 use theme_park_sim_wasm::WasmSimulation;
 use theme_park_sim_wasm::builder_session::{BuilderEstimates, BuilderSession};
@@ -114,6 +116,20 @@ enum ShapedPlaceRequest {
         hand: Hand,
         size: TurnSizeHint,
     },
+    Loop {
+        hand: Hand,
+        peak_g: Option<f64>,
+        top_feel: LoopTopFeel,
+    },
+    ZeroGRoll {
+        hand: Hand,
+        peak_g: Option<f64>,
+    },
+    RavenTurn {
+        hand: Hand,
+        peak_g: Option<f64>,
+        top_feel: LoopTopFeel,
+    },
 }
 
 impl ShapedPlaceRequest {
@@ -129,6 +145,28 @@ impl ShapedPlaceRequest {
                 size,
             },
             Self::Turn { hand, size } => ElementIntent::Turn { hand, size },
+            Self::Loop {
+                hand,
+                peak_g,
+                top_feel,
+            } => ElementIntent::Loop {
+                hand,
+                peak_g: peak_g.unwrap_or_else(|| default_loop_peak_g(model)),
+                top_feel,
+            },
+            Self::ZeroGRoll { hand, peak_g } => ElementIntent::ZeroGRoll {
+                hand,
+                peak_g: peak_g.unwrap_or_else(|| default_zero_g_roll_peak_g(model)),
+            },
+            Self::RavenTurn {
+                hand,
+                peak_g,
+                top_feel,
+            } => ElementIntent::RavenTurn {
+                hand,
+                peak_g: peak_g.unwrap_or_else(|| default_raven_turn_peak_g(model)),
+                top_feel,
+            },
         }
     }
 }
@@ -250,6 +288,9 @@ Ride commands:
   place <id> [options]                      place a piece
   place hill feel=<floater|strong-floater|ejector> [g=<target>] [height=<metres>]
   place turn <left|right> feel=banked [radius=<metres>]
+  place loop <left|right> [g=<peak>] [top=<floaty|neutral|pressed-in>]
+  place zero-g-roll <left|right> [g=<peak>]
+  place raven-turn <left|right> [g=<peak>] [top=<floaty|neutral|pressed-in>]
   chain on|off                              toggle a lift chain
   launch-speed <piece> <m/s>                set a launch speed
   cars <count>                              set cars per train
@@ -516,7 +557,10 @@ fn parse_place(parameters: &[String]) -> Result<RideCommand, String> {
     let Some(id) = parameters.first() else {
         return Err("place requires a piece id".into());
     };
-    if id == "hill" || id == "turn" {
+    if matches!(
+        id.as_str(),
+        "hill" | "turn" | "loop" | "zero-g-roll" | "raven-turn"
+    ) {
         return parse_shaped_place(id, &parameters[1..]);
     }
     let (mut matched, mut launch_speed, mut note) = (false, None, None);
@@ -662,7 +706,97 @@ fn parse_shaped_place(kind: &str, parameters: &[String]) -> Result<RideCommand, 
                 },
             )
         }
-        _ => unreachable!("only shaped hill and turn kinds are parsed"),
+        "loop" | "raven-turn" => {
+            let Some(hand_text) = parameters.first().map(String::as_str) else {
+                return Err(format!("place {kind} requires left or right"));
+            };
+            let (hand, hand_wire) = match hand_text {
+                "left" => (Hand::Left, "left"),
+                "right" => (Hand::Right, "right"),
+                _ => return Err(format!("unknown {kind} hand {hand_text:?}")),
+            };
+            let (mut peak_g, mut top_feel) = (None, None);
+            for parameter in &parameters[1..] {
+                let (name, value) = parameter
+                    .split_once('=')
+                    .ok_or_else(|| format!("{kind} option must use name=value: {parameter:?}"))?;
+                match name {
+                    "g" if peak_g.is_none() => {
+                        let value = parse_number::<f64>(value, "peak vertical g")?;
+                        if !value.is_finite() || value <= 0.0 {
+                            return Err("peak vertical g must be a finite positive value".into());
+                        }
+                        peak_g = Some(value);
+                    }
+                    "top" if top_feel.is_none() => {
+                        top_feel = Some(match value {
+                            "floaty" => ("floaty", LoopTopFeel::Floaty),
+                            "neutral" => ("neutral", LoopTopFeel::Neutral),
+                            "pressed-in" | "pressedIn" => ("pressedIn", LoopTopFeel::PressedIn),
+                            _ => return Err(format!("unknown top feel {value:?}")),
+                        });
+                    }
+                    "g" | "top" => return Err(format!("duplicate {kind} option {name:?}")),
+                    _ => return Err(format!("unknown {kind} option {name:?}")),
+                }
+            }
+            let (top_wire, top_feel) = top_feel.unwrap_or(("neutral", LoopTopFeel::Neutral));
+            let peak_wire = peak_g.map_or_else(|| "default".to_owned(), |value| value.to_string());
+            if kind == "loop" {
+                (
+                    format!("shape:loop:{hand_wire}:{peak_wire}:{top_wire}"),
+                    ShapedPlaceRequest::Loop {
+                        hand,
+                        peak_g,
+                        top_feel,
+                    },
+                )
+            } else {
+                (
+                    format!("shape:ravenTurn:{hand_wire}:{peak_wire}:{top_wire}"),
+                    ShapedPlaceRequest::RavenTurn {
+                        hand,
+                        peak_g,
+                        top_feel,
+                    },
+                )
+            }
+        }
+        "zero-g-roll" => {
+            let Some(hand_text) = parameters.first().map(String::as_str) else {
+                return Err("place zero-g-roll requires left or right".into());
+            };
+            let (hand, hand_wire) = match hand_text {
+                "left" => (Hand::Left, "left"),
+                "right" => (Hand::Right, "right"),
+                _ => return Err(format!("unknown zero-g-roll hand {hand_text:?}")),
+            };
+            let mut peak_g = None;
+            for parameter in &parameters[1..] {
+                let (name, value) = parameter.split_once('=').ok_or_else(|| {
+                    format!("zero-g-roll option must use name=value: {parameter:?}")
+                })?;
+                match name {
+                    "g" if peak_g.is_none() => {
+                        let value = parse_number::<f64>(value, "peak vertical g")?;
+                        if !value.is_finite() || value <= 0.0 {
+                            return Err("peak vertical g must be a finite positive value".into());
+                        }
+                        peak_g = Some(value);
+                    }
+                    "g" => return Err("duplicate zero-g-roll option \"g\"".into()),
+                    _ => return Err(format!("unknown zero-g-roll option {name:?}")),
+                }
+            }
+            let peak_wire = peak_g.map_or_else(|| "default".to_owned(), |value| value.to_string());
+            (
+                format!("shape:zeroGRoll:{hand_wire}:{peak_wire}"),
+                ShapedPlaceRequest::ZeroGRoll { hand, peak_g },
+            )
+        }
+        _ => unreachable!(
+            "only shaped hill, turn, loop, zero-g-roll, and raven-turn kinds are parsed"
+        ),
     };
     Ok(RideCommand::Place {
         id,
@@ -703,6 +837,45 @@ fn shape_selection_id(intent: &ElementIntent) -> Result<String, String> {
                 TurnSizeHint::Radius(radius_m) => format!("fixed-{radius_m}"),
             };
             format!("shape:turn:{hand}:fullyBanked:{size}")
+        }
+        ElementIntent::Loop {
+            hand,
+            peak_g,
+            top_feel,
+        } => {
+            let hand = match hand {
+                Hand::Left => "left",
+                Hand::Right => "right",
+            };
+            let top = match top_feel {
+                LoopTopFeel::Floaty => "floaty",
+                LoopTopFeel::Neutral => "neutral",
+                LoopTopFeel::PressedIn => "pressedIn",
+            };
+            format!("shape:loop:{hand}:{peak_g}:{top}")
+        }
+        ElementIntent::ZeroGRoll { hand, peak_g } => {
+            let hand = match hand {
+                Hand::Left => "left",
+                Hand::Right => "right",
+            };
+            format!("shape:zeroGRoll:{hand}:{peak_g}")
+        }
+        ElementIntent::RavenTurn {
+            hand,
+            peak_g,
+            top_feel,
+        } => {
+            let hand = match hand {
+                Hand::Left => "left",
+                Hand::Right => "right",
+            };
+            let top = match top_feel {
+                LoopTopFeel::Floaty => "floaty",
+                LoopTopFeel::Neutral => "neutral",
+                LoopTopFeel::PressedIn => "pressedIn",
+            };
+            format!("shape:ravenTurn:{hand}:{peak_g}:{top}")
         }
     };
     Ok(selection)
@@ -2028,21 +2201,8 @@ fn render_choices(
 }
 
 fn render_shaped_choices(session: &mut BuilderSession) -> Result<CommandReply, String> {
-    const SHAPED_SELECTIONS: [(&str, &str); 5] = [
-        ("floater hill", "shape:hill:floater:default:auto"),
-        (
-            "strong floater hill",
-            "shape:hill:strongFloater:default:auto",
-        ),
-        ("ejector hill", "shape:hill:ejector:default:auto"),
-        ("left fully banked turn", "shape:turn:left:fullyBanked:auto"),
-        (
-            "right fully banked turn",
-            "shape:turn:right:fullyBanked:auto",
-        ),
-    ];
     let current_selection = session.simulation().construction_selected();
-    let (model_key, vertical_limits, lateral_limit, profile) = {
+    let (model_key, vertical_limits, lateral_limit, profile, allowed_inversions) = {
         let construction = session
             .simulation()
             .construction
@@ -2057,10 +2217,38 @@ fn render_shaped_choices(session: &mut BuilderSession) -> Result<CommandReply, S
             ),
             model.design_force_targets.maximum_lateral_g,
             model.shaped_profile,
+            model.allowed_inversions.clone(),
         )
     };
-    let mut rows = Vec::with_capacity(SHAPED_SELECTIONS.len());
-    for (name, id) in SHAPED_SELECTIONS {
+    let mut shaped_selections: Vec<(&str, &str)> = vec![
+        ("floater hill", "shape:hill:floater:default:auto"),
+        (
+            "strong floater hill",
+            "shape:hill:strongFloater:default:auto",
+        ),
+        ("ejector hill", "shape:hill:ejector:default:auto"),
+        ("left fully banked turn", "shape:turn:left:fullyBanked:auto"),
+        (
+            "right fully banked turn",
+            "shape:turn:right:fullyBanked:auto",
+        ),
+    ];
+    if allowed_inversions.contains(&Inversion::VerticalLoop) {
+        shaped_selections.push(("left vertical loop", "shape:loop:left:default:neutral"));
+        shaped_selections.push(("right vertical loop", "shape:loop:right:default:neutral"));
+    }
+    if allowed_inversions.contains(&Inversion::HeartlineRoll) {
+        shaped_selections.push(("left zero-g roll", "shape:zeroGRoll:left:default"));
+        shaped_selections.push(("right zero-g roll", "shape:zeroGRoll:right:default"));
+    }
+    if allowed_inversions.contains(&Inversion::VerticalLoop)
+        && allowed_inversions.contains(&Inversion::Corkscrew)
+    {
+        shaped_selections.push(("left Raven turn", "shape:ravenTurn:left:default:neutral"));
+        shaped_selections.push(("right Raven turn", "shape:ravenTurn:right:default:neutral"));
+    }
+    let mut rows = Vec::with_capacity(shaped_selections.len());
+    for (name, id) in shaped_selections {
         let preview = candidate_for(session, id)?;
         let shape = preview
             .get("shape")
@@ -2138,7 +2326,7 @@ fn render_shaped_choices(session: &mut BuilderSession) -> Result<CommandReply, S
                 .or_else(|| spec["lateralG"].as_f64()),
         );
         let size = match shape["kind"].as_str().unwrap_or("") {
-            "hill" => format!(
+            "hill" | "loop" | "zeroGRoll" | "ravenTurn" => format!(
                 "{}x{} m",
                 optional_number(spec["heightM"].as_f64()),
                 optional_number(spec["spanM"].as_f64()),
@@ -2376,6 +2564,58 @@ fn format_shape_details(value: &Value) -> String {
             optional_g(spec["lateralG"].as_f64()),
             optional_number(spec["radiusM"].as_f64()),
             optional_number(spec["bankDegrees"].as_f64()),
+        ),
+        "loop" => format!(
+            "Shaped {} {}loop: {:.1} m/s for {} cars; peak target {} g, delivered {} g, top {} g ({}); height {} m, span {} m\n",
+            value["hand"].as_str().expect("shaped loop has a hand"),
+            if spec["steelStructure"].as_bool().unwrap_or(false) {
+                "steel-structure "
+            } else {
+                ""
+            },
+            spec["designSpeedMps"]
+                .as_f64()
+                .expect("design speed is a number"),
+            spec["cars"].as_u64().expect("car count is an integer"),
+            optional_g(spec["targetG"].as_f64()),
+            optional_g(spec["deliveredG"].as_f64()),
+            optional_g(spec["topG"].as_f64()),
+            spec["topFeel"].as_str().unwrap_or("neutral"),
+            optional_number(spec["heightM"].as_f64()),
+            optional_number(spec["spanM"].as_f64()),
+        ),
+        "zeroGRoll" => format!(
+            "Shaped {} zero-g roll: {:.1} m/s for {} cars; peak target {} g, delivered {} g, crest {} g, roll rate {} deg/s; height {} m, span {} m\n",
+            value["hand"]
+                .as_str()
+                .expect("shaped zero-g roll has a hand"),
+            spec["designSpeedMps"]
+                .as_f64()
+                .expect("design speed is a number"),
+            spec["cars"].as_u64().expect("car count is an integer"),
+            optional_g(spec["targetG"].as_f64()),
+            optional_g(spec["deliveredG"].as_f64()),
+            optional_g(spec["topG"].as_f64()),
+            optional_number(spec["peakRollRateDegS"].as_f64()),
+            optional_number(spec["heightM"].as_f64()),
+            optional_number(spec["spanM"].as_f64()),
+        ),
+        "ravenTurn" => format!(
+            "Shaped {} Raven turn: {:.1} m/s for {} cars; peak target {} g, delivered {} g, top {} g ({}), roll rate {} deg/s; height {} m, span {} m\n",
+            value["hand"]
+                .as_str()
+                .expect("shaped Raven turn has a hand"),
+            spec["designSpeedMps"]
+                .as_f64()
+                .expect("design speed is a number"),
+            spec["cars"].as_u64().expect("car count is an integer"),
+            optional_g(spec["targetG"].as_f64()),
+            optional_g(spec["deliveredG"].as_f64()),
+            optional_g(spec["topG"].as_f64()),
+            spec["topFeel"].as_str().unwrap_or("neutral"),
+            optional_number(spec["peakRollRateDegS"].as_f64()),
+            optional_number(spec["heightM"].as_f64()),
+            optional_number(spec["spanM"].as_f64()),
         ),
         kind => panic!("unknown shaped element kind {kind:?}"),
     }
@@ -2808,7 +3048,15 @@ fn shaped_element_report_rows(
         .filter_map(|(piece_index, piece)| {
             matches!(
                 piece.id,
-                PieceId::ShapedHill | PieceId::ShapedTurnLeft | PieceId::ShapedTurnRight
+                PieceId::ShapedHill
+                    | PieceId::ShapedTurnLeft
+                    | PieceId::ShapedTurnRight
+                    | PieceId::ShapedLoopLeft
+                    | PieceId::ShapedLoopRight
+                    | PieceId::ShapedZeroGRollLeft
+                    | PieceId::ShapedZeroGRollRight
+                    | PieceId::ShapedRavenTurnLeft
+                    | PieceId::ShapedRavenTurnRight
             )
             .then_some(piece_index)
         })
@@ -2895,6 +3143,130 @@ fn shaped_element_report_rows(
                                 model.design_force_targets.maximum_lateral_g - lateral_g.abs()
                             ),
                             format!("radius {radius_m:.1} m, bank {bank_degrees:.1} degrees"),
+                        )
+                    }
+                    (
+                        ElementIntent::Loop { hand, top_feel, .. },
+                        ElementSpec::Loop {
+                            design_speed_mps,
+                            hand: spec_hand,
+                            target_peak_g,
+                            delivered_peak_g,
+                            delivered_top_g,
+                            height_m,
+                            span_m,
+                            steel_structure,
+                            ..
+                        },
+                    ) => {
+                        if hand != spec_hand {
+                            return Err(format!(
+                                "ride loop intent hand does not match its resolved spec at piece {piece_index}"
+                            ));
+                        }
+                        let hand_name = match hand {
+                            Hand::Left => "left",
+                            Hand::Right => "right",
+                        };
+                        let top_name = match top_feel {
+                            LoopTopFeel::Floaty => "floaty",
+                            LoopTopFeel::Neutral => "neutral",
+                            LoopTopFeel::PressedIn => "pressed-in",
+                        };
+                        let label = if *steel_structure {
+                            format!("{hand_name} steel-structure vertical loop")
+                        } else {
+                            format!("{hand_name} vertical loop")
+                        };
+                        (
+                            *design_speed_mps,
+                            label,
+                            format!("peak {target_peak_g:.2} g, {top_name} top"),
+                            format!("peak {delivered_peak_g:.2} g, top {delivered_top_g:.2} g"),
+                            format!(
+                                "{:.2} g vertical",
+                                model.design_force_targets.maximum_vertical_g - delivered_peak_g
+                            ),
+                            format!("height {height_m:.1} m, span {span_m:.1} m"),
+                        )
+                    }
+                    (
+                        ElementIntent::ZeroGRoll { hand, .. },
+                        ElementSpec::ZeroGRoll {
+                            design_speed_mps,
+                            hand: spec_hand,
+                            target_peak_g,
+                            delivered_peak_g,
+                            delivered_crest_g,
+                            peak_roll_rate_deg_s,
+                            height_m,
+                            span_m,
+                            ..
+                        },
+                    ) => {
+                        if hand != spec_hand {
+                            return Err(format!(
+                                "ride zero-g roll intent hand does not match its resolved spec at piece {piece_index}"
+                            ));
+                        }
+                        let hand_name = match hand {
+                            Hand::Left => "left",
+                            Hand::Right => "right",
+                        };
+                        (
+                            *design_speed_mps,
+                            format!("{hand_name} zero-g roll"),
+                            format!("peak {target_peak_g:.2} g, zero-g crest"),
+                            format!(
+                                "peak {delivered_peak_g:.2} g, crest {delivered_crest_g:.2} g, roll {peak_roll_rate_deg_s:.0} deg/s"
+                            ),
+                            format!(
+                                "{:.2} g vertical",
+                                model.design_force_targets.maximum_vertical_g - delivered_peak_g
+                            ),
+                            format!("height {height_m:.1} m, span {span_m:.1} m"),
+                        )
+                    }
+                    (
+                        ElementIntent::RavenTurn { hand, top_feel, .. },
+                        ElementSpec::RavenTurn {
+                            design_speed_mps,
+                            hand: spec_hand,
+                            target_peak_g,
+                            delivered_peak_g,
+                            delivered_top_g,
+                            peak_roll_rate_deg_s,
+                            height_m,
+                            span_m,
+                            ..
+                        },
+                    ) => {
+                        if hand != spec_hand {
+                            return Err(format!(
+                                "ride Raven turn intent hand does not match its resolved spec at piece {piece_index}"
+                            ));
+                        }
+                        let hand_name = match hand {
+                            Hand::Left => "left",
+                            Hand::Right => "right",
+                        };
+                        let top_name = match top_feel {
+                            LoopTopFeel::Floaty => "floaty",
+                            LoopTopFeel::Neutral => "neutral",
+                            LoopTopFeel::PressedIn => "pressed-in",
+                        };
+                        (
+                            *design_speed_mps,
+                            format!("{hand_name} Raven turn"),
+                            format!("peak {target_peak_g:.2} g, {top_name} top"),
+                            format!(
+                                "peak {delivered_peak_g:.2} g, top {delivered_top_g:.2} g, roll {peak_roll_rate_deg_s:.0} deg/s"
+                            ),
+                            format!(
+                                "{:.2} g vertical",
+                                model.design_force_targets.maximum_vertical_g - delivered_peak_g
+                            ),
+                            format!("height {height_m:.1} m, span {span_m:.1} m"),
                         )
                     }
                     _ => {
@@ -4380,6 +4752,24 @@ fn ride_step_piece_id(ride_step: &RideStep) -> Option<&str> {
             ElementSpec::Turn {
                 hand: Hand::Right, ..
             } => "ShapedTurnRight",
+            ElementSpec::Loop {
+                hand: Hand::Left, ..
+            } => "ShapedLoopLeft",
+            ElementSpec::Loop {
+                hand: Hand::Right, ..
+            } => "ShapedLoopRight",
+            ElementSpec::ZeroGRoll {
+                hand: Hand::Left, ..
+            } => "ShapedZeroGRollLeft",
+            ElementSpec::ZeroGRoll {
+                hand: Hand::Right, ..
+            } => "ShapedZeroGRollRight",
+            ElementSpec::RavenTurn {
+                hand: Hand::Left, ..
+            } => "ShapedRavenTurnLeft",
+            ElementSpec::RavenTurn {
+                hand: Hand::Right, ..
+            } => "ShapedRavenTurnRight",
         }),
         _ => None,
     }
@@ -5203,7 +5593,10 @@ mod shaped_command_parser_tests {
                 size: *size,
             }
             .into_intent(&model),
-            super::ShapedPlaceRequest::Turn { .. } => panic!("expected hill request"),
+            super::ShapedPlaceRequest::Turn { .. }
+            | super::ShapedPlaceRequest::Loop { .. }
+            | super::ShapedPlaceRequest::ZeroGRoll { .. }
+            | super::ShapedPlaceRequest::RavenTurn { .. } => panic!("expected hill request"),
         };
         let ride: RideFile = serde_json::from_str(include_str!(
             "../../../content/rides/horizon-hawk.ride.json"
@@ -5418,5 +5811,72 @@ mod shaped_replay_estimate_tests {
                 maximum_longitudinal_g: worst_car.maximum_longitudinal_g,
             })
         );
+    }
+
+    #[test]
+    fn parses_shaped_inversion_commands_and_reports_model_supported_shapes() {
+        use super::{RideCommand, parse_commands, render_choices};
+
+        let commands = parse_commands(&[
+            "place loop left g=4.2 top=floaty".to_owned(),
+            "place zero-g-roll right g=3.5".to_owned(),
+            "place raven-turn left g=4.0 top=pressed-in".to_owned(),
+        ])
+        .expect("shaped inversion CLI commands should parse");
+        assert_eq!(commands.len(), 3);
+        let RideCommand::Place { id: loop_id, .. } = &commands[0] else {
+            panic!("expected loop command");
+        };
+        assert_eq!(loop_id, "shape:loop:left:4.2:floaty");
+        let RideCommand::Place { id: roll_id, .. } = &commands[1] else {
+            panic!("expected zero-g roll command");
+        };
+        assert_eq!(roll_id, "shape:zeroGRoll:right:3.5");
+        let RideCommand::Place { id: raven_id, .. } = &commands[2] else {
+            panic!("expected Raven turn command");
+        };
+        assert_eq!(raven_id, "shape:ravenTurn:left:4:pressedIn");
+
+        for invalid in [
+            "place loop up",
+            "place loop left g=-4",
+            "place loop left top=wild",
+            "place zero-g-roll left top=neutral",
+            "place raven-turn right g=4 g=4.2",
+        ] {
+            assert!(parse_commands(&[invalid.to_owned()]).is_err(), "{invalid}");
+        }
+
+        // Verify options shapes lists inversions according to model capability.
+        let mut viper = BuilderSession::new(WasmSimulation::new(42, 0, String::from("new")));
+        viper.start("velocity_viper", 128, 128, 40, 0).unwrap();
+        let viper_shapes = render_choices(&mut viper, Some("shapes")).unwrap();
+        assert!(
+            viper_shapes
+                .text
+                .contains("shape:loop:left:default:neutral")
+        );
+        assert!(viper_shapes.text.contains("shape:zeroGRoll:left:default"));
+        assert!(
+            viper_shapes
+                .text
+                .contains("shape:ravenTurn:left:default:neutral")
+        );
+
+        let mut briar = BuilderSession::new(WasmSimulation::new(42, 0, String::from("new")));
+        briar.start("wooden_twister", 128, 128, 40, 0).unwrap();
+        let briar_shapes = render_choices(&mut briar, Some("shapes")).unwrap();
+        assert!(
+            briar_shapes
+                .text
+                .contains("shape:loop:left:default:neutral")
+        );
+        assert!(!briar_shapes.text.contains("shape:zeroGRoll:"));
+        assert!(!briar_shapes.text.contains("shape:ravenTurn:"));
+
+        let mut hyper = BuilderSession::new(WasmSimulation::new(42, 0, String::from("new")));
+        hyper.start("hyper", 128, 128, 40, 0).unwrap();
+        let hyper_shapes = render_choices(&mut hyper, Some("shapes")).unwrap();
+        assert!(!hyper_shapes.text.contains("shape:loop:"));
     }
 }

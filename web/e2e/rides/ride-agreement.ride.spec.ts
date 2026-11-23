@@ -74,7 +74,13 @@ for (const { stem, ride } of rides) {
           : "intent" in step
             ? "hill" in step.intent
               ? `shaped hill ${step.intent.hill.feel}`
-              : `shaped turn ${step.intent.turn.hand}`
+              : "turn" in step.intent
+                ? `shaped turn ${step.intent.turn.hand}`
+                : "loop" in step.intent
+                  ? `shaped loop ${step.intent.loop.hand}`
+                  : "zero_g_roll" in step.intent
+                    ? `shaped zero-g roll ${step.intent.zero_g_roll.hand}`
+                    : `shaped Raven turn ${step.intent.raven_turn.hand}`
             : `non-placement step ${stepNumber}`;
         if (!("place" in step) && !("intent" in step)) {
           throw new Error(`Estimate callback for non-placement step ${stepNumber}`);

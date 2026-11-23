@@ -61,6 +61,9 @@ panel.setShapes([
   shape("Station", "Station", "Station", 0), shape("Straight", "Straight", "Track", 0),
   shape("TurnSmallStandalone", "Standalone small left turn", "Track", 1), shape("LevelToGentleUp", "Begin gentle climb", "Track", 0, "UpGentle"),
   hillShape(), bankedTurnShape("left"), bankedTurnShape("right"),
+  shape("Loop", "Vertical loop", "Track", 0), shape("LoopRight", "Right vertical loop", "Track", 0),
+  shape("ZeroGRollFastLeft", "Zero-g roll left", "Track", 0), shape("ZeroGRollFastRight", "Zero-g roll right", "Track", 0),
+  shape("HalfLoopUp", "Half loop up", "Track", 0),
 ]);
 const state: ConstructionState = {
   type: "construction-state", complete: true, active: true, chain: false, colors: { track: "coral", supports: "timber", trains: "sage" },

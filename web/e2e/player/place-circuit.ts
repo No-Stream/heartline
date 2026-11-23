@@ -116,7 +116,7 @@ function parseShapeForce(line: string): number {
   return value;
 }
 
-async function stepShapeValue(page: Page, attribute: "strength" | "size" | "radius", direction: -1 | 1): Promise<void> {
+async function stepShapeValue(page: Page, attribute: "strength" | "size" | "radius" | "peakG" | "topFeel", direction: -1 | 1): Promise<void> {
   const value = page.locator(`[data-shape-value="${attribute}"]`);
   const editor = page.locator("[data-construction] [data-editor]");
   const current = (await value.textContent())?.trim();
@@ -178,8 +178,37 @@ async function selectShapedStep(page: Page, step: PlaceCircuitShapeStep): Promis
     if (intentSelection.size.kind === "height") {
       await setFixedShapeDimension(page, "hill", intentSelection.size.heightMetres);
     }
-  } else if (intentSelection.size.kind === "radius") {
-    await setFixedShapeDimension(page, "turn", intentSelection.size.radiusMetres);
+  } else if (intentSelection.kind === "turn") {
+    if (intentSelection.size.kind === "radius") {
+      await setFixedShapeDimension(page, "turn", intentSelection.size.radiusMetres);
+    }
+  } else {
+    const readPeakG = async (): Promise<number> => {
+      const text = (await page.locator('[data-shape-value="peakG"]').textContent()) ?? "";
+      const match = /([0-9]+(?:\.[0-9]+)?)/.exec(text);
+      if (!match) throw new Error(`Invalid shaped inversion peak g readout: ${text}`);
+      return Number(match[1]);
+    };
+    let currentPeakG = await readPeakG();
+    while (Math.abs(currentPeakG - intentSelection.peakG) > 1e-5) {
+      await stepShapeValue(page, "peakG", currentPeakG < intentSelection.peakG ? 1 : -1);
+      currentPeakG = await readPeakG();
+    }
+    if (intentSelection.kind !== "zeroGRoll") {
+      const topFeelOrder = ["Floaty", "Neutral", "Pressed in"] as const;
+      const targetIndex = intentSelection.topFeel === "floaty" ? 0 : intentSelection.topFeel === "neutral" ? 1 : 2;
+      const readTopFeelIndex = async (): Promise<number> => {
+        const label = ((await page.locator('[data-shape-value="topFeel"]').textContent()) ?? "").trim();
+        const index = topFeelOrder.indexOf(label as (typeof topFeelOrder)[number]);
+        if (index < 0) throw new Error(`Invalid shaped inversion top feel readout: ${label}`);
+        return index;
+      };
+      let currentIndex = await readTopFeelIndex();
+      while (currentIndex !== targetIndex) {
+        await stepShapeValue(page, "topFeel", currentIndex < targetIndex ? 1 : -1);
+        currentIndex = await readTopFeelIndex();
+      }
+    }
   }
 
   const expectedId = shapeSelectionId(intentSelection);

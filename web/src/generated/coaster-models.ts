@@ -2,6 +2,11 @@
 
 export const COASTER_MODELS = [
   {
+    "allowed_inversions": [
+      "VerticalLoop",
+      "Corkscrew",
+      "HeartlineRoll"
+    ],
     "default_colors": {
       "supports": "timber",
       "track": "coral",
@@ -14,6 +19,11 @@ export const COASTER_MODELS = [
     "track_material": "hybrid"
   },
   {
+    "allowed_inversions": [
+      "VerticalLoop",
+      "Corkscrew",
+      "HeartlineRoll"
+    ],
     "default_colors": {
       "supports": "cream",
       "track": "teal",
@@ -26,6 +36,9 @@ export const COASTER_MODELS = [
     "track_material": "steel"
   },
   {
+    "allowed_inversions": [
+      "VerticalLoop"
+    ],
     "default_colors": {
       "supports": "timber",
       "track": "timber",
@@ -38,6 +51,7 @@ export const COASTER_MODELS = [
     "track_material": "wood"
   },
   {
+    "allowed_inversions": [],
     "default_colors": {
       "supports": "sky",
       "track": "mustard",
@@ -50,6 +64,7 @@ export const COASTER_MODELS = [
     "track_material": "steel"
   },
   {
+    "allowed_inversions": [],
     "default_colors": {
       "supports": "cream",
       "track": "sky",

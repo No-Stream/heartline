@@ -26,6 +26,9 @@ tools/design check content/rides/horizon-hawk.ride.json      # the acceptance ch
 | `place <id> [--matched] [--launch-speed <m/s>] [--note <text>]` | Place a classic piece. |
 | `place hill feel=<floater\|strong-floater\|ejector> [g=<target>] [height=<m>]` | Place a shaped airtime hill. |
 | `place turn <left\|right> feel=banked [radius=<m>]` | Place a shaped fully banked turn. |
+| `place loop <left\|right> [g=<peak>] [top=<floaty\|neutral\|pressed-in>]` | Place a shaped vertical loop sized to entry speed and peak vertical g (steel-structure on `wooden_twister`). |
+| `place zero-g-roll <left\|right> [g=<peak>]` | Place a shaped heartlined zero-g roll sized to entry speed and peak vertical g. |
+| `place raven-turn <left\|right> [g=<peak>] [top=<floaty\|neutral\|pressed-in>]` | Place a shaped single-piece Raven turn (climbing half-loop + offset half-roll) that reverses heading 180°. |
 | `chain on\|off`, `launch-speed <n> <m/s>`, `cars <n>`, `trains <n>`, `auto-blocks` | Lift, launch, train and block settings. |
 | `undo [count]`, `truncate <steps>` | Remove placements. |
 | `finish`, `finish apply <n>`, `close` | List ranked ways back to the station; place one and close the circuit; close a circuit that already reaches the station. |
@@ -61,7 +64,7 @@ WideLevelToSixtyDown            5.0 1.0-9.5       +4.0 1.0 (weak) / -0.8 (good) 
 LevelToGentleDown               5.0 —                — 1.0 (weak) / 0.4 (weak)                    0.0 (fine)         0.4 (fine)         reachedEnd
 ```
 
-`probe` works for both classic ids and shaped ids. For a shaped id, both `probe` and `estimate` print the solved shape: design speed, target and delivered force, and size. Shaped ids have the form `shape:hill:<floater|strongFloater|ejector>:<g or default>:<auto or fixed-<metres>>` and `shape:turn:<left|right>:fullyBanked:<auto or fixed-<metres>>`; `options shapes` prints the automatic ones.
+`probe` works for both classic ids and shaped ids. For a shaped id, both `probe` and `estimate` print the solved shape: design speed, target and delivered force, and size. Shaped ids have the form `shape:hill:<floater|strongFloater|ejector>:<g or default>:<auto or fixed-<metres>>`, `shape:turn:<left|right>:fullyBanked:<auto or fixed-<metres>>`, `shape:loop:<left|right>:<peak_g or default>:<floaty|neutral|pressedIn>`, `shape:zeroGRoll:<left|right>:<peak_g or default>`, and `shape:ravenTurn:<left|right>:<peak_g or default>:<floaty|neutral|pressedIn>`; `options shapes` prints the automatic ones supported by the model.
 
 ```console
 $ tools/design ride demo-hyper.ride.json options shapes
@@ -94,6 +97,8 @@ Here the turn entered at 33.2 m/s, 1.8 m/s inside the 29-35 m/s window. That pas
 ### Place shaped elements by feel
 
 Shaped elements are solved for the entry speed and the actual train: you ask for a feel and the tool sizes the element so that the train delivers it. The hill feels are `floater` (default -0.5 g), `strong-floater` (-0.85 g) and `ejector` (-1.2 g on steel, -0.8 g on wood); `g=` overrides the target and must be negative, and `height=` fixes the height instead of letting the solver pick it. Turns have one feel, `banked`, which means fully banked with the lateral force driven close to zero; `radius=` fixes the radius. There is no `g=` option for turns. A radius the solver cannot shape within the force limits is refused with `infeasibleTarget`, as the 32 m probe above shows.
+
+Inverting coaster models also support shaped inversions sized to entry speed, train length, and peak positive vertical g: `place loop` on `velocity_viper`, `hybrid`, and `wooden_twister` (which builds a steel-structure vertical loop on wooden track), plus `place zero-g-roll` and `place raven-turn` on `velocity_viper` and `hybrid`. Vertical loops and Raven turns accept an optional peak vertical force (`g=3.5`, `3.8`, `4.0`, `4.2`, or `4.5` in the browser stepper) and a top feel (`top=floaty` at 0.3 g, `top=neutral` at 1.0 g, or `top=pressed-in` at 1.5 g). Zero-g rolls accept an optional peak vertical force (`g=3.0` through `4.5`) and calibrate crest airtime near 0 g while keeping axial roll rate at or below 200°/s. Pushing peak vertical g past a model's typical target (for example, 4.2 g on Briar Blitz or 4.5 g on Timber Tumbler) stays allowed up to the global ASTM comfort envelope and shows the amber feel note.
 
 ```console
 $ tools/design ride demo-hyper.ride.json place turn left feel=banked radius=68 place hill feel=strong-floater g=-0.85 height=24

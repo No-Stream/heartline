@@ -71,6 +71,11 @@ impl LegacyV4ElementSpec {
                 bank_degrees: *bank_degrees,
                 geometry: geometry.clone(),
             },
+            ElementSpec::Loop { .. }
+            | ElementSpec::ZeroGRoll { .. }
+            | ElementSpec::RavenTurn { .. } => {
+                panic!("legacy v4 saves did not contain shaped inversions")
+            }
         }
     }
 }
@@ -134,6 +139,45 @@ fn shape_selection_id(intent: &ElementIntent) -> String {
                 TurnSizeHint::Radius(radius) => format!("fixed-{radius}"),
             };
             format!("shape:turn:{hand}:fullyBanked:{size}")
+        }
+        ElementIntent::Loop {
+            hand,
+            peak_g,
+            top_feel,
+        } => {
+            let hand = match hand {
+                Hand::Left => "left",
+                Hand::Right => "right",
+            };
+            let top = match top_feel {
+                theme_park_sim::track::LoopTopFeel::Floaty => "floaty",
+                theme_park_sim::track::LoopTopFeel::Neutral => "neutral",
+                theme_park_sim::track::LoopTopFeel::PressedIn => "pressedIn",
+            };
+            format!("shape:loop:{hand}:{peak_g}:{top}")
+        }
+        ElementIntent::ZeroGRoll { hand, peak_g } => {
+            let hand = match hand {
+                Hand::Left => "left",
+                Hand::Right => "right",
+            };
+            format!("shape:zeroGRoll:{hand}:{peak_g}")
+        }
+        ElementIntent::RavenTurn {
+            hand,
+            peak_g,
+            top_feel,
+        } => {
+            let hand = match hand {
+                Hand::Left => "left",
+                Hand::Right => "right",
+            };
+            let top = match top_feel {
+                theme_park_sim::track::LoopTopFeel::Floaty => "floaty",
+                theme_park_sim::track::LoopTopFeel::Neutral => "neutral",
+                theme_park_sim::track::LoopTopFeel::PressedIn => "pressedIn",
+            };
+            format!("shape:ravenTurn:{hand}:{peak_g}:{top}")
         }
     }
 }
@@ -576,6 +620,33 @@ fn save_round_trips_horizon_hawk_shaped_ride_under_two_mebibytes() {
         .replay_ride(&ride)
         .expect("Horizon Hawk shaped ride replays after save reload");
     assert_eq!(restored.state_hash(), replayed.state_hash());
+}
+
+#[test]
+fn v6_save_round_trips_shaped_inversions() {
+    for (model_key, selection) in [
+        ("velocity_viper", "shape:loop:left:4:neutral"),
+        ("velocity_viper", "shape:zeroGRoll:right:3.5"),
+        ("velocity_viper", "shape:ravenTurn:left:4:floaty"),
+        ("wooden_twister", "shape:loop:left:3.5:neutral"),
+    ] {
+        let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+        simulation.construction_select(&format!("model:{model_key}"));
+        simulation.construction_start(128, 128, 20, 0);
+        simulation.construction_select(selection);
+        assert!(
+            simulation.construction_message().is_empty(),
+            "{model_key} {selection}: {}",
+            simulation.construction_message()
+        );
+
+        let saved = simulation.save_state_native().unwrap();
+        let restored = WasmSimulation::load_state_native(&saved).unwrap();
+        let selected = restored
+            .construction_selected_shape_wire(true)
+            .expect("selected shaped inversion survives save loading");
+        assert_eq!(selected.selection, selection);
+    }
 }
 
 #[test]

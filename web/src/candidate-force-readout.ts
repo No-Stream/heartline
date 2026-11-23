@@ -20,8 +20,10 @@ function formatCalibratedForce(force: number): string {
 function shapeRefusalMessage(shape: ConstructionShapedElementWire, units: Units): string[] {
   if (!shape.refusal) return [];
   switch (shape.refusal.kind) {
-    case "stall":
-      return [`Would stall at ${formatSpeed(shape.refusal.entrySpeedMps, units, 0)}; tallest feasible hill is ${formatLength(shape.refusal.heightM, units)}.`];
+    case "stall": {
+      const noun = shape.kind === "hill" ? "hill" : "element";
+      return [`Would stall at ${formatSpeed(shape.refusal.entrySpeedMps, units, 0)}; tallest feasible ${noun} is ${formatLength(shape.refusal.heightM, units)}.`];
+    }
     case "infeasibleTarget":
       return [`Target ${formatCalibratedForce(shape.refusal.targetG)} g exceeds available headroom of ${formatCalibratedForce(shape.refusal.availableHeadroomG)} g.`];
     case "belowMinimumSpeed":
@@ -61,6 +63,36 @@ export function shapedElementReadout(shape: ConstructionShapedElementWire, units
       trainLine,
       `Airtime target: ${formatCalibratedForce(spec.targetG)} g · calibrated: ${formatCalibratedForce(spec.deliveredG)} g`,
       `Resolved size: ${formatLength(spec.heightM, units)} high × ${formatLength(spec.spanM, units)} span`,
+      ...feelNote,
+    ];
+  }
+  if (spec.kind === "loop" || spec.kind === "zeroGRoll" || spec.kind === "ravenTurn") {
+    if (spec.targetG === null || spec.deliveredG === null || spec.heightM === null || spec.spanM === null) {
+      throw new Error(`Shaped ${spec.kind} calibration is missing target, delivered force, or dimensions`);
+    }
+    const topFeelLabel = spec.topFeel === "floaty"
+      ? "Floaty"
+      : spec.topFeel === "pressedIn"
+        ? "Pressed in"
+        : "Neutral";
+    const forceParts = [
+      `Peak target: ${formatCalibratedForce(spec.targetG)} g · calibrated: ${formatCalibratedForce(spec.deliveredG)} g`,
+    ];
+    if (spec.topG !== null) {
+      if (spec.kind === "zeroGRoll") {
+        forceParts.push(`crest: ${formatCalibratedForce(spec.topG)} g`);
+      } else {
+        forceParts.push(`top: ${formatCalibratedForce(spec.topG)} g (${topFeelLabel})`);
+      }
+    }
+    if (spec.peakRollRateDegS !== null) {
+      forceParts.push(`roll: ${Math.round(spec.peakRollRateDegS)}°/s`);
+    }
+    const structureSuffix = spec.steelStructure ? " · steel structure" : "";
+    return [
+      trainLine,
+      forceParts.join(" · "),
+      `Resolved size: ${formatLength(spec.heightM, units)} high × ${formatLength(spec.spanM, units)} span${structureSuffix}`,
       ...feelNote,
     ];
   }

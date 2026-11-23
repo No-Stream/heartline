@@ -2097,6 +2097,12 @@ fn build_catalog() -> Vec<Piece> {
         (ShapedHill, "Shaped airtime hill"),
         (ShapedTurnLeft, "Shaped banked turn left"),
         (ShapedTurnRight, "Shaped banked turn right"),
+        (ShapedLoopLeft, "Shaped vertical loop left"),
+        (ShapedLoopRight, "Shaped vertical loop right"),
+        (ShapedZeroGRollLeft, "Shaped zero-g roll left"),
+        (ShapedZeroGRollRight, "Shaped zero-g roll right"),
+        (ShapedRavenTurnLeft, "Shaped Raven turn left"),
+        (ShapedRavenTurnRight, "Shaped Raven turn right"),
     ] {
         let mut piece = straight.clone();
         piece.id = id;

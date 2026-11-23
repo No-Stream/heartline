@@ -7,8 +7,9 @@ use theme_park_sim::physics::{
 };
 use theme_park_sim::track::rated_windows::{RatedWindowSource, measured_rated_window};
 use theme_park_sim::track::shaped::{
-    ElementIntent, ElementSpec, HillSizeHint, ShapedConstructionError, SolveRefusal, TurnSizeHint,
-    default_hill_strength,
+    ElementIntent, ElementSpec, HillSizeHint, LoopTopFeel, ShapedConstructionError, SolveRefusal,
+    TurnSizeHint, default_hill_strength, default_loop_peak_g, default_raven_turn_peak_g,
+    default_zero_g_roll_peak_g,
 };
 use theme_park_sim::track::{
     Bank, CoasterModel, DesignForceTargets, ENVELOPE_DISPLAY_LIMITS, ForceRating, ForceRatingAxis,
@@ -66,7 +67,7 @@ pub struct ConstructionSpeedTurnWire {
 #[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ConstructionShapeSpecWire {
-    #[ts(type = "\"hill\" | \"turn\"")]
+    #[ts(type = "\"hill\" | \"turn\" | \"loop\" | \"zeroGRoll\" | \"ravenTurn\"")]
     pub kind: &'static str,
     pub design_speed_mps: f64,
     pub cars: u8,
@@ -78,6 +79,11 @@ pub struct ConstructionShapeSpecWire {
     pub span_m: Option<f64>,
     pub radius_m: Option<f64>,
     pub bank_degrees: Option<f64>,
+    #[ts(type = "\"floaty\" | \"neutral\" | \"pressedIn\" | null")]
+    pub top_feel: Option<&'static str>,
+    pub top_g: Option<f64>,
+    pub peak_roll_rate_deg_s: Option<f64>,
+    pub steel_structure: bool,
     pub geometry_digest: String,
 }
 
@@ -116,7 +122,7 @@ pub enum ConstructionShapeRefusalWire {
 #[serde(rename_all = "camelCase")]
 pub struct ConstructionShapedElementWire {
     pub selection: String,
-    #[ts(type = "\"hill\" | \"turn\"")]
+    #[ts(type = "\"hill\" | \"turn\" | \"loop\" | \"zeroGRoll\" | \"ravenTurn\"")]
     pub kind: &'static str,
     pub feel: Option<&'static str>,
     #[ts(type = "\"left\" | \"right\" | null")]
@@ -128,6 +134,36 @@ pub struct ConstructionShapedElementWire {
     pub spec: Option<ConstructionShapeSpecWire>,
     pub refusal: Option<ConstructionShapeRefusalWire>,
     pub piece_shape: Option<crate::reports::PieceShapeReport>,
+}
+
+fn parse_loop_top_feel(feel: &str) -> Result<LoopTopFeel, String> {
+    match feel {
+        "floaty" => Ok(LoopTopFeel::Floaty),
+        "neutral" => Ok(LoopTopFeel::Neutral),
+        "pressedIn" => Ok(LoopTopFeel::PressedIn),
+        _ => Err(format!("Unknown shaped loop top feel {feel:?}")),
+    }
+}
+
+fn loop_top_feel_wire(feel: LoopTopFeel) -> &'static str {
+    match feel {
+        LoopTopFeel::Floaty => "floaty",
+        LoopTopFeel::Neutral => "neutral",
+        LoopTopFeel::PressedIn => "pressedIn",
+    }
+}
+
+fn parse_peak_g(value: &str, default_peak_g: f64, label: &str) -> Result<f64, String> {
+    if value == "default" {
+        return Ok(default_peak_g);
+    }
+    let parsed = value
+        .parse::<f64>()
+        .map_err(|_| format!("Invalid shaped {label} peak g {value:?}"))?;
+    if !parsed.is_finite() {
+        return Err(format!("Invalid shaped {label} peak g {value:?}"));
+    }
+    Ok(parsed)
 }
 
 fn parse_shape_selection(selection: &str, model: &CoasterModel) -> Result<ElementIntent, String> {
@@ -166,6 +202,31 @@ fn parse_shape_selection(selection: &str, model: &CoasterModel) -> Result<Elemen
             Ok(ElementIntent::Turn { hand, size })
         }
         ["shape", "turn", _, feel, _] => Err(format!("Unsupported shaped turn feel {feel:?}")),
+        ["shape", "loop", hand, peak_g, top_feel] => {
+            let hand = parse_shape_hand(hand)?;
+            let peak_g = parse_peak_g(peak_g, default_loop_peak_g(model), "loop")?;
+            let top_feel = parse_loop_top_feel(top_feel)?;
+            Ok(ElementIntent::Loop {
+                hand,
+                peak_g,
+                top_feel,
+            })
+        }
+        ["shape", "zeroGRoll", hand, peak_g] => {
+            let hand = parse_shape_hand(hand)?;
+            let peak_g = parse_peak_g(peak_g, default_zero_g_roll_peak_g(model), "zero-g roll")?;
+            Ok(ElementIntent::ZeroGRoll { hand, peak_g })
+        }
+        ["shape", "ravenTurn", hand, peak_g, top_feel] => {
+            let hand = parse_shape_hand(hand)?;
+            let peak_g = parse_peak_g(peak_g, default_raven_turn_peak_g(model), "Raven turn")?;
+            let top_feel = parse_loop_top_feel(top_feel)?;
+            Ok(ElementIntent::RavenTurn {
+                hand,
+                peak_g,
+                top_feel,
+            })
+        }
         _ => Err(format!("Invalid shaped element selection {selection:?}")),
     }
 }
@@ -225,6 +286,37 @@ fn shape_selection_id(intent: &ElementIntent) -> String {
             };
             format!("shape:turn:{hand}:fullyBanked:{size}")
         }
+        ElementIntent::Loop {
+            hand,
+            peak_g,
+            top_feel,
+        } => {
+            let hand = match hand {
+                Hand::Left => "left",
+                Hand::Right => "right",
+            };
+            let top_feel = loop_top_feel_wire(*top_feel);
+            format!("shape:loop:{hand}:{peak_g}:{top_feel}")
+        }
+        ElementIntent::ZeroGRoll { hand, peak_g } => {
+            let hand = match hand {
+                Hand::Left => "left",
+                Hand::Right => "right",
+            };
+            format!("shape:zeroGRoll:{hand}:{peak_g}")
+        }
+        ElementIntent::RavenTurn {
+            hand,
+            peak_g,
+            top_feel,
+        } => {
+            let hand = match hand {
+                Hand::Left => "left",
+                Hand::Right => "right",
+            };
+            let top_feel = loop_top_feel_wire(*top_feel);
+            format!("shape:ravenTurn:{hand}:{peak_g}:{top_feel}")
+        }
     }
 }
 
@@ -238,6 +330,9 @@ fn shape_size_hint(intent: &ElementIntent) -> Option<f64> {
             TurnSizeHint::Auto => None,
             TurnSizeHint::Radius(radius) => Some(*radius),
         },
+        ElementIntent::Loop { .. }
+        | ElementIntent::ZeroGRoll { .. }
+        | ElementIntent::RavenTurn { .. } => None,
     }
 }
 
@@ -250,6 +345,10 @@ fn shape_feel(intent: &ElementIntent) -> Option<&'static str> {
             other => panic!("unsupported shaped hill feel {other:?}"),
         }),
         ElementIntent::Turn { .. } => Some("fullyBanked"),
+        ElementIntent::Loop { top_feel, .. } | ElementIntent::RavenTurn { top_feel, .. } => {
+            Some(loop_top_feel_wire(*top_feel))
+        }
+        ElementIntent::ZeroGRoll { .. } => None,
     }
 }
 
@@ -257,13 +356,19 @@ fn shape_strength(intent: &ElementIntent) -> Option<f64> {
     match intent {
         ElementIntent::Hill { strength_g, .. } => Some(*strength_g),
         ElementIntent::Turn { .. } => None,
+        ElementIntent::Loop { peak_g, .. }
+        | ElementIntent::ZeroGRoll { peak_g, .. }
+        | ElementIntent::RavenTurn { peak_g, .. } => Some(*peak_g),
     }
 }
 
 fn shape_hand(intent: &ElementIntent) -> Option<&'static str> {
     match intent {
         ElementIntent::Hill { .. } => None,
-        ElementIntent::Turn { hand, .. } => Some(match hand {
+        ElementIntent::Turn { hand, .. }
+        | ElementIntent::Loop { hand, .. }
+        | ElementIntent::ZeroGRoll { hand, .. }
+        | ElementIntent::RavenTurn { hand, .. } => Some(match hand {
             Hand::Left => "left",
             Hand::Right => "right",
         }),
@@ -271,6 +376,7 @@ fn shape_hand(intent: &ElementIntent) -> Option<&'static str> {
 }
 
 fn shaped_spec_wire(spec: &ElementSpec) -> ConstructionShapeSpecWire {
+    let geometry_digest = format!("{:016x}", spec.resolved_geometry_digest());
     match spec {
         ElementSpec::Hill {
             design_speed_mps,
@@ -292,7 +398,11 @@ fn shaped_spec_wire(spec: &ElementSpec) -> ConstructionShapeSpecWire {
             span_m: Some(*span_m),
             radius_m: None,
             bank_degrees: None,
-            geometry_digest: format!("{:016x}", spec.resolved_geometry_digest()),
+            top_feel: None,
+            top_g: None,
+            peak_roll_rate_deg_s: None,
+            steel_structure: false,
+            geometry_digest,
         },
         ElementSpec::Turn {
             design_speed_mps,
@@ -314,7 +424,97 @@ fn shaped_spec_wire(spec: &ElementSpec) -> ConstructionShapeSpecWire {
             span_m: None,
             radius_m: Some(*radius_m),
             bank_degrees: Some(*bank_degrees),
-            geometry_digest: format!("{:016x}", spec.resolved_geometry_digest()),
+            top_feel: None,
+            top_g: None,
+            peak_roll_rate_deg_s: None,
+            steel_structure: false,
+            geometry_digest,
+        },
+        ElementSpec::Loop {
+            design_speed_mps,
+            cars,
+            top_feel,
+            target_peak_g,
+            delivered_peak_g,
+            delivered_top_g,
+            height_m,
+            span_m,
+            steel_structure,
+            ..
+        } => ConstructionShapeSpecWire {
+            kind: "loop",
+            design_speed_mps: *design_speed_mps,
+            cars: *cars,
+            target_g: Some(*target_peak_g),
+            delivered_g: Some(*delivered_peak_g),
+            vertical_g: Some(*delivered_peak_g),
+            lateral_g: None,
+            height_m: Some(*height_m),
+            span_m: Some(*span_m),
+            radius_m: None,
+            bank_degrees: None,
+            top_feel: Some(loop_top_feel_wire(*top_feel)),
+            top_g: Some(*delivered_top_g),
+            peak_roll_rate_deg_s: None,
+            steel_structure: *steel_structure,
+            geometry_digest,
+        },
+        ElementSpec::ZeroGRoll {
+            design_speed_mps,
+            cars,
+            target_peak_g,
+            delivered_peak_g,
+            delivered_crest_g,
+            peak_roll_rate_deg_s,
+            height_m,
+            span_m,
+            ..
+        } => ConstructionShapeSpecWire {
+            kind: "zeroGRoll",
+            design_speed_mps: *design_speed_mps,
+            cars: *cars,
+            target_g: Some(*target_peak_g),
+            delivered_g: Some(*delivered_peak_g),
+            vertical_g: Some(*delivered_peak_g),
+            lateral_g: None,
+            height_m: Some(*height_m),
+            span_m: Some(*span_m),
+            radius_m: None,
+            bank_degrees: None,
+            top_feel: None,
+            top_g: Some(*delivered_crest_g),
+            peak_roll_rate_deg_s: Some(*peak_roll_rate_deg_s),
+            steel_structure: false,
+            geometry_digest,
+        },
+        ElementSpec::RavenTurn {
+            design_speed_mps,
+            cars,
+            top_feel,
+            target_peak_g,
+            delivered_peak_g,
+            delivered_top_g,
+            peak_roll_rate_deg_s,
+            height_m,
+            span_m,
+            ..
+        } => ConstructionShapeSpecWire {
+            kind: "ravenTurn",
+            design_speed_mps: *design_speed_mps,
+            cars: *cars,
+            target_g: Some(*target_peak_g),
+            delivered_g: Some(*delivered_peak_g),
+            vertical_g: Some(*delivered_peak_g),
+            lateral_g: None,
+            height_m: Some(*height_m),
+            span_m: Some(*span_m),
+            radius_m: None,
+            bank_degrees: None,
+            top_feel: Some(loop_top_feel_wire(*top_feel)),
+            top_g: Some(*delivered_top_g),
+            peak_roll_rate_deg_s: Some(*peak_roll_rate_deg_s),
+            steel_structure: false,
+            geometry_digest,
         },
     }
 }
@@ -358,7 +558,7 @@ fn solve_refusal_wire(refusal: SolveRefusal) -> ConstructionShapeRefusalWire {
 
 fn solve_refusal_message(refusal: SolveRefusal) -> String {
     match refusal {
-        SolveRefusal::Stall { height_m, .. } => format!("Hill stalls at {height_m:.1} m."),
+        SolveRefusal::Stall { height_m, .. } => format!("Element stalls at {height_m:.1} m."),
         SolveRefusal::InfeasibleTarget { target_g, .. } => {
             format!("The force target {target_g:.2} g is not feasible for this model.")
         }
@@ -1644,6 +1844,13 @@ impl WasmSimulation {
         let (kind, feel, hand) = match intent {
             ElementIntent::Hill { .. } => ("hill", shape_feel(intent), None),
             ElementIntent::Turn { .. } => ("turn", shape_feel(intent), shape_hand(intent)),
+            ElementIntent::Loop { .. } => ("loop", shape_feel(intent), shape_hand(intent)),
+            ElementIntent::ZeroGRoll { .. } => {
+                ("zeroGRoll", shape_feel(intent), shape_hand(intent))
+            }
+            ElementIntent::RavenTurn { .. } => {
+                ("ravenTurn", shape_feel(intent), shape_hand(intent))
+            }
         };
         match self.construction_shape_candidate(intent) {
             Ok(solved) => Some(ConstructionShapedElementWire {
@@ -3088,6 +3295,12 @@ define_piece_id_wire_names!(
     ShapedHill,
     ShapedTurnLeft,
     ShapedTurnRight,
+    ShapedLoopLeft,
+    ShapedLoopRight,
+    ShapedZeroGRollLeft,
+    ShapedZeroGRollRight,
+    ShapedRavenTurnLeft,
+    ShapedRavenTurnRight,
 );
 
 fn wire_heading(value: Heading) -> &'static str {

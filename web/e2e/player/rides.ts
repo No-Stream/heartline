@@ -49,6 +49,26 @@ export type RideShapeIntent =
         readonly hand: "Left" | "Right";
         readonly size: "Auto" | { readonly Radius: number };
       };
+    }
+  | {
+      readonly loop: {
+        readonly hand: "Left" | "Right";
+        readonly peak_g: number;
+        readonly top_feel: "Floaty" | "Neutral" | "PressedIn";
+      };
+    }
+  | {
+      readonly zero_g_roll: {
+        readonly hand: "Left" | "Right";
+        readonly peak_g: number;
+      };
+    }
+  | {
+      readonly raven_turn: {
+        readonly hand: "Left" | "Right";
+        readonly peak_g: number;
+        readonly top_feel: "Floaty" | "Neutral" | "PressedIn";
+      };
     };
 
 export type RideShapeSpec =

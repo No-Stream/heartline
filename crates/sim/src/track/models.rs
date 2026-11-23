@@ -440,6 +440,60 @@ fn is_resolved_shaped_piece(
                     && *bank_degrees <= profile.maximum_bank_degrees
             )
         }
+        (PieceId::ShapedLoopLeft, Shape::ShapedProfile { spec }) => {
+            matches!(
+                spec.as_ref(),
+                ElementSpec::Loop {
+                    hand: super::Hand::Left,
+                    ..
+                }
+            )
+        }
+        (PieceId::ShapedLoopRight, Shape::ShapedProfile { spec }) => {
+            matches!(
+                spec.as_ref(),
+                ElementSpec::Loop {
+                    hand: super::Hand::Right,
+                    ..
+                }
+            )
+        }
+        (PieceId::ShapedZeroGRollLeft, Shape::ShapedProfile { spec }) => {
+            matches!(
+                spec.as_ref(),
+                ElementSpec::ZeroGRoll {
+                    hand: super::Hand::Left,
+                    ..
+                }
+            )
+        }
+        (PieceId::ShapedZeroGRollRight, Shape::ShapedProfile { spec }) => {
+            matches!(
+                spec.as_ref(),
+                ElementSpec::ZeroGRoll {
+                    hand: super::Hand::Right,
+                    ..
+                }
+            )
+        }
+        (PieceId::ShapedRavenTurnLeft, Shape::ShapedProfile { spec }) => {
+            matches!(
+                spec.as_ref(),
+                ElementSpec::RavenTurn {
+                    hand: super::Hand::Left,
+                    ..
+                }
+            )
+        }
+        (PieceId::ShapedRavenTurnRight, Shape::ShapedProfile { spec }) => {
+            matches!(
+                spec.as_ref(),
+                ElementSpec::RavenTurn {
+                    hand: super::Hand::Right,
+                    ..
+                }
+            )
+        }
         _ => false,
     }
 }
@@ -532,6 +586,11 @@ const BRIAR_BLITZ_SHAPED_PROFILE: crate::track::shaped::ShapedProfile =
         maximum_turn_radius_m: 256.0,
         finish_turn_max_vertical_g: 3.5,
         finish_turn_max_lateral_g: 0.6,
+        minimum_inversion_speed_mps: 26.0,
+        maximum_inversion_speed_mps: 30.0,
+        default_loop_peak_g: 3.5,
+        default_zero_g_roll_peak_g: 0.0,
+        default_raven_turn_peak_g: 0.0,
     };
 
 pub fn wooden_twister_model() -> CoasterModel {
@@ -715,6 +774,11 @@ const TIMBER_TUMBLER_SHAPED_PROFILE: crate::track::shaped::ShapedProfile =
         maximum_turn_radius_m: 256.0,
         finish_turn_max_vertical_g: 3.5,
         finish_turn_max_lateral_g: 0.6,
+        minimum_inversion_speed_mps: 22.0,
+        maximum_inversion_speed_mps: 36.0,
+        default_loop_peak_g: 4.0,
+        default_zero_g_roll_peak_g: 3.5,
+        default_raven_turn_peak_g: 4.0,
     };
 
 pub fn hybrid_model() -> CoasterModel {
@@ -968,6 +1032,11 @@ const VELOCITY_VIPER_SHAPED_PROFILE: crate::track::shaped::ShapedProfile =
         maximum_turn_radius_m: 256.0,
         finish_turn_max_vertical_g: 3.5,
         finish_turn_max_lateral_g: 0.6,
+        minimum_inversion_speed_mps: 22.0,
+        maximum_inversion_speed_mps: 36.0,
+        default_loop_peak_g: 4.0,
+        default_zero_g_roll_peak_g: 3.5,
+        default_raven_turn_peak_g: 4.0,
     };
 
 pub fn multi_launch_model() -> CoasterModel {
@@ -1214,6 +1283,11 @@ const DAISY_DASH_SHAPED_PROFILE: crate::track::shaped::ShapedProfile =
         maximum_turn_radius_m: 256.0,
         finish_turn_max_vertical_g: 2.75,
         finish_turn_max_lateral_g: 0.6,
+        minimum_inversion_speed_mps: 0.0,
+        maximum_inversion_speed_mps: 0.0,
+        default_loop_peak_g: 0.0,
+        default_zero_g_roll_peak_g: 0.0,
+        default_raven_turn_peak_g: 0.0,
     };
 
 /// A gentle steel family coaster: a curved low lift, 45-degree drops at most, floaty family hills,
@@ -1363,6 +1437,11 @@ const HYPER_SHAPED_PROFILE: crate::track::shaped::ShapedProfile =
         maximum_turn_radius_m: 256.0,
         finish_turn_max_vertical_g: 3.5,
         finish_turn_max_lateral_g: 0.6,
+        minimum_inversion_speed_mps: 0.0,
+        maximum_inversion_speed_mps: 0.0,
+        default_loop_peak_g: 0.0,
+        default_zero_g_roll_peak_g: 0.0,
+        default_raven_turn_peak_g: 0.0,
     };
 
 /// A steel hyper coaster: a tall straight chain lift, a 60-degree first drop, long floater camelbacks and wide
@@ -1653,6 +1732,12 @@ mod tests {
             PieceId::ShapedHill,
             PieceId::ShapedTurnLeft,
             PieceId::ShapedTurnRight,
+            PieceId::ShapedLoopLeft,
+            PieceId::ShapedLoopRight,
+            PieceId::ShapedZeroGRollLeft,
+            PieceId::ShapedZeroGRollRight,
+            PieceId::ShapedRavenTurnLeft,
+            PieceId::ShapedRavenTurnRight,
         ];
         let templates = catalog();
         assert!(

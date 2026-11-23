@@ -9,7 +9,7 @@ import { COASTER_MODELS } from "./generated/coaster-models";
 import { constructionEvent } from "./construction-effects";
 import { availableBlockBoundaries, blockPanelState } from "./block-panel-state";
 import { defaultHillFeel, formatHillSize, groupedPieces, hillLabel, hillStepperOptions, hillToOpen, pieceDisplayName, pieceInGroup, shapedPaletteChoices, speedTurnPalette, steppedHillSelection, steppedPieceSelection, stepperOptions, type HillAttribute, type PieceStep, type StepAttribute } from "./construction-choices";
-import { defaultShapeSelectionId, shapedElementSelection, shapeSelectionId, steppedShapedSelection, type ShapedElementSelection, type ShapedHillFeel, type ShapedStepAttribute } from "./construction-shaped-elements";
+import { defaultInversionSelectionId, defaultShapeSelectionId, shapedElementSelection, shapeSelectionId, steppedShapedSelection, type ShapedElementSelection, type ShapedHillFeel, type ShapedLoopTopFeel, type ShapedStepAttribute } from "./construction-shaped-elements";
 import type { BlockReport, ConstructionElement, ConstructionHillOption, ConstructionPiece, ConstructionShapedElement, ConstructionState, PieceShape } from "./construction-protocol";
 import type { InputAction } from "./input/actions";
 import { builderShortcuts, groupKeyHint, keyHint } from "./input/bindings";
@@ -153,7 +153,6 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
                 <button type="button" data-shape-stepper="strength--1" aria-label="Reduce airtime strength">−</button>
                 <span class="stepper__value" data-shape-value="strength"></span>
                 <button type="button" data-shape-stepper="strength-1" aria-label="Increase airtime strength">+</button>
-                <span class="stepper__unit">g</span>
               </div>
               <div class="stepper" role="group" aria-label="Hill size" data-shape-control="size">
                 <span class="tool-panel__label">Size</span>
@@ -168,6 +167,18 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
                 <span class="stepper__value" data-shape-value="radius"></span>
                 <button type="button" data-shape-stepper="radius-1" aria-label="Increase turn radius">+</button>
                 <button type="button" data-shape-auto="radius" aria-label="Use automatic turn radius">Auto</button>
+              </div>
+              <div class="stepper" role="group" aria-label="Inversion peak force" data-shape-control="peakG">
+                <span class="tool-panel__label">Peak g</span>
+                <button type="button" data-shape-stepper="peakG--1" aria-label="Reduce peak vertical force">−</button>
+                <span class="stepper__value" data-shape-value="peakG"></span>
+                <button type="button" data-shape-stepper="peakG-1" aria-label="Increase peak vertical force">+</button>
+              </div>
+              <div class="stepper" role="group" aria-label="Inversion top feel" data-shape-control="topFeel">
+                <span class="tool-panel__label">Top feel</span>
+                <button type="button" data-shape-stepper="topFeel--1" aria-label="Lighter top feel">−</button>
+                <span class="stepper__value" data-shape-value="topFeel"></span>
+                <button type="button" data-shape-stepper="topFeel-1" aria-label="Heavier top feel">+</button>
               </div>
             </div>
             <p class="builder__hill-suggestion" data-shape-message hidden></p>
@@ -424,6 +435,11 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   };
   const speedTurnOf = (id: string) => state?.speedTurns.find((turn) => turn.id === id);
   const shapeSelection = shapedElementSelection;
+  const activeModelAllowedInversions = (current?: ConstructionState | null): readonly string[] => {
+    const modelKey = current?.trainLayout?.model ?? modelSelect.value.replace(/^model:/, "");
+    const model = COASTER_MODELS.find(({ key }) => key === modelKey);
+    return model?.allowed_inversions ?? [];
+  };
   const shapedPaletteId = (shape: ConstructionShapedElement): string => {
     if (shape.kind === "hill") {
       const feel = shape.feel;
@@ -432,8 +448,11 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       }
       return defaultShapeSelectionId(feel);
     }
-    if (shape.hand !== "left" && shape.hand !== "right") throw new Error(`Unknown shaped turn hand ${shape.hand}`);
-    return shapeSelectionId({ kind: "turn", hand: shape.hand, feel: "fullyBanked", size: { kind: "auto" } });
+    if (shape.hand !== "left" && shape.hand !== "right") throw new Error(`Unknown shaped element hand ${shape.hand}`);
+    if (shape.kind === "turn") {
+      return shapeSelectionId({ kind: "turn", hand: shape.hand, feel: "fullyBanked", size: { kind: "auto" } });
+    }
+    return defaultInversionSelectionId(shape.kind, shape.hand);
   };
   const selectShape = (selection: ShapedElementSelection): void => {
     dispatch({ type: "construction-select", piece: shapeSelectionId(selection), exact: true });
@@ -448,8 +467,9 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     const shape = state?.selectedShape;
     if (!shape) return;
     const selection = shapeSelection(shape);
-    if (selection.kind === "hill") selectShape({ ...selection, size: { kind: "auto" } });
-    else selectShape({ ...selection, size: { kind: "auto" } });
+    if (selection.kind === "hill" || selection.kind === "turn") {
+      selectShape({ ...selection, size: { kind: "auto" } });
+    }
   };
   const renderFinishStatus = (current: ConstructionState): void => {
     finish.classList.toggle("tool-panel__action--primary", current.canFinish && !current.canClose);
@@ -579,7 +599,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       dispatch({ type: "construction-select", piece: button.dataset.speedMatchVariant!, exact: true });
     }
   });
-  for (const attribute of ["feel", "strength", "size", "radius"] as const) {
+  for (const attribute of ["feel", "strength", "size", "radius", "peakG", "topFeel"] as const) {
     for (const step of [-1, 1] as const) {
       element(`[data-shape-stepper="${attribute}-${step}"]`).addEventListener("click", () => stepShape(attribute, step));
     }
@@ -610,7 +630,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     event.preventDefault();
     const current = state;
     if (current.selectedShape) {
-      const shapedChoices = shapedPaletteChoices();
+      const shapedChoices = shapedPaletteChoices(activeModelAllowedInversions(current));
       const index = shapedChoices.findIndex(({ id }) => id === shapedPaletteId(current.selectedShape!));
       const nextIndex = Math.max(0, Math.min(shapedChoices.length - 1, index + step));
       if (index >= 0 && nextIndex !== index) select(shapedChoices[nextIndex].id);
@@ -689,16 +709,29 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     shaped.setAttribute("aria-label", "Shaped elements");
     const shapedHeading = document.createElement("h3");
     shapedHeading.textContent = "Shaped";
-    shaped.append(shapedHeading, ...(["hill", "turn"] as const).map((group) => {
+    const allShapedChoices = shapedPaletteChoices(activeModelAllowedInversions(state));
+    const shapedGroupMeta: Readonly<Record<"hill" | "turn" | "inversion", { readonly title: string; readonly plate: string }>> = {
+      hill: { title: "Airtime hills", plate: groupPlates.slope },
+      turn: { title: "Banked turns", plate: groupPlates.turn },
+      inversion: { title: "Inversions", plate: groupPlates.inversion },
+    };
+    const shapedRows = (["hill", "turn", "inversion"] as const).flatMap((group) => {
+      const members = allShapedChoices.filter((choice) => choice.group === group);
+      if (members.length === 0) return [];
       const row = document.createElement("div");
       row.className = "builder__group";
-      row.style.setProperty("--plate", group === "hill" ? groupPlates.slope : groupPlates.turn);
-      row.innerHTML = `<h3>${group === "hill" ? "Airtime hills" : "Banked turns"}</h3><div class="builder__tiles"></div>`;
-      const members = shapedPaletteChoices().filter((choice) => choice.group === group);
+      row.style.setProperty("--plate", shapedGroupMeta[group].plate);
+      row.innerHTML = `<h3>${shapedGroupMeta[group].title}</h3><div class="builder__tiles"></div>`;
       row.lastElementChild!.append(...members.map((choice) => {
         const representativeId = choice.group === "hill"
           ? "EjectorHill8x48"
-          : choice.id.includes(":left:") ? "SpeedTurnLarge16Left" : "SpeedTurnLarge16Right";
+          : choice.group === "turn"
+            ? (choice.id.includes(":left:") ? "SpeedTurnLarge16Left" : "SpeedTurnLarge16Right")
+            : choice.id.startsWith("shape:loop:")
+              ? (choice.id.includes(":left:") ? "Loop" : "LoopRight")
+              : choice.id.startsWith("shape:zeroGRoll:")
+                ? (choice.id.includes(":left:") ? "ZeroGRollFastLeft" : "ZeroGRollFastRight")
+                : "HalfLoopUp";
         const shape = shapeOf(representativeId);
         const tile = document.createElement("button");
         tile.type = "button";
@@ -713,8 +746,9 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         tile.querySelector(".piece-tile__tip span")!.textContent = "Sized for the train's speed at this point.";
         return tile;
       }));
-      return row;
-    }));
+      return [row];
+    });
+    shaped.append(shapedHeading, ...shapedRows);
     palette.replaceChildren(classic, shaped);
   }
 
@@ -888,7 +922,14 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       }
       return `${feelLabels[feel]} hill`;
     }
-    return `Fully banked ${shape.hand} turn`;
+    if (shape.kind === "turn") return `Fully banked ${shape.hand} turn`;
+    if (shape.kind === "loop") {
+      return shape.spec?.steelStructure
+        ? `Steel-structure loop ${shape.hand}`
+        : `Vertical loop ${shape.hand}`;
+    }
+    if (shape.kind === "zeroGRoll") return `Zero-g roll ${shape.hand}`;
+    return `Raven turn ${shape.hand}`;
   }
 
   function renderHill(
@@ -960,8 +1001,12 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     const strengthControl = element<HTMLElement>('[data-shape-control="strength"]');
     const sizeControl = element<HTMLElement>('[data-shape-control="size"]');
     const radiusControl = element<HTMLElement>('[data-shape-control="radius"]');
+    const peakGControl = element<HTMLElement>('[data-shape-control="peakG"]');
+    const topFeelControl = element<HTMLElement>('[data-shape-control="topFeel"]');
     shapeControls.hidden = !shape;
-    for (const control of [feelControl, strengthControl, sizeControl, radiusControl]) control.hidden = !shape;
+    for (const control of [feelControl, strengthControl, sizeControl, radiusControl, peakGControl, topFeelControl]) {
+      control.hidden = !shape;
+    }
     if (!shape) {
       shapeReadoutElement.replaceChildren();
       shapeReadoutElement.hidden = true;
@@ -975,10 +1020,15 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     element("[data-shape-current]").textContent = shape.spec
       ? `${shapeLabel} · ${formatSpeed(shape.spec.designSpeedMps, units, 0)}`
       : shapeLabel;
+    const isInversion = shape.kind === "loop" || shape.kind === "zeroGRoll" || shape.kind === "ravenTurn";
+    const hasTopFeel = shape.kind === "loop" || shape.kind === "ravenTurn";
+    feelControl.hidden = isInversion;
     strengthControl.hidden = shape.kind !== "hill";
     sizeControl.hidden = shape.kind !== "hill";
     radiusControl.hidden = shape.kind !== "turn";
-    const setValue = (attribute: "feel" | "strength" | "size" | "radius", text: string): void => {
+    peakGControl.hidden = !isInversion;
+    topFeelControl.hidden = !hasTopFeel;
+    const setValue = (attribute: ShapedStepAttribute, text: string): void => {
       const value = element(`[data-shape-value="${attribute}"]`);
       if (value.textContent === text) return;
       value.textContent = text;
@@ -995,12 +1045,26 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     const fixedSizeLabel = shape.fixedSize === null ? "Auto" : formatLength(shape.fixedSize, units);
     setValue("size", shape.kind === "hill" ? fixedSizeLabel : "");
     setValue("radius", shape.kind === "turn" ? fixedSizeLabel : "");
-    for (const attribute of ["feel", "strength", "size", "radius"] as const) {
+    const peakG = selection.kind === "loop" || selection.kind === "zeroGRoll" || selection.kind === "ravenTurn"
+      ? selection.peakG
+      : null;
+    setValue("peakG", peakG === null ? "—" : `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(peakG)} g`);
+    const topFeelLabels: Readonly<Record<ShapedLoopTopFeel, string>> = {
+      floaty: "Floaty",
+      neutral: "Neutral",
+      pressedIn: "Pressed in",
+    };
+    const topFeel = selection.kind === "loop" || selection.kind === "ravenTurn" ? selection.topFeel : null;
+    setValue("topFeel", topFeel === null ? "" : topFeelLabels[topFeel]);
+    for (const attribute of ["feel", "strength", "size", "radius", "peakG", "topFeel"] as const) {
       for (const step of [-1, 1] as const) {
         const button = element<HTMLButtonElement>(`[data-shape-stepper="${attribute}-${step}"]`);
-        button.disabled = !current.complete || (attribute === "feel" && shape.kind === "turn")
+        const nextSelection = steppedShapedSelection(shape, attribute, step);
+        button.disabled = !current.complete
+          || (attribute === "feel" && shape.kind !== "hill")
           || (attribute === "strength" && (shape.kind !== "hill" || strength === null || strength === undefined))
-          || ((attribute === "size" || attribute === "radius") && !shape.spec);
+          || ((attribute === "size" || attribute === "radius") && !shape.spec)
+          || ((attribute === "peakG" || attribute === "topFeel") && nextSelection === null);
       }
     }
     for (const button of container.querySelectorAll<HTMLButtonElement>("[data-shape-auto]")) {
@@ -1306,7 +1370,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       previousFinish.hidden = nextFinish.hidden = next.finishOptions.options.length < 2;
       stamp.classList.toggle("builder__stamp--fresh", event === "closed");
       const focusInPalette = palette.contains(document.activeElement);
-      const nextPaletteKey = JSON.stringify([next.pieces.map(({ id, refusal }) => `${id}:${refusal}`), next.hillOptions.map(({ id }) => id)]);
+      const nextPaletteKey = JSON.stringify([next.trainLayout?.model ?? modelSelect.value, next.pieces.map(({ id, refusal }) => `${id}:${refusal}`), next.hillOptions.map(({ id }) => id)]);
       if (nextPaletteKey !== paletteKey) { paletteKey = nextPaletteKey; renderPalette(next.pieces, next.hillOptions); }
       const nextElementsKey = JSON.stringify([next.elements, next.pieces]);
       if (nextElementsKey !== elementsKey) { elementsKey = nextElementsKey; renderElements(next.elements, next.pieces); }

@@ -728,10 +728,11 @@ impl Train {
         (0..reading_count).map(move |car| {
             let distance = self.distance - car as f64 * self.spacing;
             let (index, local) = circuit.locate(distance);
-            let track_sample = circuit.pieces[index].sample(local);
-            let g = rider_g(
+            let track_sample = circuit.pieces[index].sample_for_physics(local);
+            let g = rider_g_with_sample(
                 &circuit.pieces[index],
                 local,
+                &track_sample,
                 self.speed,
                 self.last_acceleration,
             );
@@ -769,24 +770,34 @@ impl Train {
 
 fn rider_g(piece: &Piece, distance: f64, speed: f64, acceleration: f64) -> GForces {
     let sample = piece.sample(distance);
+    rider_g_with_sample(piece, distance, &sample, speed, acceleration)
+}
+
+fn rider_g_with_sample(
+    piece: &Piece,
+    distance: f64,
+    sample: &TrackSample,
+    speed: f64,
+    acceleration: f64,
+) -> GForces {
     let step = 0.02_f64.min(piece.length() / 4.0);
     let (heart_tangent, heart_curvature) = if distance < step {
-        let next = piece.sample(distance + step).heart;
-        let next_next = piece.sample(distance + 2.0 * step).heart;
+        let next = piece.heart_at(distance + step);
+        let next_next = piece.heart_at(distance + 2.0 * step);
         (
             (sample.heart * -3.0 + next * 4.0 - next_next) / (2.0 * step),
             (sample.heart - next * 2.0 + next_next) / crate::math::powi(step, 2),
         )
     } else if piece.length() - distance < step {
-        let previous = piece.sample(distance - step).heart;
-        let previous_previous = piece.sample(distance - 2.0 * step).heart;
+        let previous = piece.heart_at(distance - step);
+        let previous_previous = piece.heart_at(distance - 2.0 * step);
         (
             (sample.heart * 3.0 - previous * 4.0 + previous_previous) / (2.0 * step),
             (sample.heart - previous * 2.0 + previous_previous) / crate::math::powi(step, 2),
         )
     } else {
-        let previous = piece.sample(distance - step).heart;
-        let next = piece.sample(distance + step).heart;
+        let previous = piece.heart_at(distance - step);
+        let next = piece.heart_at(distance + step);
         (
             (next - previous) / (2.0 * step),
             (previous - sample.heart * 2.0 + next) / crate::math::powi(step, 2),

@@ -152,7 +152,7 @@ function stepHillTo(replay: WorkerReplay, attribute: ClassicHillAttribute, targe
   throw new BrowserDriverRefusal(`Could not select hill ${attribute} ${target}`);
 }
 
-function stepShape(replay: WorkerReplay, attribute: "strength" | "size" | "radius", step: -1 | 1): void {
+function stepShape(replay: WorkerReplay, attribute: "strength" | "size" | "radius" | "peakG" | "topFeel", step: -1 | 1): void {
   const shape = replay.requireState().selectedShape;
   if (!shape) throw new BrowserDriverRefusal(`No shaped element is selected to adjust its ${attribute}`);
   const selection = steppedShapedSelection(shape, attribute, step);
@@ -219,9 +219,37 @@ function selectShapedStep(replay: WorkerReplay, step: RideShapeStep): string {
       }
     }
     if (intentSelection.size.kind === "height") setFixedShapeDimension(replay, "hill", intentSelection.size.heightMetres);
-  } else {
+  } else if (intentSelection.kind === "turn") {
     if (replay.requireState().selected !== baseId) select(replay, baseId, false);
     if (intentSelection.size.kind === "radius") setFixedShapeDimension(replay, "turn", intentSelection.size.radiusMetres);
+  } else {
+    select(replay, baseId, false);
+    const currentSelection = (): ShapedElementSelection => {
+      const shape = replay.requireState().selectedShape;
+      if (!shape) throw new BrowserDriverRefusal(`Shaped inversion ${baseId} did not select a shaped element`);
+      return shapedElementSelection(shape);
+    };
+    while (true) {
+      const current = currentSelection();
+      if (current.kind !== intentSelection.kind) {
+        throw new BrowserDriverRefusal(`Shaped inversion ${baseId} selected ${current.kind}, expected ${intentSelection.kind}`);
+      }
+      if (Math.abs(current.peakG - intentSelection.peakG) <= 1e-5) break;
+      stepShape(replay, "peakG", current.peakG < intentSelection.peakG ? 1 : -1);
+    }
+    if (intentSelection.kind !== "zeroGRoll") {
+      const topFeelOrder = ["floaty", "neutral", "pressedIn"] as const;
+      const targetIndex = topFeelOrder.indexOf(intentSelection.topFeel);
+      while (true) {
+        const current = currentSelection();
+        if (current.kind !== intentSelection.kind) {
+          throw new BrowserDriverRefusal(`Shaped inversion ${baseId} lost top feel selection`);
+        }
+        const currentIndex = topFeelOrder.indexOf(current.topFeel);
+        if (currentIndex === targetIndex) break;
+        stepShape(replay, "topFeel", currentIndex < targetIndex ? 1 : -1);
+      }
+    }
   }
   const expectedId = shapeSelectionId(intentSelection);
   if (replay.requireState().selected !== expectedId) {

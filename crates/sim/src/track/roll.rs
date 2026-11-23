@@ -566,7 +566,7 @@ impl RollGeometry {
     }
 }
 
-fn spline_kinematics(
+pub(crate) fn spline_kinematics(
     start: Vec3,
     end: Vec3,
     start_tangent: Vec3,
@@ -599,7 +599,7 @@ fn spline_kinematics(
     )
 }
 
-fn roll_schedule(t: f64, ramp: f64) -> (f64, f64, f64) {
+pub(crate) fn roll_schedule(t: f64, ramp: f64) -> (f64, f64, f64) {
     let peak = 1.0 / (1.0 - ramp);
     if t > 1.0 - ramp {
         let (value, first, second) = roll_schedule(1.0 - t, ramp);
@@ -672,7 +672,7 @@ fn transform_frame(entry: TrackState, vector: Vec3, mirrored: bool) -> Vec3 {
     forward * vector.x + side * (vector.y * if mirrored { -1.0 } else { 1.0 }) + up * vector.z
 }
 
-fn unbanked_up(tangent: Vec3) -> Vec3 {
+pub(crate) fn unbanked_up(tangent: Vec3) -> Vec3 {
     let horizontal_length = (tangent.x * tangent.x + tangent.y * tangent.y).sqrt();
     Vec3::new(
         -tangent.x * tangent.z / horizontal_length,

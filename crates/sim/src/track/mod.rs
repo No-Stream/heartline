@@ -41,7 +41,7 @@ pub mod proximity;
 pub mod profile;
 pub mod rated_windows;
 pub use rated_windows::{feel_rated_speeds, rated_speed_margin, rated_speeds};
-pub use shaped::ShapedProfile;
+pub use shaped::{LoopTopFeel, ShapedProfile};
 mod roll;
 
 mod hill_forces;
