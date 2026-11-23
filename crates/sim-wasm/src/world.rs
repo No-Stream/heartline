@@ -5,11 +5,14 @@ use super::*;
 impl WasmSimulation {
     #[wasm_bindgen(constructor)]
     pub fn new(seed: u64, agent_count: usize, park: String) -> Self {
-        let is_demo_park = match park.as_str() {
-            "demo" => true,
-            "new" => false,
-            _ => panic!("unknown park preset: {park}"),
-        };
+        if park == "demo" {
+            let description = crate::park_description::starter_park_description_json();
+            let mut simulation = Self::from_park_description(seed, agent_count, &description)
+                .expect("starter park description is valid");
+            simulation.coaster_stop_editing();
+            return simulation;
+        }
+        assert_eq!(park, "new", "unknown park preset: {park}");
         let entrance_position = Position {
             x: 218,
             y: 246,
@@ -20,29 +23,23 @@ impl WasmSimulation {
             y: 250,
             height: 8,
         };
-        let mut world = if is_demo_park {
-            demo_world()
-        } else {
-            World::new(
-                512,
-                512,
-                Surface {
-                    corners: [8; 4],
-                    water: None,
+        let mut world = World::new(
+            512,
+            512,
+            Surface {
+                corners: [8; 4],
+                water: None,
+            },
+        );
+        for y in 250..252 {
+            world.place_path(theme_park_sim::world::Path {
+                position: Position {
+                    x: 218,
+                    y,
+                    height: 8,
                 },
-            )
-        };
-        if !is_demo_park {
-            for y in 250..252 {
-                world.place_path(theme_park_sim::world::Path {
-                    position: Position {
-                        x: 218,
-                        y,
-                        height: 8,
-                    },
-                    slope: None,
-                });
-            }
+                slope: None,
+            });
         }
         let mut facilities = ParkFacilities::new();
         facilities
@@ -53,68 +50,10 @@ impl WasmSimulation {
                 Direction::South,
             )
             .expect("park entrance placement");
-        if is_demo_park {
-            for (x, kind) in [
-                (220, FacilityKind::Food),
-                (223, FacilityKind::Drink),
-                (226, FacilityKind::Restroom),
-                (229, FacilityKind::Souvenir),
-                (232, FacilityKind::Carousel),
-                (235, FacilityKind::FerrisWheel),
-            ] {
-                facilities
-                    .place(
-                        &world,
-                        kind,
-                        Position {
-                            x,
-                            y: 254,
-                            height: 8,
-                        },
-                        Direction::South,
-                    )
-                    .expect("demo facility placement");
-            }
-        }
         let mut simulation =
             ParkGuests::new(seed, agent_count, &world, entrance_path, agent_count.max(1));
         simulation.open_with_guests(&facilities.guest_facilities(&world));
-        let park = if is_demo_park {
-            let circuit = demo_circuit();
-            let train_configuration = hybrid_model().train;
-            for building in facilities.buildings() {
-                assert!(
-                    !facility_intersects_track(
-                        building.kind,
-                        building.position,
-                        building.direction,
-                        circuit.pieces(),
-                        &train_configuration
-                    ),
-                    "demo facility intersects track"
-                );
-            }
-            let train = Train::new(
-                &circuit,
-                &train_configuration,
-                PhysicsConfig {
-                    lift_speed: 5.0,
-                    ..PhysicsConfig::default()
-                },
-                0.0,
-                2.0,
-            );
-            Park::new(
-                world,
-                facilities,
-                simulation,
-                circuit,
-                train,
-                train_configuration,
-            )
-        } else {
-            Park::new_empty(world, facilities, simulation)
-        };
+        let park = Park::new_empty(world, facilities, simulation);
         Self {
             park,
             editing: None,

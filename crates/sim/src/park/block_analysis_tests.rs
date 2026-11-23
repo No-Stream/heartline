@@ -53,7 +53,6 @@ pub(super) fn block_test_park() -> Park {
         position: entrance,
         slope: None,
     });
-    let train_configuration = hybrid_model().train;
     let mut construction = Construction::new(
         TrackState {
             x: 100,
@@ -90,25 +89,8 @@ pub(super) fn block_test_park() -> Park {
             .unwrap_or_else(|error| panic!("{piece_id:?}: {error:?}"));
     }
     construction.close().expect("test circuit closes");
-    let circuit = construction
-        .circuit()
-        .expect("closed construction has a circuit");
-    let train = Train::new(
-        &circuit,
-        &train_configuration,
-        PhysicsConfig::default(),
-        0.0,
-        0.0,
-    );
     let simulation = ParkGuests::new(42, 0, &world, entrance, 1);
-    let mut park = Park::new(
-        world,
-        ParkFacilities::new(),
-        simulation,
-        circuit,
-        train,
-        train_configuration,
-    );
+    let mut park = Park::new_empty(world, ParkFacilities::new(), simulation);
     park.replace_coaster(COASTER_ID, construction);
     park
 }

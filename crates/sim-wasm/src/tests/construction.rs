@@ -108,12 +108,8 @@ fn candidate_force_preview_does_not_invent_peaks_beyond_a_stall() {
 #[test]
 fn diagonal_support_bounds_do_not_fill_its_bounding_rectangle() {
     let simulation = super::WasmSimulation::new(42, 0, String::from("demo"));
-    let piece = simulation
-        .demo_coaster()
-        .expect("demo park")
-        .circuit
-        .pieces()[0]
-        .clone();
+    let coaster = simulation.coaster(CoasterId(0)).expect("starter coaster");
+    let piece = coaster.construction.pieces()[0].clone();
     let point = piece.sample(piece.length() / 2.0).position;
     let segment = super::SupportSegment {
         start: point + super::Vec3::new(-40.0, 0.0, 0.0),
@@ -122,10 +118,7 @@ fn diagonal_support_bounds_do_not_fill_its_bounding_rectangle() {
     let baseline = theme_park_sim::track::proximity::scan_proximity_with_supports(
         &simulation.world,
         std::slice::from_ref(&piece),
-        &simulation
-            .demo_coaster()
-            .expect("demo park")
-            .train_configuration,
+        &coaster.construction.model().train,
         &[],
         &[],
         &[],
@@ -133,10 +126,7 @@ fn diagonal_support_bounds_do_not_fill_its_bounding_rectangle() {
     let diagonal = theme_park_sim::track::proximity::scan_proximity_with_supports(
         &simulation.world,
         &[piece],
-        &simulation
-            .demo_coaster()
-            .expect("demo park")
-            .train_configuration,
+        &coaster.construction.model().train,
         &[],
         &[],
         &[theme_park_sim::track::proximity::OwnedSupportSegment {
@@ -351,46 +341,51 @@ fn finite_ratings(report: &Value) -> bool {
 }
 
 #[test]
-fn demo_ride_test_fills_in_the_demo_report() {
+fn starter_ride_test_fills_in_its_report() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
-    let before = ride_info(&simulation, u32::MAX);
-    assert_eq!(before["ride"], u32::MAX);
+    let parked_poses = simulation.coaster_train_poses(0);
+    let parked_states = simulation.coaster_train_states(0);
+    assert!(!parked_poses.is_empty());
+    assert_eq!(parked_states[1], 0.0);
+    assert_eq!(parked_states[2], 4.0);
+    assert_eq!(parked_states[5], 0.0);
+    let before = ride_info(&simulation, 0);
+    assert_eq!(before["ride"], 0);
     assert_eq!(before["modelName"], "Timber Tumbler");
     assert_eq!(before["manufacturer"], "Rocky Road Construction");
     assert!(before["limits"]["maximumLateralG"].is_number());
     assert_eq!(before["report"], Value::Null);
 
-    assert_eq!(simulation.ride_test("demo"), "");
-    let report = &ride_info(&simulation, u32::MAX)["report"];
+    assert_eq!(simulation.coaster_test(0), "");
+    assert_eq!(simulation.coaster_train_poses(0), parked_poses);
+    assert_eq!(simulation.coaster_train_states(0), parked_states);
+    let report = &ride_info(&simulation, 0)["report"];
     assert!(finite_ratings(report));
     assert!(!report["samples"].as_array().unwrap().is_empty());
     assert!(report["statistics"]["maxSpeed"].as_f64().unwrap() > 0.0);
 }
 
 #[test]
-fn numeric_ride_actions_address_demo_and_built_coasters() {
+fn numeric_ride_actions_address_starter_and_built_coasters() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     append_lift_drop_fixture(&mut simulation);
 
     assert_eq!(simulation.coaster_test(0), "");
-    assert_eq!(simulation.coaster_test(u32::MAX), "");
+    assert_eq!(simulation.coaster_test(1), "");
     assert_eq!(simulation.coaster_test(99), "No coaster has that id.");
     assert_eq!(ride_info(&simulation, 0)["ride"], 0);
-    assert_eq!(ride_info(&simulation, u32::MAX)["ride"], u32::MAX);
+    assert_eq!(ride_info(&simulation, 1)["ride"], 1);
     assert!(ride_info(&simulation, 0)["report"].is_object());
-    assert!(ride_info(&simulation, u32::MAX)["report"].is_object());
+    assert!(ride_info(&simulation, 1)["report"].is_object());
 }
 
 #[test]
-fn ride_test_refuses_unfinished_player_track_and_missing_demo() {
+fn ride_test_refuses_unfinished_track_and_missing_coaster() {
     let mut player_only = WasmSimulation::new(42, 0, String::from("new"));
-    assert_eq!(
-        player_only.ride_test("demo"),
-        "This park has no demo coaster"
-    );
+    assert_eq!(player_only.coaster_test(99), "No coaster has that id.");
     player_only.construction_start(100, 100, 20, 0);
     assert_eq!(
-        player_only.ride_test("player"),
+        player_only.coaster_test(0),
         "A closed circuit longer than the train is required"
     );
     assert_eq!(ride_info(&player_only, 0)["report"], Value::Null);
@@ -398,7 +393,7 @@ fn ride_test_refuses_unfinished_player_track_and_missing_demo() {
 
 #[test]
 fn headless_player_ride_test_matches_the_animated_builder_test() {
-    let mut animated = WasmSimulation::new(42, 0, String::from("demo"));
+    let mut animated = WasmSimulation::new(42, 0, String::from("new"));
     append_lift_drop_fixture(&mut animated);
     animated.construction_test();
     for _ in 0..9000 {
@@ -414,10 +409,10 @@ fn headless_player_ride_test_matches_the_animated_builder_test() {
     }
     assert_eq!(animated.construction_message(), "Train completed a lap.");
 
-    let mut headless = WasmSimulation::new(42, 0, String::from("demo"));
+    let mut headless = WasmSimulation::new(42, 0, String::from("new"));
     append_lift_drop_fixture(&mut headless);
     let hash_before = headless.state_hash();
-    assert_eq!(headless.ride_test("player"), "");
+    assert_eq!(headless.coaster_test(0), "");
     assert!(
         headless
             .editing_coaster()
@@ -445,14 +440,13 @@ fn headless_player_ride_test_matches_the_animated_builder_test() {
 }
 
 #[test]
-fn a_track_change_clears_the_player_report_but_not_the_demo_report() {
-    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+fn a_track_change_clears_the_report_for_that_coaster() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
     append_lift_drop_fixture(&mut simulation);
-    assert_eq!(simulation.ride_test("player"), "");
-    assert_eq!(simulation.ride_test("demo"), "");
+    let coaster_id = simulation.editing_coaster_id_value().unwrap();
+    assert_eq!(simulation.coaster_test(coaster_id), "");
     simulation.construction_undo();
-    assert_eq!(ride_info(&simulation, 0)["report"], Value::Null);
-    assert!(finite_ratings(&ride_info(&simulation, u32::MAX)["report"]));
+    assert_eq!(ride_info(&simulation, coaster_id)["report"], Value::Null);
 }
 
 fn append_lift_drop_fixture(simulation: &mut WasmSimulation) {
@@ -512,7 +506,7 @@ fn wire_piece_names_round_trip_without_catalog_lookup() {
 
 #[test]
 fn station_height_used_by_browser_can_start_construction() {
-    let mut simulation = WasmSimulation::new(2026, 12, String::from("demo"));
+    let mut simulation = WasmSimulation::new(2026, 12, String::from("new"));
     simulation.construction_start(100, 100, 40, 0);
     let obstacles = simulation.facility_obstacles();
     let (world, coasters) = (&simulation.park.world, &mut simulation.park.coasters);
@@ -1592,7 +1586,7 @@ fn terrain_change_does_not_panic_when_rendering_supports() {
 
 #[test]
 fn placed_support_cache_matches_full_render_after_track_changes() {
-    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
     simulation.construction_start(200, 200, 20, 0);
     for _ in 0..4 {
         simulation.construction_select("Straight");
@@ -1826,7 +1820,7 @@ fn coaster_colours_start_from_the_model_and_change_the_state_hash() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     assert_eq!(simulation.construction_colors(), "null");
     assert_eq!(
-        render_entry(&simulation, u32::MAX)["colors"],
+        render_entry(&simulation, 0)["colors"],
         serde_json::json!({"track":"coral", "supports":"timber", "trains":"sage"})
     );
     for (x, model, colors) in [
@@ -1892,7 +1886,7 @@ fn train_layouts_name_each_model_and_its_train_shape() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     assert_eq!(simulation.construction_train_layout(), "null");
     assert_eq!(
-        render_entry(&simulation, u32::MAX)["trainLayout"],
+        render_entry(&simulation, 0)["trainLayout"],
         serde_json::json!({"model": "hybrid", "trackMaterial": "hybrid", "carsPerTrain": 6, "rowsPerCar": 2, "seatsPerRow": 2, "lengthMetres": 18.0})
     );
     for (x, model, key, material, cars, rows) in [
@@ -1932,7 +1926,7 @@ fn coaster_colours_replay_to_the_same_state() {
 
 #[test]
 fn lift_drop_circuit_completes_lap() {
-    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
     append_lift_drop_fixture(&mut simulation);
     assert!(
         simulation
@@ -1997,7 +1991,7 @@ fn lift_drop_circuit_completes_lap() {
 
 #[test]
 fn opening_after_a_completed_test_keeps_the_report_for_the_ride_info_window() {
-    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
     append_lift_drop_fixture(&mut simulation);
     simulation.construction_test();
     for _ in 0..9000 {

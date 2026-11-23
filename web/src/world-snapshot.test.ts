@@ -9,8 +9,8 @@ const workerMock = vi.hoisted(() => ({
   builderStart: vi.fn(),
   builderSelect: vi.fn(),
   builderEstimate: vi.fn(),
-  coasterRenderList: vi.fn(() => JSON.stringify([{ id: 4294967295, trackRevision: "demo:1", colors: { track: "coral", supports: "timber", trains: "sage" }, trainLayout: { model: "hybrid", trackMaterial: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 } }])),
-  coasterIds: vi.fn(() => Uint32Array.of(4294967295)),
+  coasterRenderList: vi.fn(() => JSON.stringify([{ id: 0, trackRevision: "starter:1", colors: { track: "coral", supports: "timber", trains: "sage" }, trainLayout: { model: "hybrid", trackMaterial: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 } }])),
+  coasterIds: vi.fn(() => Uint32Array.of(0)),
   editingCoasterId: vi.fn(() => null as number | null),
   coasterGeometry: vi.fn((_id: number) => new Float32Array()),
   coasterRails: vi.fn((_id: number) => new Float32Array([1, 2])),
@@ -96,8 +96,8 @@ afterEach(() => {
   workerMock.builderStart.mockReset();
   workerMock.builderSelect.mockReset();
   workerMock.builderEstimate.mockReset();
-  workerMock.coasterRenderList.mockReset().mockReturnValue(JSON.stringify([{ id: 4294967295, trackRevision: "demo:1", colors: { track: "coral", supports: "timber", trains: "sage" }, trainLayout: { model: "hybrid", trackMaterial: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 } }]));
-  workerMock.coasterIds.mockReset().mockReturnValue(Uint32Array.of(4294967295));
+  workerMock.coasterRenderList.mockReset().mockReturnValue(JSON.stringify([{ id: 0, trackRevision: "starter:1", colors: { track: "coral", supports: "timber", trains: "sage" }, trainLayout: { model: "hybrid", trackMaterial: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 } }]));
+  workerMock.coasterIds.mockReset().mockReturnValue(Uint32Array.of(0));
   workerMock.editingCoasterId.mockReset().mockReturnValue(null);
   workerMock.coasterGeometry.mockReset();
   workerMock.coasterRails.mockReset();
@@ -145,6 +145,16 @@ it("starts simulation time after WebAssembly initialization completes", async ()
   vi.useFakeTimers();
   let finishInitialization!: () => void;
   workerMock.initialize.mockReturnValue(new Promise<void>((resolve) => { finishInitialization = resolve; }));
+  workerMock.coastersJson.mockReturnValue(JSON.stringify([{
+    id: 0,
+    name: "Timber Tumbler",
+    model: "hybrid",
+    open: false,
+    price: 0,
+    income: 0,
+    queueLength: 0,
+    complete: true,
+  }]));
   const postMessage = vi.fn();
   let onMessage!: (event: MessageEvent) => void;
   vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
@@ -164,7 +174,7 @@ it("starts simulation time after WebAssembly initialization completes", async ()
   expect(worldTransfer).toContain(world.coasters[0].ties.buffer);
   expect(workerMock.tick).not.toHaveBeenCalled();
   expect(postMessage.mock.calls[1][0]).toEqual({ type: "coasters", coasters: [{
-    id: 4294967295,
+    id: 0,
     name: "Timber Tumbler",
     model: "hybrid",
     open: false,

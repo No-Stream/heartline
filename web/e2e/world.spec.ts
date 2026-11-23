@@ -48,7 +48,7 @@ test("picks known terrain and path points at every rotation @fast", async ({ pag
     await renderCamera(245, 256, rotation);
 
     const picks = await page.evaluate(() => {
-      // Points the demo coaster's timber bents leave uncovered at every rotation.
+      // Points the starter coaster's timber bents leave uncovered at every rotation.
       const locations = [
         { x: 242.25, y: 255.25, z: 2 },
         { x: 241.75, y: 256.75, z: 2 },
@@ -68,9 +68,19 @@ test("picks known terrain and path points at every rotation @fast", async ({ pag
 
     await renderCamera(219, 250, rotation);
     const entrancePath = await page.evaluate(() => {
-      // This point on the entrance tile stays visible around the demo coaster supports at every rotation.
-      const screen = window.gameTest.project({ x: 218.5, y: 250.65, z: 2 });
-      return window.gameTest.pick(screen.x, screen.y);
+      // The ordinary coaster routes supports differently from the old demo ride. Sample fixed points inside the
+      // entrance tile so a support that projects over one corner does not hide the whole path from picking.
+      const points = [
+        [0.15, 0.15], [0.15, 0.5], [0.15, 0.85],
+        [0.5, 0.15], [0.5, 0.5], [0.5, 0.85],
+        [0.85, 0.15], [0.85, 0.5], [0.85, 0.85],
+      ] as const;
+      for (const [offsetX, offsetY] of points) {
+        const screen = window.gameTest.project({ x: 218 + offsetX, y: 250 + offsetY, z: 2 });
+        const pick = window.gameTest.pick(screen.x, screen.y);
+        if (pick?.kind === "path" && pick.x === 218 && pick.y === 250) return pick;
+      }
+      return null;
     });
     expect(entrancePath, `entrance path at rotation ${rotation}`).toEqual({ kind: "path", x: 218, y: 250, height: expect.closeTo(8, 1) });
   }

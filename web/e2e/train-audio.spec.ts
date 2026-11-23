@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import type { SoundFrame, TrainSound } from "../src/audio/mapping";
 
-const train = (changes: Partial<TrainSound> = {}): TrainSound => ({ train: "4294967295:0", pan: 0, audibility: 1, speed: 0, material: "steel", onLift: false, clackRate: 0, launch: false, brake: 0, depart: false, arrive: false, ...changes });
+const train = (changes: Partial<TrainSound> = {}): TrainSound => ({ train: "0:0", pan: 0, audibility: 1, speed: 0, material: "steel", onLift: false, clackRate: 0, launch: false, brake: 0, depart: false, arrive: false, ...changes });
 const frame = (sound: TrainSound): SoundFrame => ({ trains: [sound], screams: [], crowd: { level: 0, pan: 0 }, ambience: { day: 0, night: 0, distance: 0 }, ui: [], eventsMuted: false });
 
 test("train sounds respond to speed, material and operating events @fast", async ({ page }) => {

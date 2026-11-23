@@ -556,6 +556,27 @@ fn two_open_coasters_serve_guests_independently_and_save_mid_ride() {
         (0..2).any(|index| has_moving_occupied_train(&simulation, CoasterId(index))),
         "save is taken while a train carries guests"
     );
+    for coaster_id in 0..2 {
+        let coaster = simulation.coaster(CoasterId(coaster_id)).unwrap();
+        let operation = coaster
+            .coaster_operation
+            .as_ref()
+            .expect("open coaster has an operation");
+        let train_count = operation.trains().count();
+        assert!(train_count > 0, "open coaster has an operating train");
+        let expected_pose_count =
+            train_count * usize::from(coaster.construction.model().train.cars) * 11;
+        assert_eq!(
+            simulation.coaster_train_states(coaster_id).len(),
+            train_count * 6,
+            "open coaster renders only its operating trains"
+        );
+        assert_eq!(
+            simulation.coaster_train_poses(coaster_id).len(),
+            expected_pose_count,
+            "open coaster does not add a second parked train"
+        );
+    }
 
     let bytes = simulation.save_state().unwrap();
     let mut restored = WasmSimulation::load_state(&bytes).unwrap();
@@ -578,6 +599,24 @@ fn two_open_coasters_serve_guests_independently_and_save_mid_ride() {
     assert!(simulation.coaster_set_open(0, false));
     assert!(!simulation.coaster(CoasterId(0)).unwrap().coaster_open);
     assert!(simulation.coaster(CoasterId(1)).unwrap().coaster_open);
+    let closed_train_poses = simulation.coaster_train_poses(0);
+    let closed_train_states = simulation.coaster_train_states(0);
+    assert_eq!(
+        closed_train_poses.len(),
+        usize::from(
+            simulation
+                .coaster(CoasterId(0))
+                .unwrap()
+                .construction
+                .model()
+                .train
+                .cars
+        ) * 11
+    );
+    assert_eq!(closed_train_states.len(), 6);
+    assert_eq!(closed_train_states[1], 0.0);
+    assert_eq!(closed_train_states[2], 4.0);
+    assert_eq!(closed_train_states[5], 0.0);
     assert!(
         simulation
             .coaster(CoasterId(1))

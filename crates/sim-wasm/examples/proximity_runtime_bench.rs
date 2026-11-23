@@ -5,6 +5,7 @@ mod proximity_benchmark_tests {
     use std::time::Instant;
 
     use crate::WasmSimulation;
+    use theme_park_sim::park::CoasterId;
     use theme_park_sim::track::proximity::scan_proximity_with_supports;
 
     pub fn completed_coaster_proximity_cost() {
@@ -65,6 +66,13 @@ mod proximity_benchmark_tests {
             .and_then(|coaster| coaster.construction_report.clone())
             .expect("completed report");
         assert!(report.completed);
+        let starter_coaster = simulation
+            .coaster(CoasterId(0))
+            .expect("starter park contains its coaster");
+        let other_circuit = starter_coaster
+            .construction
+            .circuit()
+            .expect("starter coaster is closed");
         simulation.clear_support_render_cache(coaster_id);
         for label in ["cold supports", "cached supports"] {
             let start = Instant::now();
@@ -73,13 +81,12 @@ mod proximity_benchmark_tests {
             let supports = simulation.proximity_supports(coaster_id);
             let support_ms = start.elapsed().as_secs_f64() * 1000.0;
             let construction = simulation.editing_construction().unwrap();
-            let demo_coaster = simulation.demo_coaster.as_ref().expect("demo park coaster");
             let start = Instant::now();
             let geometry = scan_proximity_with_supports(
                 &simulation.world,
                 construction.pieces(),
                 &construction.model().train,
-                demo_coaster.circuit.pieces(),
+                other_circuit.pieces(),
                 &obstacles,
                 &supports,
             );
@@ -102,7 +109,7 @@ mod proximity_benchmark_tests {
                 report_ms,
                 construction.model().train.cars,
                 construction.pieces().len(),
-                demo_coaster.circuit.pieces().len(),
+                other_circuit.pieces().len(),
                 obstacles.len(),
                 supports.len(),
                 report.samples.len(),

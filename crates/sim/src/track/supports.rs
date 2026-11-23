@@ -2215,7 +2215,7 @@ mod tests {
 
     #[test]
     fn lattice_can_support_every_piece_in_demo_circuit() {
-        let world = crate::demo_world::demo_world();
+        let world = crate::world::starter_terrain();
         for piece in crate::physics::demo_circuit().pieces() {
             assert!(
                 generate_wooden_lattice(piece, &world, &[]).is_ok(),

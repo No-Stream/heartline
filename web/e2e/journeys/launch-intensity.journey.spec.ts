@@ -50,22 +50,30 @@ test("raises a slow Velocity Viper launch through the builder and completes the 
     await input.press("Tab");
   }
   await page.getByRole("button", { name: "Close circuit" }).click();
+  const constructionStatus = page.getByRole("region", { name: "Coaster construction" }).getByRole("status");
+  const launchExitSpeeds = page.getByRole("list", { name: "Launch exit speeds" }).locator("li");
   await page.getByRole("button", { name: "Test coaster" }).click();
+  await expect(constructionStatus).toHaveText("Test train running.");
   await page.evaluate(() => window.gameTest.advanceTicks(10_000));
-  await expect.poll(() => page.getByRole("region", { name: "Coaster construction" }).getByRole("status").textContent())
-    .toBe("Train completed a lap.");
-  const initialLaunchSpeeds = await page.getByRole("list", { name: "Launch exit speeds" }).locator("li").allTextContents();
-  const initialFirstLaunchSpeed = Number(initialLaunchSpeeds[0].match(/exit speed: ([\d.]+)/)?.[1]);
+  await expect(constructionStatus).toHaveText("Train completed a lap.");
+  await expect(launchExitSpeeds).toHaveCount(2);
+  const initialLaunchSpeeds = await launchExitSpeeds.allTextContents();
+  const initialFirstLaunchSpeedMatch = initialLaunchSpeeds[0].match(/exit speed: ([\d.]+)/);
+  expect(initialFirstLaunchSpeedMatch).not.toBeNull();
+  const initialFirstLaunchSpeed = Number(initialFirstLaunchSpeedMatch![1]);
 
   for (const input of launchTargets) {
     await input.fill("50");
     await input.press("Tab");
   }
   await page.getByRole("button", { name: "Test coaster" }).click();
+  await expect(constructionStatus).toHaveText("Test train running.");
   await page.evaluate(() => window.gameTest.advanceTicks(10_000));
-  await expect(page.getByRole("region", { name: "Coaster construction" }).getByRole("status"))
-    .toHaveText("Train completed a lap.", { timeout: 150_000 });
-  const increasedLaunchSpeeds = await page.getByRole("list", { name: "Launch exit speeds" }).locator("li").allTextContents();
-  const increasedFirstLaunchSpeed = Number(increasedLaunchSpeeds[0].match(/exit speed: ([\d.]+)/)?.[1]);
+  await expect(constructionStatus).toHaveText("Train completed a lap.", { timeout: 150_000 });
+  await expect(launchExitSpeeds).toHaveCount(2);
+  const increasedLaunchSpeeds = await launchExitSpeeds.allTextContents();
+  const increasedFirstLaunchSpeedMatch = increasedLaunchSpeeds[0].match(/exit speed: ([\d.]+)/);
+  expect(increasedFirstLaunchSpeedMatch).not.toBeNull();
+  const increasedFirstLaunchSpeed = Number(increasedFirstLaunchSpeedMatch![1]);
   expect(increasedFirstLaunchSpeed).toBeGreaterThan(initialFirstLaunchSpeed);
 });

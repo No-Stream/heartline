@@ -1,11 +1,23 @@
 use std::fmt::{Display, Formatter};
 
 use serde::Deserialize;
+use theme_park_sim::facilities::ParkFacilities;
 use theme_park_sim::park_guests::ParkGuests;
 use theme_park_sim::track::ride_file::{RideFile, RideFileLoadError, RideStation};
+use theme_park_sim::world::starter_terrain;
 
 use crate::WasmSimulation;
 use crate::builder_session::BuilderSession;
+
+pub fn starter_park_description_json() -> String {
+    let mut description: serde_json::Value =
+        serde_json::from_str(include_str!("../../../content/parks/starter.park.json"))
+            .expect("bundled starter park description is valid JSON");
+    description["coasters"][0]["ride"] =
+        serde_json::from_str(include_str!("../../../content/rides/demo.ride.json"))
+            .expect("bundled demo ride file is valid JSON");
+    serde_json::to_string(&description).expect("bundled starter description serializes")
+}
 
 #[derive(Debug)]
 pub enum ParkDescriptionError {
@@ -171,17 +183,27 @@ impl WasmSimulation {
             scenery,
             coasters,
         } = description;
-        if version != 1 {
+        if !matches!(version, 1 | 2) {
             return Err(ParkDescriptionError::Invalid(format!(
                 "unsupported park description version {version}"
             )));
         }
-        if terrain.preset != "flat" {
-            return Err(ParkDescriptionError::Invalid(format!(
-                "unknown terrain preset {:?}",
-                terrain.preset
-            )));
-        }
+        let starter_terrain_preset = match (version, terrain.preset.as_str()) {
+            (1, "flat") | (2, "flat") => false,
+            (2, "starter") => true,
+            (_, "flat" | "starter") => {
+                return Err(ParkDescriptionError::Invalid(format!(
+                    "terrain preset {:?} is not supported in park description version {version}",
+                    terrain.preset
+                )));
+            }
+            _ => {
+                return Err(ParkDescriptionError::Invalid(format!(
+                    "unknown terrain preset {:?}",
+                    terrain.preset
+                )));
+            }
+        };
         let coasters = coasters
             .into_iter()
             .enumerate()
@@ -203,16 +225,21 @@ impl WasmSimulation {
             )
             .collect::<Result<Vec<_>, _>>()?;
         let mut simulation = Self::new(seed, 0, "new".into());
-        if !simulation.remove_facility(0) {
+        if starter_terrain_preset {
+            simulation.world = starter_terrain();
+            simulation.park.facilities = ParkFacilities::new();
+        } else if !simulation.remove_facility(0) {
             return Err(ParkDescriptionError::Invalid(
                 "could not remove the new preset entrance before loading the description".into(),
             ));
         }
-        for (x, y) in [(218, 250), (218, 251)] {
-            if !simulation.path_remove(x, y, 8) {
-                return Err(ParkDescriptionError::Invalid(format!(
-                    "could not remove the new preset path at ({x}, {y}, 8) before loading the description"
-                )));
+        if !starter_terrain_preset {
+            for (x, y) in [(218, 250), (218, 251)] {
+                if !simulation.path_remove(x, y, 8) {
+                    return Err(ParkDescriptionError::Invalid(format!(
+                        "could not remove the new preset path at ({x}, {y}, 8) before loading the description"
+                    )));
+                }
             }
         }
 
@@ -428,6 +455,8 @@ fn entry_error(collection: &'static str, index: usize, message: String) -> ParkD
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};
+    use theme_park_sim::facilities::station_positions;
+    use theme_park_sim::park::CoasterId;
     use theme_park_sim::track::ride_file::RideFileLoadError;
 
     use crate::WasmSimulation;
@@ -448,6 +477,39 @@ mod tests {
             "scenery": [],
             "coasters": []
         })
+    }
+
+    fn starter_park_description() -> Value {
+        serde_json::from_str(&super::starter_park_description_json())
+            .expect("bundled starter park description is valid JSON")
+    }
+
+    fn legacy_demo_save() -> WasmSimulation {
+        let mut compressed = std::io::Cursor::new(include_bytes!(
+            "../tests/fixtures/starter-park-demo-v8.save.xz"
+        ));
+        let mut bytes = Vec::new();
+        lzma_rs::xz_decompress(&mut compressed, &mut bytes)
+            .expect("legacy demo save fixture decompresses");
+        WasmSimulation::load_state_native(&bytes).expect("legacy demo save loads")
+    }
+
+    fn fnv1a(bytes: impl IntoIterator<Item = u8>) -> u64 {
+        bytes.into_iter().fold(0xcbf29ce484222325, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+        })
+    }
+
+    fn hash_i32_values(values: &[i32]) -> u64 {
+        fnv1a(values.iter().flat_map(|value| value.to_le_bytes()))
+    }
+
+    fn hash_f32_values(values: &[f32]) -> u64 {
+        fnv1a(
+            values
+                .iter()
+                .flat_map(|value| value.to_bits().to_le_bytes()),
+        )
     }
 
     fn ride_file() -> Value {
@@ -472,6 +534,83 @@ mod tests {
         let preset = WasmSimulation::new(17, 0, "new".into());
 
         assert_eq!(described.world_state_hash(), preset.world_state_hash());
+    }
+
+    #[test]
+    fn starter_park_file_reproduces_the_legacy_demo_park_and_keeps_its_coaster_closed() {
+        let description = starter_park_description();
+        let json = serde_json::to_string(&description).unwrap();
+        let mut loaded = WasmSimulation::from_park_description(17, 0, &json).unwrap();
+        let legacy_demo = legacy_demo_save();
+
+        assert_eq!(loaded.world_state_hash(), legacy_demo.world_state_hash());
+        assert_eq!(loaded.world_state_hash(), 0xfc67_df4e_996b_1317);
+        assert_eq!(
+            hash_i32_values(&loaded.world_surfaces()),
+            0x5f06_d5f6_96c5_3cb5
+        );
+        assert_eq!(
+            hash_i32_values(&loaded.world_paths()),
+            0x2cc7_be19_a397_6ce6
+        );
+        assert_eq!(
+            hash_i32_values(&loaded.world_path_metadata()),
+            0x896d_e7a7_8b32_312a
+        );
+        assert_eq!(
+            hash_i32_values(&loaded.world_carved()),
+            0x7b16_9139_5144_422d
+        );
+        assert_eq!(loaded.facilities_json(), legacy_demo.facilities_json());
+        assert_eq!(loaded.scenery_json(), legacy_demo.scenery_json());
+        assert_eq!(
+            fnv1a(loaded.facilities_json().bytes()),
+            0x9c29_bc98_97a7_db20
+        );
+        assert_eq!(fnv1a(loaded.scenery_json().bytes()), 0xd73d_fb6f_6c10_ddb1);
+        assert_eq!(
+            hash_f32_values(&loaded.coaster_geometry(0)),
+            0x03cd_c2e2_86dd_dea8
+        );
+        assert_eq!(
+            hash_f32_values(&loaded.coaster_rails(0)),
+            0xd0d0_ca59_8b00_ff65
+        );
+        assert_eq!(
+            hash_f32_values(&loaded.coaster_ties(0)),
+            0xf43b_e1a2_227a_b016
+        );
+        // Ordinary support routing avoids the entrance footprint that the old demo support crossed.
+        assert_eq!(
+            hash_f32_values(&loaded.coaster_supports(0)),
+            0xfaf7_78b8_e404_7ac6
+        );
+        assert_eq!(
+            hash_f32_values(&loaded.coaster_supports(0)),
+            hash_f32_values(&legacy_demo.coaster_supports(0))
+        );
+        assert!(!loaded.coaster(CoasterId(0)).unwrap().coaster_open);
+        assert!(!legacy_demo.coaster(CoasterId(0)).unwrap().coaster_open);
+        assert_eq!(loaded.coaster(CoasterId(0)).unwrap().coaster_price, 6);
+        assert_eq!(legacy_demo.coaster(CoasterId(0)).unwrap().coaster_price, 6);
+        assert_eq!(loaded.simulation.queue_length(u32::MAX), 0);
+        let station = &loaded.coaster(CoasterId(0)).unwrap().construction.pieces()[0];
+        let (queue, exit) = station_positions(station).expect("demo station has access tiles");
+        assert!(loaded.world.path_metadata(queue).is_none());
+        assert!(loaded.world.path_metadata(exit).is_none());
+        let train_states = loaded.coaster_train_states(0);
+        assert_eq!(train_states.len(), 6);
+        assert_eq!(train_states[1], 0.0, "closed coaster train stays stopped");
+        assert_eq!(
+            train_states[2], 4.0,
+            "closed coaster train stays in station"
+        );
+        let parked_train_poses = loaded.coaster_train_poses(0);
+        assert_eq!(parked_train_poses.len(), 66);
+        assert_eq!(legacy_demo.coaster_train_states(0), train_states);
+        assert_eq!(legacy_demo.coaster_train_poses(0), parked_train_poses);
+        loaded.tick();
+        assert_eq!(loaded.coaster_train_poses(0), parked_train_poses);
     }
 
     #[test]
@@ -625,7 +764,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(simulation.ride_test("player"), "");
+        assert_eq!(simulation.coaster_test(0), "");
         let preview = simulation.path_preview(vec![239, 251, 10, 244, 251, 10], "normal", 0);
         assert!(preview.chunks_exact(9).all(|tile| tile[6] == 13));
         assert!(!simulation.path_build(vec![239, 251, 10, 244, 251, 10], "normal", 0));
@@ -633,7 +772,7 @@ mod tests {
             simulation.path_message(),
             "Path would block coaster supports"
         );
-        assert_eq!(simulation.ride_test("player"), "");
+        assert_eq!(simulation.coaster_test(0), "");
     }
 
     #[test]

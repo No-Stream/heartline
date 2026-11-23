@@ -3,12 +3,14 @@ use std::hint::black_box;
 use std::process::ExitCode;
 use std::time::Instant;
 
-use theme_park_sim::demo_world::demo_world;
 use theme_park_sim::executor::{Executor, ThreadedExecutor};
 use theme_park_sim::guests::behavior::{Facility, KnownPlace, PlaceKind};
 use theme_park_sim::guests::park::ParkGuests;
 use theme_park_sim::guests::walking::WalkingGuest;
 use theme_park_sim::world::Position;
+
+#[path = "support/park_world.rs"]
+mod park_world;
 
 const DEFAULT_GUEST_COUNT: usize = 10_000;
 const WARMUP_TICKS: usize = 20;
@@ -197,7 +199,7 @@ fn measure_ticks_per_second(
     iterations_per_guest: usize,
     options: &Options,
 ) -> (usize, f64) {
-    let world = demo_world();
+    let world = park_world::starter_park_world();
     let entrance = Position {
         x: 218,
         y: 256,

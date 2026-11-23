@@ -1,4 +1,3 @@
-pub mod demo_world;
 pub mod executor;
 pub mod facilities;
 pub mod guests;

@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import type { SoundFrame } from "../src/audio/mapping";
+import { setGameSpeed } from "./player/driver";
 
 const frame = (screams: SoundFrame["screams"] = []): SoundFrame => ({ trains: [], screams, crowd: { level: 0, pan: 0 }, ambience: { day: 0, night: 0, distance: 0 }, ui: [], eventsMuted: false });
 
@@ -8,7 +9,7 @@ test("rider screams play the CC0 recordings on time, broadband, and stop when ev
   page.on("response", (response) => { if (response.url().endsWith(".mp3")) recordings.set(response.url(), response.status()); });
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
-  const scream = frame([{ train: "4294967295:0", pan: 0, audibility: 1, intensity: 1 }]);
+  const scream = frame([{ train: "0:0", pan: 0, audibility: 1, intensity: 1 }]);
   const results = await page.evaluate(async ({ scream, quiet }) => {
     const render = (frames: { time: number; frame: SoundFrame }[]) => window.gameTest.audio.renderOffline({ duration: 3, volume: 1, includeSamples: true, frames });
     return Promise.all([render([{ time: 0, frame: quiet }, { time: 0.2, frame: scream }]), render([{ time: 0, frame: quiet }]), render([{ time: 0, frame: scream }, { time: 0.2, frame: { ...quiet, eventsMuted: true } }])]);
@@ -43,14 +44,25 @@ test("simultaneous drops occupy separate groups and a suppressed repeat adds non
   expect(result.voiceTimeline!.map((voices) => voices.screams)).toEqual([0, 2, 2, 0]);
 });
 
-test("the occupied demo train produces a live scream @slow", async ({ page }) => {
+test("guests riding an open coaster produce a live scream @slow", async ({ page }) => {
   test.setTimeout(150_000);
-  await page.goto("/?park=demo&seed=42");
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto("/?park=horizon-hawk");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
-  await page.locator("canvas").click();
-  const speed = page.getByRole("button", { name: "Game speed" });
-  await speed.click();
-  await speed.click();
-  await expect(speed).toHaveText("×4");
-  await expect.poll(() => page.evaluate(() => window.gameTest.audio.activeVoices().screams), { timeout: 110_000, intervals: [50] }).toBeGreaterThanOrEqual(1);
+  await setGameSpeed(page, 16);
+  await expect.poll(() => page.evaluate(() => window.gameTest.audio.state()), { timeout: 15_000 }).toBe("running");
+  await expect.poll(() => page.evaluate(() => window.gameTest.riders().length), { timeout: 60_000 }).toBeGreaterThan(0);
+  await setGameSpeed(page, 4);
+  await page.evaluate(() => {
+    const rider = window.gameTest.riders()[0]!;
+    window.gameTest.setCamera({ centerX: rider.x - rider.z, centerY: rider.y - rider.z, zoom: 2, rotation: 0 });
+  });
+  await page.getByRole("button", { name: "Watch", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.gameTest.audio.state()), { timeout: 15_000 }).toBe("running");
+  await expect.poll(() => page.evaluate(() => {
+    const rider = window.gameTest.riders()[0];
+    if (!rider) return false;
+    window.gameTest.setCamera({ centerX: rider.x - rider.z, centerY: rider.y - rider.z, zoom: 2, rotation: 0 });
+    return window.gameTest.audio.activeVoices().screams > 0;
+  }), { timeout: 90_000, intervals: [50] }).toBe(true);
 });

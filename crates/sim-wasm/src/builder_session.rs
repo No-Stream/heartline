@@ -614,11 +614,15 @@ impl BuilderSession {
     }
 
     pub fn test(&mut self) -> Result<serde_json::Value, BuilderSessionError> {
-        let message = self.simulation.ride_test("player");
+        let id = self
+            .simulation
+            .editing_coaster_id()
+            .ok_or_else(|| self.bridge_refusal("test ride"))?;
+        let message = self.simulation.coaster_test(id.0);
         if !message.is_empty() {
             return Err(self.bridge_error("test ride", message));
         }
-        serde_json::from_str(&self.simulation.ride_info_json("player"))
+        serde_json::from_str(&self.simulation.coaster_ride_info_json(id.0))
             .map_err(|error| self.bridge_error("read ride test report", error.to_string()))
     }
 
@@ -2235,11 +2239,14 @@ mod tests {
                 simulation.world_carved(),
             ),
         );
-        trace_call(
-            trace,
-            "world: coaster_supports",
-            simulation.coaster_supports(crate::guests::DEMO_COASTER_RENDER_ID),
-        );
+        let editing_coaster_id = simulation.editing_coaster_id().map(|id| id.0);
+        let coaster_supports = simulation
+            .coaster_ids()
+            .into_iter()
+            .filter(|&id| Some(id) != editing_coaster_id)
+            .flat_map(|id| simulation.coaster_supports(id))
+            .collect::<Vec<_>>();
+        trace_call(trace, "world: coaster_supports", coaster_supports);
     }
 
     fn label(prefix: &str, call: &'static str) -> &'static str {

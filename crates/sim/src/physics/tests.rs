@@ -41,7 +41,7 @@ use crate::track::{
     Bank, CoasterModel, Heading, HorizontalCurvature, PieceId, Slope, TrackState,
     VerticalCurvature, catalog, hybrid_model,
 };
-use crate::world::{Surface, World};
+use crate::world::{Direction, Path, Position, Surface, World};
 
 fn construction_test_run_from_test_start(
     circuit: &Circuit,
@@ -1423,7 +1423,7 @@ fn demo_circuit_is_closed_and_train_readings_can_be_cleared() {
 
 #[test]
 fn demo_circuit_builds_piece_by_piece_in_the_demo_world() {
-    let world = crate::demo_world::demo_world();
+    let world = crate::world::starter_terrain();
     let ride: RideFile =
         serde_json::from_str(include_str!("../../../../content/rides/demo.ride.json"))
             .expect("demo ride file is valid");
@@ -1509,7 +1509,15 @@ fn demo_circuit_crosses_the_demo_path() {
         "demo track must cross the path at y=256 tiles"
     );
     let crossing = crossing.unwrap();
-    let world = crate::demo_world::demo_world();
+    let mut world = crate::world::starter_terrain();
+    let path_height = |x: u16| 8 + i16::try_from(x.saturating_sub(245).min(15)).unwrap();
+    for x in 218..280 {
+        let height = path_height(x);
+        world.place_path(Path {
+            position: Position { x, y: 256, height },
+            slope: (path_height(x + 1) > height).then_some(Direction::East),
+        });
+    }
     let path = world
         .paths()
         .find(|path| {

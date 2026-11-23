@@ -3,7 +3,6 @@ import { createWorldRenderer, loadAtlas, type Atlas, type WorldView } from "../.
 import { buildTrackQuads, interpolateTrainPoses, trackStyle, type TrackPaint } from "../../src/render/track/geometry";
 import { buildRiderQuads, buildTrainQuads } from "../../src/render/track/trains";
 import { parseTrainLayout } from "../../src/train-layout";
-import { DEMO_COASTER_ID } from "../../src/protocol";
 
 /** The fixture paints its coasters in its own atlas's theme inks: track in steel, supports in wood. */
 function fixturePaint(atlas: Atlas): TrackPaint {
@@ -11,10 +10,10 @@ function fixturePaint(atlas: Atlas): TrackPaint {
   return { track: style.steel, supports: style.wood, trains: style.train, ink: style.ink, lineWeight: style.lineWeight };
 }
 
-/** The demo coaster's train, which the fixture's coasters run. */
-const demoTrain = parseTrainLayout({ model: "hybrid", trackMaterial: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 });
+/** The starter coaster's train layout, used by the fixture's rendered trains. */
+const fixtureTrain = parseTrainLayout({ model: "hybrid", trackMaterial: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 });
 
-const initializeDemoWorker = (worker: Worker, frozen = false): void => {
+const initializeStarterParkWorker = (worker: Worker, frozen = false): void => {
   worker.postMessage({ type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen, manualBlockAnalysis: false });
 };
 
@@ -22,7 +21,7 @@ declare global {
   interface Window {
     renderTrackFixture(rotation: Rotation): Promise<{ picks: string[] }>;
     checkTrainMotion(): Promise<{ previous: number[]; current: number[]; interpolated: number[][] }>;
-    demoTrackPoints(): Promise<{ x: number; y: number; z: number }[]>;
+    starterTrackPoints(): Promise<{ x: number; y: number; z: number }[]>;
     checkCoasterTransfer(): Promise<{ rails: number; ties: number; supports: number; shared: boolean; revisionChanged: boolean; geometryEqual: boolean; refreshedSupports: boolean }>;
     renderRiderOrientations(): Promise<Record<"upright" | "banked" | "inverted", { pickable: boolean; hiddenByNearerGeometry: boolean; visibleOverFartherGeometry: boolean; topMinusBottom: { x: number; y: number } }>>;
   }
@@ -41,10 +40,10 @@ window.renderRiderOrientations = async () => {
     1, 4, 4, 1, 1, 0, 0, 0, diagonal, diagonal, 1,
     2, 6, 4, 1, 1, 0, 0, 0, 0, -1, 1,
   ]);
-  const riders = buildRiderQuads(poses, camera, canvas, atlas, "3", demoTrain);
+  const riders = buildRiderQuads(poses, camera, canvas, atlas, "3", fixtureTrain);
   const geometry = (view: Camera, viewport: Viewport, currentAtlas: Atlas, scale: string) => [
-    ...buildTrainQuads(poses, view, viewport, fixturePaint(currentAtlas), demoTrain),
-    ...buildRiderQuads(poses, view, viewport, currentAtlas, scale, demoTrain),
+    ...buildTrainQuads(poses, view, viewport, fixturePaint(currentAtlas), fixtureTrain),
+    ...buildRiderQuads(poses, view, viewport, currentAtlas, scale, fixtureTrain),
   ];
   renderer.render({ world: world, camera: camera, waterFrame: 0, geometryPasses: [geometry] });
   const pickRider = (rider: typeof riders[number]): boolean => {
@@ -87,8 +86,8 @@ window.checkCoasterTransfer = () => new Promise((resolve, reject) => {
   worker.onmessage = (event: MessageEvent<{ type: string; coasters?: { id: number; trackRevision: string; rails?: Float32Array; ties?: Float32Array; supports?: Float32Array }[] }>) => {
     const message = event.data;
     if (message.type !== "world") return;
-    const coaster = message.coasters?.find(({ id }) => id === DEMO_COASTER_ID);
-    if (!coaster) { worker.terminate(); reject(new Error("Demo coaster geometry missing")); return; }
+    const coaster = message.coasters?.[0];
+    if (!coaster) { worker.terminate(); reject(new Error("Starter coaster geometry missing")); return; }
     if (!first) {
       if (!coaster.rails || !coaster.ties || !coaster.supports) { worker.terminate(); reject(new Error("Coaster geometry missing")); return; }
       first = { trackRevision: coaster.trackRevision, rails: coaster.rails, ties: coaster.ties, supports: coaster.supports };
@@ -106,7 +105,7 @@ window.checkCoasterTransfer = () => new Promise((resolve, reject) => {
         refreshedSupports: coaster.supports instanceof Float32Array && coaster.supports !== first.supports });
     }
   };
-  initializeDemoWorker(worker);
+  initializeStarterParkWorker(worker);
 });
 
 window.renderTrackFixture = async (rotation) => {
@@ -156,8 +155,8 @@ window.renderTrackFixture = async (rotation) => {
   const camera = { centerX: 4, centerY: 3.5, zoom: 2.5, rotation };
   renderer.render({ world: world, camera: camera, waterFrame: 0, geometryPasses: [(renderCamera, viewport, renderAtlas, scale) => [
     ...buildTrackQuads(world.coasterRails, world.coasterTies, world.coasterSupports, renderCamera, viewport, fixturePaint(renderAtlas)),
-    ...buildTrainQuads(world.trainPoses, renderCamera, viewport, fixturePaint(renderAtlas), demoTrain),
-    ...buildRiderQuads(world.trainPoses, renderCamera, viewport, renderAtlas, scale, demoTrain),
+    ...buildTrainQuads(world.trainPoses, renderCamera, viewport, fixturePaint(renderAtlas), fixtureTrain),
+    ...buildRiderQuads(world.trainPoses, renderCamera, viewport, renderAtlas, scale, fixtureTrain),
   ]] });
   const picks = new Set<string>();
   for (const point of [{ x: 3, y: 3.5, z: 1 }, { x: 4, y: 5, z: 2 }]) {
@@ -175,10 +174,32 @@ window.renderTrackFixture = async (rotation) => {
 window.checkTrainMotion = () => new Promise((resolve, reject) => {
   const worker = new Worker(new URL("../../src/worker.ts", import.meta.url), { type: "module" });
   let previous: Float32Array | undefined;
+  let coasterId: number | undefined;
+  let workerReady = false;
+  let testLapStarted = false;
+  const startTestLap = (): void => {
+    if (!workerReady || coasterId === undefined || testLapStarted) return;
+    testLapStarted = true;
+    worker.postMessage({ type: "ride-edit", ride: coasterId });
+  };
   worker.onerror = (event) => { worker.terminate(); reject(new Error(event.message)); };
-  worker.onmessage = (event: MessageEvent<{ type: string; coasters?: { id: number; trainPoses: Float32Array }[] }>) => {
-    if (event.data.type !== "snapshot") return;
-    const current = event.data.coasters?.find(({ id }) => id === DEMO_COASTER_ID)?.trainPoses;
+  worker.onmessage = (event: MessageEvent<{ type: string; action?: string; success?: boolean; coasters?: { id: number; trainPoses?: Float32Array }[] }>) => {
+    if (event.data.type === "coasters") {
+      coasterId ??= event.data.coasters?.[0]?.id;
+      startTestLap();
+      return;
+    }
+    if (event.data.type === "ready") {
+      workerReady = true;
+      startTestLap();
+      return;
+    }
+    if (event.data.type === "coaster-action-result" && event.data.action === "edit" && event.data.success) {
+      worker.postMessage({ type: "construction-test" });
+      return;
+    }
+    if (event.data.type !== "snapshot" || coasterId === undefined) return;
+    const current = event.data.coasters?.find(({ id }) => id === coasterId)?.trainPoses;
     if (!current?.length) return;
     if (!previous) { previous = current; return; }
     if (current[1] === previous[1] && current[2] === previous[2] && current[3] === previous[3]) return;
@@ -186,15 +207,15 @@ window.checkTrainMotion = () => new Promise((resolve, reject) => {
     worker.terminate();
     resolve({ previous: [...previous.slice(0, 11)], current: [...current.slice(0, 11)], interpolated });
   };
-  initializeDemoWorker(worker);
+  initializeStarterParkWorker(worker);
 });
 
-window.demoTrackPoints = () => new Promise((resolve, reject) => {
+window.starterTrackPoints = () => new Promise((resolve, reject) => {
   const worker = new Worker(new URL("../../src/worker.ts", import.meta.url), { type: "module" });
   worker.onerror = (event) => { worker.terminate(); reject(new Error(event.message)); };
   worker.onmessage = (event: MessageEvent<{ type: string; coasters?: { id: number; rails?: Float32Array }[] }>) => {
     if (event.data.type !== "world") return;
-    const geometry = event.data.coasters?.find(({ id }) => id === DEMO_COASTER_ID)?.rails;
+    const geometry = event.data.coasters?.[0]?.rails;
     if (!geometry) return;
     const points: { x: number; y: number; z: number }[] = [];
     for (let index = 0; index < geometry.length; index += 19) {
@@ -202,5 +223,5 @@ window.demoTrackPoints = () => new Promise((resolve, reject) => {
     }
     worker.terminate(); resolve(points);
   };
-  initializeDemoWorker(worker);
+  initializeStarterParkWorker(worker);
 });

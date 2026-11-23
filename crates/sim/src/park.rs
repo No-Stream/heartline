@@ -16,11 +16,9 @@ mod theming_tests;
 use crate::facilities::ParkFacilities;
 use crate::guests::behavior::Facility;
 use crate::guests::park::ParkGuests;
-use crate::physics::{Circuit, TestRun, Train};
 use crate::state_hash::StateHasher;
 use crate::track::clearance::TerrainCell;
 use crate::track::construction::Construction;
-use crate::track::{CoasterColors, TrainConfiguration, hybrid_model};
 use crate::world::World;
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -72,28 +70,16 @@ where
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
-pub struct DemoCoaster {
-    pub circuit: Circuit,
-    pub train: Train,
-    pub train_configuration: TrainConfiguration,
-    pub colors: CoasterColors,
-}
-
-#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Park {
     pub world: World,
     pub facilities: ParkFacilities,
     pub simulation: ParkGuests,
-    pub demo_coaster: Option<DemoCoaster>,
     pub coasters: BTreeMap<CoasterId, Coaster>,
     pub next_coaster_id: u32,
     pub automatic_tunnel_owners: BTreeMap<TerrainCell, BTreeSet<TunnelOwner>>,
     pub manual_tunnel_cells: BTreeSet<TerrainCell>,
     pub physics_remainder: u32,
     pub construction_message: String,
-    /// Latest test of the demo coaster; its track never changes, so it is never invalidated.
-    #[serde(deserialize_with = "deserialize_v6_physics_option")]
-    pub demo_report: Option<TestRun>,
     pub pending_coaster_price: u16,
 }
 
@@ -109,38 +95,17 @@ impl Park {
     pub fn rebind_world_after_loading(&mut self) {
         self.simulation.rebind_world(&self.world);
     }
-    pub fn new(
-        world: World,
-        facilities: ParkFacilities,
-        simulation: ParkGuests,
-        circuit: Circuit,
-        train: Train,
-        train_configuration: TrainConfiguration,
-    ) -> Self {
-        let mut park = Self::new_empty(world, facilities, simulation);
-        park.demo_coaster = Some(DemoCoaster {
-            circuit,
-            train,
-            train_configuration,
-            // The demo coaster is a steel-box track on a wooden structure, so it wears the Timber Tumbler's colours.
-            colors: hybrid_model().default_colors,
-        });
-        park
-    }
-
     pub fn new_empty(world: World, facilities: ParkFacilities, simulation: ParkGuests) -> Self {
         Self {
             world,
             facilities,
             simulation,
-            demo_coaster: None,
             coasters: BTreeMap::new(),
             next_coaster_id: 0,
             automatic_tunnel_owners: BTreeMap::new(),
             manual_tunnel_cells: BTreeSet::new(),
             physics_remainder: 0,
             construction_message: String::new(),
-            demo_report: None,
             pending_coaster_price: 6,
         }
     }
@@ -262,12 +227,8 @@ impl Park {
         hash.write_u64(self.world.state_hash());
         hash.write_u64(self.facilities.state_hash());
         hash.write_u64(self.simulation.state_hash());
-        hash.write_option(self.demo_coaster.as_ref(), |hash, coaster| {
-            coaster.circuit.hash_into(hash);
-            coaster.train.hash_into(hash);
-            coaster.train_configuration.hash_into(hash);
-            coaster.colors.hash_into(hash);
-        });
+        // Keep the absent legacy demo-coaster slot so ordinary parks retain their hashes.
+        hash.write_option::<()>(None, |_, ()| unreachable!());
         hash.write_u32(self.next_coaster_id);
         hash.write_len(self.coasters.len());
         for (&id, coaster) in &self.coasters {
@@ -373,11 +334,6 @@ impl Park {
         }
         hash.write_u32(self.physics_remainder);
         hash.write_bytes(self.construction_message.as_bytes());
-        // Only written when present so parks without a demo report keep their earlier hashes.
-        if let Some(report) = &self.demo_report {
-            hash.write_tag(b"DemoReport");
-            report.hash_into(&mut hash);
-        }
         hash.write_u16(self.pending_coaster_price);
         // Support geometry is derived from the world and track, and only avoids recomputation.
         hash.finish()

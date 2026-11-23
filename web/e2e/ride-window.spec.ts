@@ -9,7 +9,7 @@ interface CoasterPick {
   readonly y: number;
 }
 
-async function findDemoCoaster(page: Page): Promise<CoasterPick> {
+async function findStarterCoaster(page: Page): Promise<CoasterPick> {
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 228, centerY: 252, zoom: 0.5, rotation: 0 }));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
   const target = await page.evaluate((): CoasterPick | null => {
@@ -18,21 +18,21 @@ async function findDemoCoaster(page: Page): Promise<CoasterPick> {
     for (let y = 0; y < canvas.height; y += 4) {
       for (let x = 0; x < canvas.width; x += 4) {
         const picked = window.gameTest.pick(x, y);
-        if (picked?.kind === "track" && "id" in picked && /^track-4294967295-\d+$/.test(picked.id)) return { id: picked.id, x, y };
+        if (picked?.kind === "track" && "id" in picked && /^track-0-\d+$/.test(picked.id)) return { id: picked.id, x, y };
       }
     }
     return null;
   });
-  if (!target) throw new Error("No demo coaster track could be picked from the rendered world");
+  if (!target) throw new Error("No starter coaster track could be picked from the rendered world");
   return target;
 }
 
-test("clicking the demo coaster opens a ride window with its scores, statistics and g-force graph @fast", async ({ page }) => {
+test("clicking the starter coaster opens a ride window with its scores, statistics and g-force graph @fast", async ({ page }) => {
   test.setTimeout(90_000);
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await selectUnits(page, "metric");
-  await clickCanvas(page, await findDemoCoaster(page));
+  await clickCanvas(page, await findStarterCoaster(page));
 
   const rideWindow = page.getByTestId("ride-window");
   await expect(rideWindow).toBeVisible();
@@ -89,7 +89,7 @@ test("the ride window shows distances and speeds in the chosen units @fast", asy
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await selectUnits(page, "imperial");
-  await clickCanvas(page, await findDemoCoaster(page));
+  await clickCanvas(page, await findStarterCoaster(page));
   const rideWindow = page.getByTestId("ride-window");
   await rideWindow.getByTestId("ride-test").click();
   await expect(rideWindow.locator("[data-statistics-speed-layout] > div", { hasText: "Track length" }).locator("dd")).toHaveText(/ ft$/);

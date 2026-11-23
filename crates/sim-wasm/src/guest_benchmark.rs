@@ -1,10 +1,11 @@
-use theme_park_sim::demo_world::demo_world;
 use theme_park_sim::guests::walking::WalkingSimulation;
 use theme_park_sim::guests::{AgeGroup, GuestId};
 use theme_park_sim::physics::{Circuit, PhysicsConfig, Train, demo_circuit};
 use theme_park_sim::track::hybrid_model;
 use theme_park_sim::world::{Position, World};
 use wasm_bindgen::prelude::*;
+
+use crate::WasmSimulation;
 
 #[wasm_bindgen]
 pub struct WasmWalkingBenchmark {
@@ -19,7 +20,8 @@ pub struct WasmWalkingBenchmark {
 impl WasmWalkingBenchmark {
     #[wasm_bindgen(constructor)]
     pub fn new(seed: u64, guest_count: usize) -> Self {
-        let world = demo_world();
+        let park = WasmSimulation::new(seed, guest_count, "demo".into());
+        let world = park.park.world.clone();
         let simulation = WalkingSimulation::with_entrance(
             seed,
             guest_count,

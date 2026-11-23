@@ -1,5 +1,6 @@
 import { formatClock } from "./render/daylight";
 import type { InputAction } from "./input/actions";
+import { GAME_SPEEDS, type GameSpeed } from "./game-speed";
 import "./print-modern.css";
 import "./day-clock.css";
 
@@ -20,7 +21,8 @@ export function createDayClock(container: HTMLElement, dispatch: (action: InputA
   update(phase: number): void;
   setControlsVisible(visible: boolean): void;
   setDaySpeed(speed: DaySpeed): void;
-  cycleGameSpeed(): number;
+  setGameSpeed(speed: number): void;
+  cycleGameSpeed(): GameSpeed;
   setPaused(paused: boolean): void;
 } {
   container.classList.add("day-clock");
@@ -43,12 +45,17 @@ export function createDayClock(container: HTMLElement, dispatch: (action: InputA
   const gameSpeedButton = container.querySelector<HTMLButtonElement>("[data-game-speed]")!;
   const pauseButton = container.querySelector<HTMLButtonElement>("[data-game-pause]")!;
   const pausedIndicator = container.querySelector<HTMLElement>("[data-paused-indicator]")!;
-  const gameSpeeds = [1, 2, 4, 8, 16];
-  let gameSpeedIndex = 0;
-  function cycleGameSpeed(): number {
-    gameSpeedIndex = (gameSpeedIndex + 1) % gameSpeeds.length;
-    gameSpeedButton.textContent = `×${gameSpeeds[gameSpeedIndex]}`;
-    return gameSpeeds[gameSpeedIndex]!;
+  let nextGameSpeedIndex = 1;
+  function setGameSpeed(speed: number): void {
+    if (!Number.isInteger(speed) || speed < 1 || speed > 16) throw new RangeError(`Invalid game speed ${speed}`);
+    nextGameSpeedIndex = GAME_SPEEDS.findIndex((preset) => preset > speed);
+    if (nextGameSpeedIndex < 0) nextGameSpeedIndex = 0;
+    gameSpeedButton.textContent = `×${speed}`;
+  }
+  function cycleGameSpeed(): GameSpeed {
+    const speed = GAME_SPEEDS[nextGameSpeedIndex]!;
+    setGameSpeed(speed);
+    return speed;
   }
   gameSpeedButton.addEventListener("click", () => dispatch({ type: "game-speed-cycle" }));
   pauseButton.addEventListener("click", () => dispatch({ type: "pause-toggle" }));
@@ -65,6 +72,7 @@ export function createDayClock(container: HTMLElement, dispatch: (action: InputA
   });
   return {
     cycleGameSpeed,
+    setGameSpeed,
     setPaused(paused) {
       pauseButton.setAttribute("aria-pressed", String(paused));
       pauseButton.setAttribute("aria-label", paused ? "Resume" : "Pause");
