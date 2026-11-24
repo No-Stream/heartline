@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { canvasToPage, moveOverCanvas, openTool } from "./game-page";
 
-const livePauseRenderUrl = "/?livePauseRender=1";
+const livePauseRenderUrl = "/?park=new&livePauseRender=1";
 
 test("pausing freezes guests and ticks while tools remain usable", async ({ page }) => {
   await page.goto(livePauseRenderUrl);

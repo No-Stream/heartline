@@ -16,7 +16,7 @@ for (const rotation of [0, 1, 2, 3] as const) {
   test(`world view at rotation ${rotation}`, async ({ page }) => {
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
-    await page.goto("/?test=1");
+    await page.goto("/?test=1&park=new");
     await page.waitForFunction(() => window.gameTest?.ready);
     await page.evaluate((viewRotation) => {
       const game: GameTest = window.gameTest;
@@ -34,7 +34,7 @@ for (const rotation of [0, 1, 2, 3] as const) {
 }
 
 test("picks known terrain and path points at every rotation @fast", async ({ page }) => {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=demo");
   await page.waitForFunction(() => window.gameTest?.ready);
 
   const renderCamera = async (centerX: number, centerY: number, rotation: 0 | 1 | 2 | 3): Promise<void> => {
@@ -122,7 +122,7 @@ test("a terrain edit repaints the frozen world and updates picking", async ({ pa
     runtimeEvents.push(`worker started: ${worker.url()}`);
     worker.on("close", () => runtimeEvents.push(`worker closed: ${worker.url()}`));
   });
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   try {
     await page.waitForFunction(() => window.gameTest?.ready);
   } catch (error) {

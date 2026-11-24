@@ -3,7 +3,7 @@ import { canvasToPage, clickCanvas, moveOverCanvas, openTool } from "./game-page
 
 test("the path status does not move the canvas during a drag @slow", async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Paths");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 247, centerY: 253, zoom: 1, rotation: 0 }));
@@ -36,7 +36,7 @@ test("the path status does not move the canvas during a drag @slow", async ({ pa
 
 test("toolbar path drags preview and place reciprocal normal path edges at every rotation and zoom @slow", async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Paths");
   await expect(page.getByRole("region", { name: "Paths" }).getByRole("status")).toHaveText("Drag between tiles to build a path.");

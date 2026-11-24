@@ -95,7 +95,7 @@ test("replay waits for a finish-coaster search before confirming the connection 
     { type: "construction-finish-preview" },
     { type: "construction-finish-confirm" },
   ].map((command) => ({ tick: 0, command }));
-  const session = parseReplaySession({ format: "theme-park-session", version: 1, build: { gitHash: "test", mode: "development" }, seed: "42", park: "demo", guestCount: 0, commands, checkpoints: [], finalTick: 0 });
+  const session = parseReplaySession({ format: "theme-park-session", version: 1, build: { gitHash: "test", mode: "development" }, seed: "42", park: "new", guestCount: 0, commands, checkpoints: [], finalTick: 0 });
   const outcome = await replayWithWorker(page, session);
   expect(outcome.observation.constructionPieces).toBeGreaterThan(1 + lift.length + descent.length);
 });

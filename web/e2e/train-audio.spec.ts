@@ -5,7 +5,7 @@ const train = (changes: Partial<TrainSound> = {}): TrainSound => ({ train: "0:0"
 const frame = (sound: TrainSound): SoundFrame => ({ trains: [sound], screams: [], crowd: { level: 0, pan: 0 }, ambience: { day: 0, night: 0, distance: 0 }, ui: [], eventsMuted: false });
 
 test("train sounds respond to speed, material and operating events @fast", async ({ page }) => {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   const render = (sound: TrainSound) => page.evaluate((f) => window.gameTest.audio.renderOffline({ duration: 2, volume: 1, frames: Array.from({ length: 60 }, (_, i) => ({ time: i / 30, frame: i === 0 ? f : { ...f, trains: f.trains.map((t) => ({ ...t, launch: false, depart: false, arrive: false })) } })) }), frame(sound));
   const slow = (await render(train({ speed: 5 }))).channels[0]!;
@@ -25,7 +25,7 @@ test("train sounds respond to speed, material and operating events @fast", async
 });
 
 test("lift clacks keep time and the station dispatch is a clunk then an air hiss with no tone @fast", async ({ page }) => {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   const measure = async (sound: TrainSound) => page.evaluate(async (f) => {
     const result = await window.gameTest.audio.renderOffline({ duration: 2, volume: 1, includeSamples: true, frames: Array.from({ length: 60 }, (_, index) => ({ time: index / 30, frame: index === 0 ? f : { ...f, trains: f.trains.map((t) => ({ ...t, depart: false })) } })) });
@@ -65,7 +65,7 @@ test("lift clacks keep time and the station dispatch is a clunk then an air hiss
 });
 
 test("muting events and releasing a voice stop its scheduled sounds @fast", async ({ page }) => {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   const eventFrame = frame(train({ launch: true, depart: true }));
   for (const nextFrame of [{ ...frame(train()), eventsMuted: true }, { ...eventFrame, trains: [] }]) {

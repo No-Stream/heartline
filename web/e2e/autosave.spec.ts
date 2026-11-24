@@ -3,7 +3,7 @@ import { openTool } from "./game-page";
 
 test("autosaves rotate through the configured slots and restore a selected park state", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-11-05T19:44:00Z") });
-  await page.goto("/?park=demo&seed=2026");
+  await page.goto("/?park=new&seed=2026");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await page.clock.pauseAt(new Date("2026-11-05T19:45:00Z"));
 
@@ -19,16 +19,16 @@ test("autosaves rotate through the configured slots and restore a selected park 
 
   await openTool(page, "Facilities");
   const entranceId = await page.evaluate(() => window.gameTest.facilities().find(({ kind }) => kind === "entrance")?.id);
-  if (entranceId === undefined) throw new Error("The demo park entrance is missing");
+  if (entranceId === undefined) throw new Error("The park entrance is missing");
   const readEntrancePrice = () => page.evaluate((id) => window.gameTest.facilities().find(({ id: currentId }) => currentId === id)?.price, entranceId);
   const raiseEntrancePrice = async (): Promise<number> => {
     if (await parkToggle.getAttribute("aria-expanded") === "true") await parkToggle.click();
     const priceBefore = await readEntrancePrice();
-    if (priceBefore === undefined) throw new Error("The demo park entrance price is missing");
+    if (priceBefore === undefined) throw new Error("The park entrance price is missing");
     await page.getByRole("button", { name: `Raise the price of entrance ${entranceId}` }).click();
     await expect.poll(readEntrancePrice).toBe(priceBefore + 1);
     const priceAfter = await readEntrancePrice();
-    if (priceAfter === undefined) throw new Error("The demo park entrance price is missing");
+    if (priceAfter === undefined) throw new Error("The park entrance price is missing");
     return priceAfter;
   };
   const showAutosaves = async (): Promise<void> => {

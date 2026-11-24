@@ -11,7 +11,7 @@ test.use({
 
 for (const rotation of [0, 2] as const) {
   test(`demo park screenshot at rotation ${rotation}${rotation === 0 ? " @fast" : ""}`, async ({ page }) => {
-    await page.goto("/?test=1");
+    await page.goto("/?test=1&park=demo");
     await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
     const flatRideStates = await page.evaluate(() => window.gameTest.facilities()
       .filter(({ kind }) => kind === "carousel" || kind === "ferris_wheel")

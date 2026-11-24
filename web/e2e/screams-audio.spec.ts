@@ -7,7 +7,7 @@ const frame = (screams: SoundFrame["screams"] = []): SoundFrame => ({ trains: []
 test("rider screams play the CC0 recordings on time, broadband, and stop when events are muted @fast", async ({ page }) => {
   const recordings = new Map<string, number>();
   page.on("response", (response) => { if (response.url().endsWith(".mp3")) recordings.set(response.url(), response.status()); });
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   const scream = frame([{ train: "0:0", pan: 0, audibility: 1, intensity: 1 }]);
   const results = await page.evaluate(async ({ scream, quiet }) => {
@@ -29,7 +29,7 @@ test("rider screams play the CC0 recordings on time, broadband, and stop when ev
 });
 
 test("simultaneous drops occupy separate groups and a suppressed repeat adds none @fast", async ({ page }) => {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   const drops = frame([
     { train: "17:0", pan: -0.4, audibility: 1, intensity: 0.8 },

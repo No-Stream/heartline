@@ -7,7 +7,7 @@ const frame = (crowd: SoundFrame["crowd"], ambience: SoundFrame["ambience"], tra
 const train = (changes: Partial<TrainSound>): TrainSound => ({ train: "0:0", pan: 0, audibility: 1, speed: 0, material: "steel", onLift: false, clackRate: 0, launch: false, brake: 0, depart: false, arrive: false, ...changes });
 
 test("crowd murmur follows its level and the ambience is the same wind by day and night @fast", async ({ page }) => {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   const results = await page.evaluate(async ({ quiet, loud, day, night }) => {
     const render = (sound: SoundFrame) => window.gameTest.audio.renderOffline({
@@ -30,7 +30,7 @@ test("crowd murmur follows its level and the ambience is the same wind by day an
 });
 
 test("a park with a stopped or cruising train has no narrow-band tone above 2 kHz by day or night @fast", async ({ page }) => {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   const scenes: Record<string, SoundFrame> = {};
   for (const [time, ambience] of [["day", { day: 1, night: 0, distance: 1 }], ["night", { day: 0, night: 1, distance: 1 }]] as const) {
@@ -86,7 +86,7 @@ test("a park with a stopped or cruising train has no narrow-band tone above 2 kH
 });
 
 test("the live ambience follows the time of day @fast", async ({ page }) => {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await page.evaluate(async () => { await window.gameTest.audio.unlock(); window.gameTest.setTimeOfDay(0); });
   await expect.poll(() => page.evaluate(() => window.gameTest.audio.activeVoices().ambience)).toBe("night");

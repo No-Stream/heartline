@@ -8,27 +8,29 @@ interface GuestPick {
 }
 
 async function openGuestPanel(page: Page): Promise<{ guestId: string; panel: Locator; target: GuestPick }> {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
-  await page.evaluate(() => {
+  const guestId = await page.evaluate(() => {
     const guest = window.gameTest.guests()[0];
+    if (!guest) throw new Error("No guests are present in the park");
     window.gameTest.setCamera({ centerX: guest.x, centerY: guest.y, zoom: 2, rotation: 0 });
+    return guest.id;
   });
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
 
-  const target = await page.evaluate((): GuestPick | null => {
+  const target = await page.evaluate((id): GuestPick | null => {
     const canvas = document.querySelector("canvas");
     if (!canvas) return null;
     for (let y = 0; y < canvas.height; y += 4) {
       for (let x = 0; x < canvas.width; x += 4) {
         const picked = window.gameTest.pick(x, y);
-        if (picked?.kind === "sprite" && picked.id === "guest-9") {
-          return { id: picked.id, x, y };
+        if (picked?.kind === "sprite" && picked.id === id) {
+          return { id, x, y };
         }
       }
     }
     return null;
-  });
+  }, guestId);
   if (!target) throw new Error("No guest could be picked from the rendered world");
 
   await clickCanvas(page, target);

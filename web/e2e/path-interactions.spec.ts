@@ -8,7 +8,7 @@ test.use({
 });
 
 test("single-click placement works and a refused queue preview explains the obstruction @fast", async ({ page }) => {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Paths");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 218, centerY: 254, zoom: 2, rotation: 0 }));
@@ -16,8 +16,8 @@ test("single-click placement works and a refused queue preview explains the obst
 
   await page.getByLabel("Path type").selectOption("normal");
   await page.getByRole("button", { name: "Build paths" }).click();
-  await clickTile(page, 217, 256, 2);
-  await expect.poll(() => pathAt(page, 217, 256, 2)).toBe(true);
+  await clickTile(page, 218, 254, 2);
+  await expect.poll(() => pathAt(page, 218, 254, 2)).toBe(true);
   await expect(page.getByRole("region", { name: "Paths" }).getByRole("status")).toHaveText("Path built.");
 
   const pathsBeforeRefusedPreview = await page.evaluate(() => window.gameTest.paths().length);

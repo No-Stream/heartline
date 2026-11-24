@@ -11,8 +11,8 @@ test.use({
 /** 21:42, when a firework from the fixed test-mode schedule is in full bloom over the demo park. */
 const FIREWORK_NIGHT = 0.904167;
 
-async function startPaused(page: Page): Promise<void> {
-  await page.goto("/?test=1");
+async function startPaused(page: Page, park: "demo" | "new" | "horizon-hawk" = "demo"): Promise<void> {
+  await page.goto(`/?test=1&park=${park}`);
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
 }
 
@@ -38,7 +38,7 @@ test.describe("day and night", () => {
   }
 
   test("sky beyond the park edge at night", async ({ page }) => {
-    await startPaused(page);
+    await startPaused(page, "new");
     await page.evaluate(() => {
       window.gameTest.setCamera({ centerX: 4, centerY: 4, zoom: 0.5, rotation: 0 });
       window.gameTest.setTimeOfDay(0.95);
@@ -65,7 +65,7 @@ test.describe("day and night", () => {
   });
 
   test("test mode holds noon until a test sets the time", async ({ page }) => {
-    await startPaused(page);
+    await startPaused(page, "new");
     expect(await page.evaluate(() => window.gameTest.timeOfDay())).toBe(0.5);
     await page.evaluate(() => window.gameTest.advanceTicks(900));
     expect(await page.evaluate(() => window.gameTest.timeOfDay())).toBe(0.5);
@@ -73,7 +73,7 @@ test.describe("day and night", () => {
   });
 
   test("the clock follows simulation ticks while the game runs", async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/?park=new");
     await expect.poll(() => page.evaluate(() => Number(document.querySelector("[data-testid='tick-count']")?.textContent)), { timeout: 30_000 }).toBeGreaterThan(30);
     const read = () => page.evaluate(() => ({ phase: window.gameTest.timeOfDay(), tick: Number(document.querySelector("[data-testid='tick-count']")!.textContent) }));
     const before = await read();
@@ -85,7 +85,7 @@ test.describe("day and night", () => {
 
   test("the Watch tool can scrub the day and change its speed @fast", async ({ page }) => {
     await page.setViewportSize({ width: 1600, height: 750 });
-    await startPaused(page);
+    await startPaused(page, "new");
     const scrub = page.getByRole("slider", { name: "Set the time of day" });
     await scrub.fill("1290");
     await expect(page.getByLabel("Time of day", { exact: true })).toHaveText("21:30");
@@ -103,7 +103,7 @@ test.describe("day and night", () => {
 
   test("a builder test lap throws confetti at the top of the coaster's lift hill @fast", async ({ page }) => {
     test.setTimeout(30_000);
-    await startPaused(page);
+    await startPaused(page, "horizon-hawk");
     await startCoasterTestLap(page);
     // Any crest with a large enough climb throws confetti (lift hills and launched hills alike), so only the lift crest is counted here.
     const liftCrestBursts = () => page.evaluate(() => window.gameTest.crestBursts().filter((burst) => burst.z > 12));

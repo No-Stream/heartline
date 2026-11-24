@@ -1,11 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { Camera } from "../src/camera";
 import { canvasToPage, clickCanvas, clickTile, openTool, selectUnits } from "./game-page";
+import { dragTiles } from "./player/driver";
 
 test.use({ actionTimeout: 10_000 });
 test("guests ride a player-built coaster and can be selected @slow", async ({ page }) => {
   test.setTimeout(240_000);
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Coaster");
   await page.getByRole("button", { name: "New coaster" }).click();
@@ -65,17 +66,38 @@ test("guests ride a player-built coaster and can be selected @slow", async ({ pa
     await expect(page.locator(".landscaping__status"), `flatten station access tile (${x}, 250)`).toHaveText("Terrain updated");
   }
   await page.getByRole("button", { name: "Cancel tool" }).click();
+  await page.evaluate(() => {
+    for (let x = 234; x <= 237; x += 1) {
+      const height = 8 + x - 234;
+      window.gameTest.setSurface(x, 250, [height, height + 1, height + 1, height]);
+    }
+    window.gameTest.setSurface(243, 251, [12, 12, 12, 12]);
+    window.gameTest.setSurface(243, 252, [12, 12, 11, 11]);
+    window.gameTest.setSurface(243, 253, [11, 11, 10, 10]);
+    window.gameTest.setSurface(243, 254, [10, 10, 9, 9]);
+    window.gameTest.setSurface(243, 255, [9, 9, 8, 8]);
+  });
   await openTool(page, "Paths");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 241, centerY: 253, zoom: 1, rotation: 0 }));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
-  await page.getByLabel("Path type").selectOption("queue");
-  await page.getByRole("button", { name: "Build paths" }).click();
-  await dragWorld(page, { x: 243.5, y: 250.5, z: 3 }, { x: 244.5, y: 256.5, z: 2 });
-  await expect(page.getByRole("region", { name: "Paths" }).getByRole("status")).toHaveText("Path built.");
-  await page.getByRole("region", { name: "Paths" }).getByRole("button", { name: "Cancel" }).click();
   await page.getByLabel("Path type").selectOption("normal");
   await page.getByRole("button", { name: "Build paths" }).click();
-  await dragWorld(page, { x: 239.5, y: 250.5, z: 3 }, { x: 238.5, y: 256.5, z: 2 });
+  await dragTiles(page, { x: 218, y: 250, z: 2 }, { x: 239, y: 250, z: 3 });
+  await expect(page.getByRole("region", { name: "Paths" }).getByRole("status")).toHaveText("Path built.");
+  await page.getByRole("region", { name: "Paths" }).getByRole("button", { name: "Cancel" }).click();
+
+  await page.getByLabel("Path type").selectOption("normal");
+  await page.getByRole("button", { name: "Build paths" }).click();
+  await dragTiles(page, { x: 239, y: 250, z: 3 }, { x: 238, y: 256, z: 2 });
+  await expect(page.getByRole("region", { name: "Paths" }).getByRole("status")).toHaveText("Path built.");
+  await page.getByRole("region", { name: "Paths" }).getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("button", { name: "Build paths" }).click();
+  await dragTiles(page, { x: 238, y: 256, z: 2 }, { x: 243, y: 256, z: 2 });
+  await expect(page.getByRole("region", { name: "Paths" }).getByRole("status")).toHaveText("Path built.");
+  await page.getByRole("region", { name: "Paths" }).getByRole("button", { name: "Cancel" }).click();
+  await page.getByLabel("Path type").selectOption("queue");
+  await page.getByRole("button", { name: "Build paths" }).click();
+  await dragTiles(page, { x: 243, y: 256, z: 2 }, { x: 243, y: 250, z: 3 });
   await expect(page.getByRole("region", { name: "Paths" }).getByRole("status")).toHaveText("Path built.");
   await page.getByRole("region", { name: "Paths" }).getByRole("button", { name: "Cancel" }).click();
   await openTool(page, "Facilities");
@@ -210,13 +232,4 @@ async function clickTerrain(page: Page, x: number, y: number): Promise<void> {
   });
   await clickCanvas(page, point);
   await expect(page.locator("canvas")).toHaveAttribute("data-last-terrain-pick", new RegExp(`"x":${x},"y":${y}(?:,|})`));
-}
-
-async function dragWorld(page: Page, start: { x: number; y: number; z: number }, end: { x: number; y: number; z: number }): Promise<void> {
-  const points = await page.evaluate(({ start, end }) => ({ start: window.gameTest.project(start), end: window.gameTest.project(end) }), { start, end });
-  const from = await canvasToPage(page, points.start), to = await canvasToPage(page, points.end);
-  await page.mouse.move(from.x, from.y);
-  await page.mouse.down();
-  await page.mouse.move(to.x, to.y, { steps: 12 });
-  await page.mouse.up();
 }

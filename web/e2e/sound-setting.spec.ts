@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test("sound preference works in both interface themes and survives reload", async ({ page }) => {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
 
   const soundButton = page.getByRole("button", { name: "Sound" });

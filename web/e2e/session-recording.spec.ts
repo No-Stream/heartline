@@ -12,7 +12,7 @@ interface ExportedSession {
 }
 
 test("records panel actions and game controls in exported inputs", async ({ page }) => {
-  await page.goto("/?test=1&park=demo&seed=2026");
+  await page.goto("/?test=1&park=new&seed=2026");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
 
   await openTool(page, "Paths");
@@ -22,7 +22,7 @@ test("records panel actions and game controls in exported inputs", async ({ page
   await page.getByRole("button", { name: "Cancel" }).click();
   await openTool(page, "Facilities");
   const entranceId = await page.evaluate(() => window.gameTest.facilities().find(({ kind }) => kind === "entrance")?.id);
-  if (entranceId === undefined) throw new Error("The demo park entrance is missing");
+  if (entranceId === undefined) throw new Error("The park entrance is missing");
   await page.getByRole("button", { name: `Raise the price of entrance ${entranceId}` }).click();
   await page.getByRole("radio", { name: "Food stall" }).click();
   await page.getByRole("button", { name: "Place facility" }).click();

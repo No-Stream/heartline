@@ -1,3 +1,6 @@
+use std::collections::{BTreeSet, VecDeque};
+use std::time::Instant;
+
 use serde_json::{Value, json};
 use theme_park_sim::facilities::station_positions;
 use theme_park_sim::guests::ActivityKind;
@@ -79,6 +82,208 @@ fn two_coaster_park_description(open_first: bool, open_second: bool) -> Value {
         }),
     ]);
     description
+}
+
+fn four_coaster_park_description() -> Value {
+    const COPY_X_OFFSET: i64 = 100;
+    const COPY_Y_OFFSET: i64 = 150;
+
+    let mut description = two_coaster_park_description(true, true);
+    let terrain_edits = description["terrain"]["edits"].as_array().unwrap().clone();
+    let translated_terrain_edits = terrain_edits
+        .into_iter()
+        .map(|mut edit| {
+            edit["parameters"][0] = json!(edit["parameters"][0].as_i64().unwrap() + COPY_X_OFFSET);
+            edit["parameters"][1] = json!(edit["parameters"][1].as_i64().unwrap() + COPY_Y_OFFSET);
+            edit
+        })
+        .collect::<Vec<_>>();
+    description["terrain"]["edits"]
+        .as_array_mut()
+        .unwrap()
+        .extend(translated_terrain_edits);
+
+    let paths = description["paths"].as_array().unwrap().clone();
+    let translated_paths = paths
+        .into_iter()
+        .map(|mut path| {
+            for point in path["route"].as_array_mut().unwrap() {
+                point[0] = json!(point[0].as_i64().unwrap() + COPY_X_OFFSET);
+                point[1] = json!(point[1].as_i64().unwrap() + COPY_Y_OFFSET);
+            }
+            path
+        })
+        .collect::<Vec<_>>();
+    description["paths"]
+        .as_array_mut()
+        .unwrap()
+        .extend(translated_paths);
+    description["paths"].as_array_mut().unwrap().push(json!({
+        "kind": "normal",
+        "style": 0,
+        "route": [
+            [239, 320, 8],
+            [239, 350, 8],
+            [239, 380, 8],
+            [239, 410, 8],
+            [239, 440, 8],
+            [239, 470, 8],
+            [269, 470, 8],
+            [299, 470, 8],
+            [339, 470, 8]
+        ]
+    }));
+
+    let coasters = description["coasters"].as_array().unwrap().clone();
+    let translated_coasters = coasters
+        .into_iter()
+        .map(|mut coaster| {
+            coaster["station"]["x"] =
+                json!(coaster["station"]["x"].as_i64().unwrap() + COPY_X_OFFSET);
+            coaster["station"]["y"] =
+                json!(coaster["station"]["y"].as_i64().unwrap() + COPY_Y_OFFSET);
+            coaster
+        })
+        .collect::<Vec<_>>();
+    description["coasters"]
+        .as_array_mut()
+        .unwrap()
+        .extend(translated_coasters);
+    description
+}
+
+#[test]
+fn four_coaster_tick_benchmark_park_loads_with_active_guests() {
+    let description = four_coaster_park_description();
+    let description_json = serde_json::to_string(&description).unwrap();
+    let simulation = WasmSimulation::from_park_description(42, 128, &description_json)
+        .expect("four-coaster benchmark park loads");
+
+    assert_eq!(simulation.coasters().count(), 4);
+    assert_eq!(simulation.park.simulation.active_count(), 128);
+    assert_all_coaster_paths_reach_entrance(&simulation);
+    for (_, coaster) in simulation.coasters() {
+        assert!(coaster.coaster_open, "benchmark coasters are open");
+        assert!(
+            coaster.coaster_operation.is_some(),
+            "open coaster runs trains"
+        );
+    }
+}
+
+fn assert_all_coaster_paths_reach_entrance(simulation: &WasmSimulation) {
+    let entrance = simulation
+        .facilities
+        .entrance(&simulation.world)
+        .expect("benchmark park has an entrance path");
+    let reachable_paths = connected_paths(&simulation.world, entrance);
+    for (coaster_id, coaster) in simulation.coasters() {
+        let station = coaster
+            .construction
+            .pieces()
+            .iter()
+            .find(|piece| piece.kind == PieceKind::Station)
+            .expect("open coaster has a station");
+        let (queue, exit) = station_positions(station).expect("station has queue and exit access");
+        assert!(
+            reachable_paths.contains(&queue) && reachable_paths.contains(&exit),
+            "coaster {} queue and exit paths connect to the entrance",
+            coaster_id.0
+        );
+    }
+}
+
+fn connected_paths(world: &World, start: Position) -> BTreeSet<Position> {
+    let mut connected = BTreeSet::from([start]);
+    let mut pending = VecDeque::from([start]);
+    while let Some(position) = pending.pop_front() {
+        for neighbor in world.neighbours(position) {
+            if connected.insert(neighbor) {
+                pending.push_back(neighbor);
+            }
+        }
+    }
+    connected
+}
+
+#[test]
+#[ignore = "manual simulation tick performance measurement"]
+fn four_open_coaster_park_records_tick_time_distribution() {
+    record_four_coaster_tick_time_distribution(128);
+}
+
+#[test]
+#[ignore = "manual higher-load simulation tick performance measurement"]
+fn four_open_coaster_park_records_tick_time_distribution_at_2048_guests() {
+    assert_eq!(
+        record_four_coaster_tick_time_distribution(2_048),
+        [true; 4],
+        "higher guest load serves all four coasters"
+    );
+}
+
+fn record_four_coaster_tick_time_distribution(guest_count: usize) -> [bool; 4] {
+    const WARMUP_TICKS: usize = 2_000;
+    const MEASURED_TICKS: usize = 2_000;
+
+    let description_json = serde_json::to_string(&four_coaster_park_description()).unwrap();
+    let mut simulation = WasmSimulation::from_park_description(42, guest_count, &description_json)
+        .expect("four-coaster benchmark park loads");
+    assert_eq!(simulation.coasters().count(), 4);
+    assert_eq!(simulation.park.simulation.active_count(), guest_count);
+    assert_all_coaster_paths_reach_entrance(&simulation);
+    let mut saw_riders = [false; 4];
+    let mut saw_destinations = [false; 4];
+    let mut saw_queues = [false; 4];
+    for _ in 0..WARMUP_TICKS {
+        simulation.tick();
+        for (index, (_, coaster)) in simulation.coasters().enumerate() {
+            assert!(coaster.coaster_open, "benchmark coasters stay open");
+            saw_riders[index] |= coaster
+                .coaster_riders
+                .values()
+                .any(|riders| !riders.is_empty());
+            saw_destinations[index] |= has_guest_activity_for(&simulation, CoasterId(index as u32));
+            saw_queues[index] |= has_guest_queued_for(&simulation, CoasterId(index as u32));
+        }
+    }
+    println!(
+        "Warmup activity by coaster: destinations={saw_destinations:?}, queued={saw_queues:?}, riders={saw_riders:?}"
+    );
+    assert!(
+        saw_riders.iter().any(|&observed| observed),
+        "guests ride at least one open coaster"
+    );
+    let mut tick_durations_ms = Vec::with_capacity(MEASURED_TICKS);
+    for _ in 0..MEASURED_TICKS {
+        let start = Instant::now();
+        simulation.tick();
+        tick_durations_ms.push(start.elapsed().as_secs_f64() * 1_000.0);
+    }
+
+    let state_hash = simulation.state_hash();
+    tick_durations_ms.sort_unstable_by(f64::total_cmp);
+    let median_ms =
+        (tick_durations_ms[MEASURED_TICKS / 2 - 1] + tick_durations_ms[MEASURED_TICKS / 2]) / 2.0;
+    let p95_ms = tick_durations_ms[(0.95 * MEASURED_TICKS as f64).ceil() as usize - 1];
+    println!(
+        "Four open coasters, {guest_count} active guests, {WARMUP_TICKS} warmup ticks, {MEASURED_TICKS} measured ticks"
+    );
+    let queue_lengths = (0..4)
+        .map(|coaster_id| {
+            simulation
+                .park
+                .simulation
+                .queue_length(u32::MAX - coaster_id)
+        })
+        .collect::<Vec<_>>();
+    println!(
+        "Coasters with observed riders during warmup: {saw_riders:?}; queue lengths: {queue_lengths:?}"
+    );
+    println!(
+        "Simulation tick time: median={median_ms:.3} ms, p95={p95_ms:.3} ms, state hash={state_hash:016x}"
+    );
+    saw_riders
 }
 
 fn compact_guest_park_description() -> Value {
@@ -282,6 +487,23 @@ fn has_guest_queued_for(simulation: &WasmSimulation, coaster_id: CoasterId) -> b
         .any(|guest_id| {
             let activity = simulation.simulation.behaviors().activity_detail(guest_id);
             activity.kind == ActivityKind::Queuing && activity.place_id == Some(place_id)
+        })
+}
+
+fn has_guest_activity_for(simulation: &WasmSimulation, coaster_id: CoasterId) -> bool {
+    let place_id = u32::MAX - coaster_id.0;
+    simulation
+        .simulation
+        .walking()
+        .traits()
+        .ids()
+        .any(|guest_id| {
+            simulation
+                .simulation
+                .behaviors()
+                .activity_detail(guest_id)
+                .place_id
+                == Some(place_id)
         })
 }
 

@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 import { openTool } from "./game-page";
 
 test("park actions remain accessible as the game bar fits different widths", async ({ page }) => {
-  await page.goto("/?test=1");
+  await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   const park = page.getByRole("button", { name: "Park", exact: true });
   let previousFitLevel = await page.locator(".game-bar").getAttribute("data-fit-level");
@@ -32,11 +32,11 @@ test("park actions remain accessible as the game bar fits different widths", asy
 });
 
 test("saves, loads, exports and imports a park through the interface", async ({ page }) => {
-  await page.goto("/?test=1&park=demo&seed=2026");
+  await page.goto("/?test=1&park=new&seed=2026");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Facilities");
   const entranceId = await page.evaluate(() => window.gameTest.facilities().find(({ kind }) => kind === "entrance")?.id);
-  if (entranceId === undefined) throw new Error("The demo park entrance is missing");
+  if (entranceId === undefined) throw new Error("The park entrance is missing");
   const price = () => page.evaluate((id) => window.gameTest.facilities().find((facility) => facility.id === id)?.price, entranceId);
   const originalPrice = await price();
   await page.getByRole("button", { name: `Raise the price of entrance ${entranceId}` }).click();
@@ -50,7 +50,7 @@ test("saves, loads, exports and imports a park through the interface", async ({ 
   const download = await downloadPromise;
   const downloadPath = await download.path();
   if (!downloadPath) throw new Error("Park export has no file path");
-  await test.info().attach("demo-save-size", { body: String((await stat(downloadPath)).size), contentType: "text/plain" });
+  await test.info().attach("park-save-size", { body: String((await stat(downloadPath)).size), contentType: "text/plain" });
   await page.reload();
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await expect.poll(price).toBe(originalPrice);
