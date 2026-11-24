@@ -124,8 +124,10 @@ test("builder test coaster render progress stays smooth on the production build 
   });
 
   await page.goto("/?park=horizon-hawk&frameLog=1");
-  await page.waitForFunction(() => window.smoothnessRails !== undefined && window.gameTest.frameLog().length > 0);
+  await page.waitForFunction(() => window.smoothnessRails !== undefined);
+  await expect.poll(() => page.evaluate(() => window.gameTest.coasters().length)).toBeGreaterThan(0);
   await startCoasterTestLap(page);
+  await page.waitForFunction(() => window.gameTest.frameLog().length > 0);
   await page.setViewportSize({ width: 160, height: 90 });
   await page.waitForTimeout(3_000);
   const measurementStart = await page.evaluate(() => ({

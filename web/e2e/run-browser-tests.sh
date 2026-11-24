@@ -34,8 +34,8 @@ if [[ "${THEME_PARK_PLAYWRIGHT_DOCKER:-0}" == "1" ]]; then
     previous_argument="$argument"
   done
 
-  if [[ "$selected_project" != "feature" && "$selected_project" != "journey" ]]; then
-    echo "Docker browser runs currently support only --project=feature or --project=journey." >&2
+  if [[ "$selected_project" != "feature" && "$selected_project" != "journey" && "$selected_project" != "smoothness" ]]; then
+    echo "Docker browser runs currently support --project=feature, --project=journey, or --project=smoothness." >&2
     exit 2
   fi
 
