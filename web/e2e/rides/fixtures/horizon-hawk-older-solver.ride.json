@@ -83,7 +83,7 @@
         "cars": 8,
         "target_g": -0.85,
         "delivered_g": -0.85034,
-        "height_m": 24.135445,
+        "height_m": 24.135451,
         "span_m": 180.0,
         "train_length_metres": "20.0",
         "target_height_m": "24.0",
@@ -92,7 +92,7 @@
         "flank_angle_degrees": "25.953125",
         "profile_grid_half_tiles": 90,
         "diagonal": false,
-        "geometry_digest": "4899501492469701947"
+        "geometry_digest": "7088677278291170873"
       }
     },
     {
@@ -161,7 +161,7 @@
         "cars": 8,
         "target_g": -0.95,
         "delivered_g": -0.937229,
-        "height_m": 12.006139,
+        "height_m": 12.00614,
         "span_m": 142.0,
         "train_length_metres": "20.0",
         "target_height_m": "12.0",
@@ -170,7 +170,7 @@
         "flank_angle_degrees": "16.2578125",
         "profile_grid_half_tiles": 71,
         "diagonal": false,
-        "geometry_digest": "2236750557105544969"
+        "geometry_digest": "9308547847975182632"
       }
     },
     {
@@ -239,7 +239,7 @@
         "cars": 8,
         "target_g": -0.95,
         "delivered_g": -0.940812,
-        "height_m": 12.052893,
+        "height_m": 12.052895,
         "span_m": 132.0,
         "train_length_metres": "20.0",
         "target_height_m": "12.0",
@@ -248,7 +248,7 @@
         "flank_angle_degrees": "17.68359375",
         "profile_grid_half_tiles": 66,
         "diagonal": false,
-        "geometry_digest": "12112013053948774387"
+        "geometry_digest": "2662460864033801685"
       }
     },
     {
@@ -326,7 +326,7 @@
         "cars": 8,
         "target_g": -0.95,
         "delivered_g": -0.935868,
-        "height_m": 9.917808,
+        "height_m": 9.917809,
         "span_m": 116.0,
         "train_length_metres": "20.0",
         "target_height_m": "10.0",
@@ -335,7 +335,7 @@
         "flank_angle_degrees": "16.54296875",
         "profile_grid_half_tiles": 58,
         "diagonal": false,
-        "geometry_digest": "14123452800794564180"
+        "geometry_digest": "17574708787977760858"
       }
     },
     {

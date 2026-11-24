@@ -4,11 +4,14 @@ use wasm_bindgen::prelude::*;
 
 use crate::WasmSimulation;
 use theme_park_sim::park_guests::ParkGuests;
-use theme_park_sim::track::shaped::GeometryDigestMismatch;
+use theme_park_sim::track::shaped::{
+    GeometryDigestMismatch, with_save_before_hill_profile_nodes_decode_context,
+};
 
 use crate::save_v6;
 use crate::save_v7;
 use crate::save_v8;
+use crate::save_v9;
 
 const SAVE_HEADER_V4: &[u8] = b"TPSAVE\x04";
 const SAVE_HEADER_V5: &[u8] = b"TPSAVE\x05";
@@ -16,6 +19,7 @@ const SAVE_HEADER_V6: &[u8] = b"TPSAVE\x06";
 const SAVE_HEADER_V7: &[u8] = b"TPSAVE\x07";
 const SAVE_HEADER_V8: &[u8] = b"TPSAVE\x08";
 const SAVE_HEADER_V9: &[u8] = b"TPSAVE\x09";
+const SAVE_HEADER_V10: &[u8] = b"TPSAVE\x0a";
 const MAX_SAVE_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,6 +30,7 @@ pub(super) enum SaveVersion {
     V7,
     V8,
     V9,
+    V10,
 }
 
 #[derive(Debug)]
@@ -130,7 +135,9 @@ pub(crate) fn save_state_v6_for_test(simulation: &WasmSimulation) -> Vec<u8> {
 }
 
 pub(super) fn checked_payload(bytes: &[u8]) -> Result<(SaveVersion, &[u8]), SaveLoadError> {
-    let (version, data) = if let Some(data) = bytes.strip_prefix(SAVE_HEADER_V9) {
+    let (version, data) = if let Some(data) = bytes.strip_prefix(SAVE_HEADER_V10) {
+        (SaveVersion::V10, data)
+    } else if let Some(data) = bytes.strip_prefix(SAVE_HEADER_V9) {
         (SaveVersion::V9, data)
     } else if let Some(data) = bytes.strip_prefix(SAVE_HEADER_V8) {
         (SaveVersion::V8, data)
@@ -209,7 +216,7 @@ impl WasmSimulation {
     }
 
     fn save_state_native_with_limit(&self, limit: usize) -> Result<Vec<u8>, String> {
-        let mut bytes = SAVE_HEADER_V9.to_vec();
+        let mut bytes = SAVE_HEADER_V10.to_vec();
         let payload = theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
             postcard::serialize_with_flavor(self, LimitedBytes::new(limit))
         })
@@ -226,18 +233,31 @@ impl WasmSimulation {
     pub fn load_state_native_typed(bytes: &[u8]) -> Result<WasmSimulation, SaveLoadError> {
         let (version, payload) = checked_payload(bytes)?;
         let decode_v6 = || {
-            theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
-                postcard::take_from_bytes::<save_v6::WasmSimulationV6>(payload)
+            with_save_before_hill_profile_nodes_decode_context(|| {
+                theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
+                    postcard::take_from_bytes::<save_v6::WasmSimulationV6>(payload)
+                })
             })
         };
         let decode_v7 = || {
-            theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
-                postcard::take_from_bytes::<save_v7::WasmSimulationV7>(payload)
+            with_save_before_hill_profile_nodes_decode_context(|| {
+                theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
+                    postcard::take_from_bytes::<save_v7::WasmSimulationV7>(payload)
+                })
             })
         };
         let decode_v8 = || {
-            theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
-                postcard::take_from_bytes::<save_v8::WasmSimulationV8>(payload)
+            with_save_before_hill_profile_nodes_decode_context(|| {
+                theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
+                    postcard::take_from_bytes::<save_v8::WasmSimulationV8>(payload)
+                })
+            })
+        };
+        let decode_v9 = || {
+            with_save_before_hill_profile_nodes_decode_context(|| {
+                theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
+                    postcard::take_from_bytes::<save_v9::WasmSimulationV9>(payload)
+                })
             })
         };
         let decode_current = || {
@@ -319,6 +339,14 @@ impl WasmSimulation {
                 (decoded, mismatch)
             }
             SaveVersion::V9 => {
+                let (decoded, mismatch) =
+                    theme_park_sim::track::shaped::with_current_save_decode_context(decode_v9);
+                let decoded = decoded
+                    .map_err(SaveLoadError::Decode)
+                    .map(|(simulation, remaining)| (simulation.into_current(), remaining));
+                (decoded, mismatch)
+            }
+            SaveVersion::V10 => {
                 let (decoded, mismatch) =
                     theme_park_sim::track::shaped::with_current_save_decode_context(decode_current);
                 (decoded.map_err(SaveLoadError::Decode), mismatch)

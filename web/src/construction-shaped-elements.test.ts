@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { shapedElementReadout } from "./candidate-force-readout";
-import { defaultShapeSelectionId, shapeSelectionId, type ShapedElementSelection } from "./construction-shaped-elements";
+import { shapedPaletteChoices } from "./construction-choices";
+import {
+  defaultInversionSelectionId,
+  defaultShapeSelectionId,
+  shapeSelectionId,
+  steppedShapedSelection,
+  type ShapedElementSelection,
+} from "./construction-shaped-elements";
 
 describe("shaped element selections", () => {
   it("serializes hill feel, adjustable strength, and automatic size", () => {
@@ -75,6 +82,10 @@ describe("shaped element selections", () => {
         spanM: 96,
         radiusM: null,
         bankDegrees: null,
+        topFeel: null,
+        topG: null,
+        peakRollRateDegS: null,
+        steelStructure: false,
         geometryDigest: "0123456789abcdef",
       },
       refusal: null,
@@ -108,6 +119,10 @@ describe("shaped element selections", () => {
         spanM: 120,
         radiusM: null,
         bankDegrees: null,
+        topFeel: null,
+        topG: null,
+        peakRollRateDegS: null,
+        steelStructure: false,
         geometryDigest: "0123456789abcdef",
       },
       refusal: null,
@@ -153,6 +168,111 @@ describe("shaped element selections", () => {
       pieceShape: null,
     }, "metric")).toEqual([
       "Saved shaped geometry does not match its recipe.",
+    ]);
+  });
+
+  it("names the top feel or the peak as the reason a Raven turn is refused", () => {
+    const ravenWire = {
+      selection: "shape:ravenTurn:left:4:pressedIn",
+      kind: "ravenTurn" as const,
+      feel: "pressedIn",
+      hand: "left" as const,
+      strengthG: 4.0,
+      fixedSize: null,
+      modelName: "Hybrid",
+      exceedsModelFeel: false,
+      spec: null,
+      pieceShape: null,
+    };
+    expect(shapedElementReadout({
+      ...ravenWire,
+      refusal: { kind: "topFeelOutOfReach", targetTopG: 1.5, averageTopG: 1.36, lowestCarTopG: 1.13, highestCarTopG: 1.82 },
+    }, "metric")).toEqual([
+      "Top feel 1.5 g is out of reach within the force limits: the train averages 1.36 g at the top (cars 1.13 to 1.82 g). A faster entry or a shorter train helps.",
+    ]);
+    expect(shapedElementReadout({
+      ...ravenWire,
+      refusal: { kind: "infeasibleTarget", targetG: 4.0, availableHeadroomG: 0.12 },
+    }, "metric")).toEqual([
+      "Peak target 4 g exceeds available headroom of 0.12 g.",
+    ]);
+  });
+
+  it("serializes and steps shaped vertical loops, zero-g rolls, and Raven turns", () => {
+    expect(defaultInversionSelectionId("loop", "left")).toBe("shape:loop:left:default:neutral");
+    expect(defaultInversionSelectionId("zeroGRoll", "right")).toBe("shape:zeroGRoll:right:default");
+    expect(defaultInversionSelectionId("ravenTurn", "left")).toBe("shape:ravenTurn:left:default:neutral");
+
+    expect(shapeSelectionId({ kind: "loop", hand: "left", peakG: 4.0, topFeel: "floaty" })).toBe("shape:loop:left:4:floaty");
+    expect(shapeSelectionId({ kind: "zeroGRoll", hand: "right", peakG: 3.5 })).toBe("shape:zeroGRoll:right:3.5");
+    expect(shapeSelectionId({ kind: "ravenTurn", hand: "left", peakG: 4.2, topFeel: "pressedIn" })).toBe("shape:ravenTurn:left:4.2:pressedIn");
+
+    const loopWire = {
+      selection: "shape:loop:left:4:neutral",
+      kind: "loop" as const,
+      feel: "neutral",
+      hand: "left" as const,
+      strengthG: 4.0,
+      fixedSize: null,
+      modelName: "Velocity Viper",
+      exceedsModelFeel: false,
+      spec: {
+        kind: "loop" as const,
+        designSpeedMps: 28,
+        cars: 4,
+        targetG: 4.0,
+        deliveredG: 4.01,
+        verticalG: 4.01,
+        lateralG: null,
+        heightM: 28,
+        spanM: 60,
+        radiusM: null,
+        bankDegrees: null,
+        topFeel: "neutral" as const,
+        topG: 0.96,
+        peakRollRateDegS: null,
+        steelStructure: false,
+        geometryDigest: "0123456789abcdef",
+      },
+      refusal: null,
+      pieceShape: null,
+    };
+    expect(steppedShapedSelection(loopWire, "peakG", 1)).toEqual({ kind: "loop", hand: "left", peakG: 4.2, topFeel: "neutral" });
+    expect(steppedShapedSelection(loopWire, "peakG", -1)).toEqual({ kind: "loop", hand: "left", peakG: 3.8, topFeel: "neutral" });
+    expect(steppedShapedSelection(loopWire, "topFeel", -1)).toEqual({ kind: "loop", hand: "left", peakG: 4.0, topFeel: "floaty" });
+    expect(steppedShapedSelection(loopWire, "topFeel", 1)).toEqual({ kind: "loop", hand: "left", peakG: 4.0, topFeel: "pressedIn" });
+    expect(shapedElementReadout(loopWire, "metric")).toEqual([
+      "Design speed: 101 km/h · 4-car train",
+      "Peak target: 4 g · calibrated: 4.01 g · top: 0.96 g (Neutral)",
+      "Resolved size: 28 m high × 60 m span",
+    ]);
+
+    expect(shapedElementReadout({
+      ...loopWire,
+      modelName: "Briar Blitz",
+      exceedsModelFeel: true,
+      spec: { ...loopWire.spec, steelStructure: true, targetG: 4.2, deliveredG: 4.18 },
+    }, "metric")).toEqual([
+      "Design speed: 101 km/h · 4-car train",
+      "Peak target: 4.2 g · calibrated: 4.18 g · top: 0.96 g (Neutral)",
+      "Resolved size: 28 m high × 60 m span · steel structure",
+      "Within the comfort envelope, stronger than a typical Briar Blitz.",
+    ]);
+  });
+
+  it("filters shaped inversion palette choices by model capabilities", () => {
+    expect(shapedPaletteChoices([]).filter((c) => c.group === "inversion")).toEqual([]);
+    expect(shapedPaletteChoices(["VerticalLoop"]).filter((c) => c.group === "inversion").map((c) => c.id)).toEqual([
+      "shape:loop:left:default:neutral",
+      "shape:loop:right:default:neutral",
+    ]);
+    expect(shapedPaletteChoices(["VerticalLoop", "Corkscrew", "HeartlineRoll"]).filter((c) => c.group === "inversion").map((c) => c.id)).toEqual([
+      "shape:loop:left:default:neutral",
+      "shape:loop:right:default:neutral",
+      "shape:zeroGRoll:left:default",
+      "shape:zeroGRoll:right:default",
+      "shape:ravenTurn:left:default:neutral",
+      "shape:ravenTurn:right:default:neutral",
     ]);
   });
 });

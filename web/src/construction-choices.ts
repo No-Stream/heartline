@@ -1,5 +1,11 @@
 import type { ConstructionHillOption, ConstructionPiece, ConstructionSpeedTurn, PieceShape } from "./construction-protocol";
-import { defaultShapeSelectionId, shapeSelectionId, type ShapedElementSelection, type ShapedHillFeel } from "./construction-shaped-elements.ts";
+import {
+  defaultInversionSelectionId,
+  defaultShapeSelectionId,
+  shapeSelectionId,
+  type ShapedElementSelection,
+  type ShapedHillFeel,
+} from "./construction-shaped-elements.ts";
 import { formatLength, metresToDisplay, unitLabel, type Units } from "./units.ts";
 
 export type StepAttribute = "turn" | "slope" | "bank";
@@ -10,15 +16,34 @@ export const pieceGroups = ["straight", "turn", "slope", "bank", "inversion", "s
 export interface ShapedPaletteChoice {
   readonly id: string;
   readonly label: string;
-  readonly group: "hill" | "turn";
+  readonly group: "hill" | "turn" | "inversion";
 }
 
-export function shapedPaletteChoices(): ShapedPaletteChoice[] {
+export function shapedPaletteChoices(allowedInversions: readonly string[] = []): ShapedPaletteChoice[] {
   const hillFeels: readonly ShapedHillFeel[] = ["floater", "strongFloater", "ejector"];
   const turnSelections: readonly Extract<ShapedElementSelection, { kind: "turn" }>[] = [
     { kind: "turn", hand: "left", feel: "fullyBanked", size: { kind: "auto" } },
     { kind: "turn", hand: "right", feel: "fullyBanked", size: { kind: "auto" } },
   ];
+  const inversionChoices: ShapedPaletteChoice[] = [];
+  if (allowedInversions.includes("VerticalLoop")) {
+    inversionChoices.push(
+      { id: defaultInversionSelectionId("loop", "left"), label: "Vertical loop left", group: "inversion" },
+      { id: defaultInversionSelectionId("loop", "right"), label: "Vertical loop right", group: "inversion" },
+    );
+  }
+  if (allowedInversions.includes("HeartlineRoll")) {
+    inversionChoices.push(
+      { id: defaultInversionSelectionId("zeroGRoll", "left"), label: "Zero-g roll left", group: "inversion" },
+      { id: defaultInversionSelectionId("zeroGRoll", "right"), label: "Zero-g roll right", group: "inversion" },
+    );
+  }
+  if (allowedInversions.includes("VerticalLoop") && allowedInversions.includes("Corkscrew")) {
+    inversionChoices.push(
+      { id: defaultInversionSelectionId("ravenTurn", "left"), label: "Raven turn left", group: "inversion" },
+      { id: defaultInversionSelectionId("ravenTurn", "right"), label: "Raven turn right", group: "inversion" },
+    );
+  }
   return [
     ...hillFeels.map((feel) => ({
       id: defaultShapeSelectionId(feel),
@@ -30,6 +55,7 @@ export function shapedPaletteChoices(): ShapedPaletteChoice[] {
       label: `Fully banked ${selection.hand} turn`,
       group: "turn" as const,
     })),
+    ...inversionChoices,
   ];
 }
 

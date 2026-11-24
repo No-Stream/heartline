@@ -563,6 +563,173 @@ for (const modelCase of [
   });
 }
 
+test("places shaped vertical loop, zero-g roll, and Raven turn on Velocity Viper @fast", async ({ page }) => {
+  await page.goto("/?test=1");
+  await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+  await openCoasterBuilder(page);
+  await selectUnits(page, "metric");
+  await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
+
+  // Velocity Viper supports all three shaped inversions.
+  await page.locator(".builder select[data-model]").selectOption("model:velocity_viper");
+  await page.getByLabel("Station height above ground (metres)").fill("60");
+  await page.getByLabel("Station height above ground (metres)").press("Tab");
+  await page.getByRole("button", { name: "Place station" }).click();
+  for (const point of [{ x: 50.5, y: 50.5, z: 2 }, { x: 52.5, y: 50.5, z: 2 }]) {
+    const position = await page.evaluate((worldPoint) => window.gameTest.project(worldPoint), point);
+    await moveOverCanvas(page, position);
+    await clickCanvas(page, position);
+  }
+
+  const track = page.locator("[data-track] li");
+  const choices = page.getByRole("radiogroup", { name: "Next piece" });
+  const placePiece = page.getByRole("button", { name: "Place piece" });
+  const selected = page.locator("[data-construction]");
+  const readout = page.locator("[data-shape-readout]");
+
+  for (const [index, pieceId] of ["LevelToGentleDown", "GentleToSteepDown", "SteepDown", "SteepToGentleDown", "GentleDownToLevel", "Straight"].entries()) {
+    await choices.locator(`[data-piece="${pieceId}"]`).click();
+    await expect(selected).toHaveAttribute("data-selected", pieceId);
+    await placePiece.click();
+    await expect(track).toHaveCount(index + 2);
+  }
+
+  // Vertical loop with peak-g and top-feel stepping.
+  await choices.locator('[data-piece="shape:loop:left:default:neutral"]').click();
+  await expect(selected).toHaveAttribute("data-selected", "shape:loop:left:4:neutral");
+  await expect(readout).toContainText("Peak target: 4 g");
+  await page.locator('[data-shape-stepper="peakG-1"]').click();
+  await expect(selected).toHaveAttribute("data-selected", "shape:loop:left:4.2:neutral");
+  await page.locator('[data-shape-stepper="topFeel--1"]').click();
+  await expect(selected).toHaveAttribute("data-selected", "shape:loop:left:4.2:floaty");
+  await expect(readout).toContainText("(Floaty)");
+  await expect(placePiece).toBeEnabled();
+  await placePiece.click();
+  await expect(track.nth(7).locator(".track-chip__name")).toHaveText("Shaped vertical loop left");
+
+  // Zero-g roll right after the loop.
+  await choices.locator('[data-piece="shape:zeroGRoll:right:default"]').click();
+  await expect(selected).toHaveAttribute("data-selected", "shape:zeroGRoll:right:3.5");
+  await expect(readout).toContainText("crest:");
+  await expect(readout).toContainText("roll:");
+  await expect(placePiece).toBeEnabled();
+  await placePiece.click();
+  await expect(track.nth(8).locator(".track-chip__name")).toHaveText("Shaped zero-g roll right");
+
+  // Raven turn reversing direction.
+  await choices.locator('[data-piece="shape:ravenTurn:left:default:neutral"]').click();
+  await expect(selected).toHaveAttribute("data-selected", "shape:ravenTurn:left:4:neutral");
+  await expect(readout).toContainText("roll:");
+  await expect(placePiece).toBeEnabled();
+  await placePiece.click();
+  await expect(track.nth(9).locator(".track-chip__name")).toHaveText("Shaped Raven turn left");
+});
+
+test("places shaped vertical loop, zero-g roll, and Raven turn on Timber Tumbler @fast", async ({ page }) => {
+  await page.goto("/?test=1");
+  await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+  await openCoasterBuilder(page);
+  await selectUnits(page, "metric");
+  await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
+  await page.locator(".builder select[data-model]").selectOption("model:hybrid");
+  await page.getByLabel("Station height above ground (metres)").fill("60");
+  await page.getByLabel("Station height above ground (metres)").press("Tab");
+  await page.getByRole("button", { name: "Place station" }).click();
+  for (const point of [{ x: 50.5, y: 50.5, z: 2 }, { x: 52.5, y: 50.5, z: 2 }]) {
+    const position = await page.evaluate((worldPoint) => window.gameTest.project(worldPoint), point);
+    await moveOverCanvas(page, position);
+    await clickCanvas(page, position);
+  }
+
+  const track = page.locator("[data-track] li");
+  const choices = page.getByRole("radiogroup", { name: "Next piece" });
+  const placePiece = page.getByRole("button", { name: "Place piece" });
+  const selected = page.locator("[data-construction]");
+  const readout = page.locator("[data-shape-readout]");
+  for (const pieceId of ["shape:loop:left:default:neutral", "shape:zeroGRoll:right:default", "shape:ravenTurn:left:default:neutral"]) {
+    await expect(choices.locator(`[data-piece="${pieceId}"]`)).toHaveCount(1);
+  }
+
+  for (const [index, pieceId] of ["LevelToGentleDown", "GentleToSteepDown", "SteepDown", "SteepToGentleDown", "GentleDownToLevel", "Straight"].entries()) {
+    await choices.locator(`[data-piece="${pieceId}"]`).click();
+    await expect(selected).toHaveAttribute("data-selected", pieceId);
+    await placePiece.click();
+    await expect(track).toHaveCount(index + 2);
+  }
+
+  await choices.locator('[data-piece="shape:loop:left:default:neutral"]').click();
+  await expect(selected).toHaveAttribute("data-selected", "shape:loop:left:4:neutral");
+  await expect(readout).toContainText("Peak target: 4 g");
+  await expect(placePiece).toBeEnabled();
+  await placePiece.click();
+  await expect(track.nth(7).locator(".track-chip__name")).toHaveText("Shaped vertical loop left");
+
+  await choices.locator('[data-piece="shape:zeroGRoll:right:default"]').click();
+  await expect(selected).toHaveAttribute("data-selected", "shape:zeroGRoll:right:3.5");
+  await expect(readout).toContainText("crest:");
+  await expect(placePiece).toBeEnabled();
+  await placePiece.click();
+  await expect(track.nth(8).locator(".track-chip__name")).toHaveText("Shaped zero-g roll right");
+
+  await choices.locator('[data-piece="shape:ravenTurn:left:default:neutral"]').click();
+  await expect(selected).toHaveAttribute("data-selected", "shape:ravenTurn:left:4:neutral");
+  await expect(readout).toContainText("roll:");
+  await expect(placePiece).toBeEnabled();
+  await placePiece.click();
+  await expect(track.nth(9).locator(".track-chip__name")).toHaveText("Shaped Raven turn left");
+});
+
+test("places shaped steel-structure vertical loop on Briar Blitz with amber feel note @fast", async ({ page }) => {
+  await page.goto("/?test=1");
+  await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+  await openCoasterBuilder(page);
+  await selectUnits(page, "metric");
+  await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
+
+  const track = page.locator("[data-track] li");
+  const choices = page.getByRole("radiogroup", { name: "Next piece" });
+  const placePiece = page.getByRole("button", { name: "Place piece" });
+  const selected = page.locator("[data-construction]");
+  const readout = page.locator("[data-shape-readout]");
+
+  // Briar Blitz offers only steel-structure vertical loops (not zero-g rolls or Raven turns),
+  // and pushing peak force above its typical 4.0 g target shows the amber feel note.
+  await page.locator(".builder select[data-model]").selectOption("model:wooden_twister");
+  await page.getByLabel("Station height above ground (metres)").fill("52");
+  await page.getByLabel("Station height above ground (metres)").press("Tab");
+  await page.getByRole("button", { name: "Place station" }).click();
+  for (const point of [{ x: 50.5, y: 50.5, z: 2 }, { x: 52.5, y: 50.5, z: 2 }]) {
+    const position = await page.evaluate((worldPoint) => window.gameTest.project(worldPoint), point);
+    await moveOverCanvas(page, position);
+    await clickCanvas(page, position);
+  }
+  await expect(choices.locator('[data-piece="shape:loop:left:default:neutral"]')).toHaveCount(1);
+  await expect(choices.locator('[data-piece="shape:zeroGRoll:left:default"]')).toHaveCount(0);
+  await expect(choices.locator('[data-piece="shape:ravenTurn:left:default:neutral"]')).toHaveCount(0);
+
+  for (const [index, pieceId] of ["LevelToGentleDown", "GentleToSteepDown", "SteepToGentleDown", "GentleDown", "GentleDownToLevel", "Straight"].entries()) {
+    await choices.locator(`[data-piece="${pieceId}"]`).click();
+    await expect(selected).toHaveAttribute("data-selected", pieceId);
+    await placePiece.click();
+    await expect(track).toHaveCount(index + 2);
+  }
+  await choices.locator('[data-piece="shape:loop:left:default:neutral"]').click();
+  await expect(selected).toHaveAttribute("data-selected", "shape:loop:left:3.5:neutral");
+  await expect(readout).toContainText("steel structure");
+  await expect(readout.locator(".builder__shape-feel-note")).toHaveCount(0);
+  // Step up to 4.2 g (exceeds Briar Blitz's 4.0 g design target inside ASTM envelope).
+  await page.locator('[data-shape-stepper="peakG-1"]').click();
+  await expect(selected).toHaveAttribute("data-selected", "shape:loop:left:3.8:neutral");
+  await page.locator('[data-shape-stepper="peakG-1"]').click();
+  await expect(selected).toHaveAttribute("data-selected", "shape:loop:left:4:neutral");
+  await page.locator('[data-shape-stepper="peakG-1"]').click();
+  await expect(selected).toHaveAttribute("data-selected", "shape:loop:left:4.2:neutral");
+  await expect(readout.locator(".builder__shape-feel-note")).toContainText("stronger than a typical Briar Blitz");
+  await expect(placePiece).toBeEnabled();
+  await placePiece.click();
+  await expect(track.nth(7).locator(".track-chip__name")).toHaveText("Shaped steel-structure loop left");
+});
+
 test("turns after a drop default to the bank for the predicted speed, and the bank stepper overrides it @fast", async ({ page }) => {
   await page.goto("/?test=1&park=new");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);

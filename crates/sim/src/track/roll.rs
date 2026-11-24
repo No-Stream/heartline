@@ -566,7 +566,7 @@ impl RollGeometry {
     }
 }
 
-fn spline_kinematics(
+pub(crate) fn spline_kinematics(
     start: Vec3,
     end: Vec3,
     start_tangent: Vec3,
@@ -599,7 +599,97 @@ fn spline_kinematics(
     )
 }
 
-fn roll_schedule(t: f64, ramp: f64) -> (f64, f64, f64) {
+/// Pull-out of a crest dive starts once the rider is nearly upright, three quarters through the roll.
+const CREST_DIVE_PULLOUT_START: f64 = 0.75;
+const CREST_DIVE_DROP_LINEAR: f64 = 0.4 - 0.2 * (1.0 - CREST_DIVE_PULLOUT_START);
+
+/// Vertical shape of a roll-out that leaves a curved inverted crest: the crest curvature tapers out
+/// over the first `crest_fraction` of the parameter, the path then descends straight through the
+/// roll (gravity alone loads the rider sideways, as on a level roll), and pulls out to level only
+/// once the rider is nearly upright, so no upward curvature turns into lateral force mid-roll.
+/// Offsets are relative to the start, in metres per parameter unit.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CrestDive {
+    start_acceleration: f64,
+    crest_fraction: f64,
+    pullout_acceleration: f64,
+}
+
+impl CrestDive {
+    /// `start_acceleration` is the downward second derivative at the start; `drop` is the height
+    /// lost by the end. Returns `None` when the drop cannot be reached with a crest taper that ends
+    /// before the pull-out.
+    pub(crate) fn new(start_acceleration: f64, drop: f64) -> Option<Self> {
+        if !(start_acceleration > 0.0 && drop > 0.0) {
+            return None;
+        }
+        // Inverts drop_for: drop = a * (linear * u1 - 0.1 * u1²).
+        let linear = CREST_DIVE_DROP_LINEAR;
+        let discriminant = linear * linear - 0.4 * drop / start_acceleration;
+        if discriminant < 0.0 {
+            return None;
+        }
+        let crest_fraction = (linear - discriminant.sqrt()) / 0.2;
+        if !(crest_fraction > 0.0 && crest_fraction <= 0.5) {
+            return None;
+        }
+        Some(Self {
+            start_acceleration,
+            crest_fraction,
+            pullout_acceleration: 0.4 * start_acceleration * crest_fraction
+                / (1.0 - CREST_DIVE_PULLOUT_START),
+        })
+    }
+
+    /// Drop reached when the crest curvature tapers out over `crest_fraction` of the parameter.
+    pub(crate) fn drop_for(start_acceleration: f64, crest_fraction: f64) -> f64 {
+        start_acceleration
+            * (CREST_DIVE_DROP_LINEAR * crest_fraction - 0.1 * crest_fraction * crest_fraction)
+    }
+
+    pub(crate) fn crest_fraction(self) -> f64 {
+        self.crest_fraction
+    }
+
+    /// Vertical offset and its first and second derivatives at parameter `u`.
+    pub(crate) fn sample(self, u: f64) -> (f64, f64, f64) {
+        let u1 = self.crest_fraction;
+        let (crest_offset, crest_first, crest_second) = if u < u1 {
+            let s = u / u1;
+            let s2 = s * s;
+            let s3 = s2 * s;
+            (
+                u1 * u1 * (0.5 * s2 - 0.5 * s2 * s2 + 0.4 * s3 * s2 - 0.1 * s3 * s3),
+                u1 * (s - 2.0 * s3 + 2.0 * s3 * s - 0.6 * s3 * s2),
+                1.0 - 6.0 * s2 + 8.0 * s3 - 3.0 * s2 * s2,
+            )
+        } else {
+            (0.3 * u1 * u1 + 0.4 * u1 * (u - u1), 0.4 * u1, 0.0)
+        };
+        let pullout_span = 1.0 - CREST_DIVE_PULLOUT_START;
+        let (pullout_offset, pullout_first, pullout_second) = if u > CREST_DIVE_PULLOUT_START {
+            let w = (u - CREST_DIVE_PULLOUT_START) / pullout_span;
+            let w2 = w * w;
+            let w3 = w2 * w;
+            (
+                pullout_span * pullout_span * (2.5 * w2 * w2 - 3.0 * w3 * w2 + w3 * w3),
+                pullout_span * (10.0 * w3 - 15.0 * w2 * w2 + 6.0 * w3 * w2),
+                30.0 * w2 * (1.0 - w) * (1.0 - w),
+            )
+        } else {
+            (0.0, 0.0, 0.0)
+        };
+        let a = self.start_acceleration;
+        let p = self.pullout_acceleration;
+        (
+            -a * crest_offset + p * pullout_offset,
+            -a * crest_first + p * pullout_first,
+            -a * crest_second + p * pullout_second,
+        )
+    }
+}
+
+pub(crate) fn roll_schedule(t: f64, ramp: f64) -> (f64, f64, f64) {
     let peak = 1.0 / (1.0 - ramp);
     if t > 1.0 - ramp {
         let (value, first, second) = roll_schedule(1.0 - t, ramp);
@@ -672,7 +762,7 @@ fn transform_frame(entry: TrackState, vector: Vec3, mirrored: bool) -> Vec3 {
     forward * vector.x + side * (vector.y * if mirrored { -1.0 } else { 1.0 }) + up * vector.z
 }
 
-fn unbanked_up(tangent: Vec3) -> Vec3 {
+pub(crate) fn unbanked_up(tangent: Vec3) -> Vec3 {
     let horizontal_length = (tangent.x * tangent.x + tangent.y * tangent.y).sqrt();
     Vec3::new(
         -tangent.x * tangent.z / horizontal_length,
@@ -695,6 +785,42 @@ fn state_up(state: TrackState) -> Vec3 {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn crest_dive_meets_its_end_conditions_and_finite_differences() {
+        use super::CrestDive;
+        let dive = CrestDive::new(210.0, 7.5).expect("drop is reachable");
+        let (z0, d0, s0) = dive.sample(0.0);
+        let (z1, d1, s1) = dive.sample(1.0);
+        assert!(z0.abs() < 1e-12 && d0.abs() < 1e-12 && (s0 + 210.0).abs() < 1e-9);
+        assert!((z1 + 7.5).abs() < 1e-9 && d1.abs() < 1e-9 && s1.abs() < 1e-9);
+        let step = 1e-6;
+        for u in [
+            0.01,
+            dive.crest_fraction() * 0.5,
+            dive.crest_fraction(),
+            0.5,
+            0.76,
+            0.9,
+        ] {
+            let (_, first, second) = dive.sample(u);
+            let (before, before_first, _) = dive.sample(u - step);
+            let (after, after_first, _) = dive.sample(u + step);
+            assert!(
+                ((after - before) / (2.0 * step) - first).abs() < 1e-5,
+                "first at {u}"
+            );
+            assert!(
+                ((after_first - before_first) / (2.0 * step) - second).abs() < 1e-3,
+                "second at {u}"
+            );
+        }
+        // Straight descent between the crest taper and the pull-out.
+        assert!(dive.sample(0.5).2.abs() < 1e-12);
+        assert!(CrestDive::new(210.0, 1.0e3).is_none());
+        let round_trip = CrestDive::new(210.0, CrestDive::drop_for(210.0, 0.12)).unwrap();
+        assert!((round_trip.crest_fraction() - 0.12).abs() < 1e-12);
+    }
 
     #[test]
     fn hill_twist_derivatives_match_finite_differences() {

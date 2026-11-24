@@ -14,21 +14,43 @@ use crate::state_hash::StateHasher;
 use crate::track::construction::ConstructionError;
 use crate::track::profile::{
     OfflineHillSpec, OfflineTrain, SHAPED_HILL_TAPER_ANGLE, SolvedProfile,
-    solve_shaped_hill_offline_profile,
+    solve_shaped_hill_apex_height_offline, solve_shaped_hill_offline_profile,
 };
+use crate::track::roll::Twist;
 pub(crate) use crate::track::shaped::precision::canonicalize_element_spec;
 use crate::track::shaped::precision::{ELEMENT_SPEC_HALF_DECIMAL_STEP, round_element_value};
 use crate::track::supports::SupportObstacle;
 use crate::track::{
-    Bank, CoasterModel, ENVELOPE_DISPLAY_LIMITS, Hand, Heading, HillFeel, HorizontalCurvature,
-    Piece, PieceId, PieceKind, Shape, Slope, TrackState, TrainConfiguration, VerticalCurvature,
-    catalog,
+    Bank, CoasterModel, ENVELOPE_DISPLAY_LIMITS, Hand, Heading, Heartlining, HillFeel,
+    HorizontalCurvature, Inversion, Material, Piece, PieceId, PieceKind, Shape, Slope, TrackState,
+    TrainConfiguration, VerticalCurvature, catalog,
 };
 
 std::thread_local! {
     static LEGACY_V4_SAVE_DECODE_ACTIVE: Cell<Option<bool>> = const { Cell::new(None) };
     static CURRENT_SAVE_DECODE_ACTIVE: Cell<bool> = const { Cell::new(false) };
     static CURRENT_SAVE_DIGEST_MISMATCH: RefCell<Option<GeometryDigestMismatch>> = const { RefCell::new(None) };
+    static SAVE_BEFORE_HILL_PROFILE_NODES_DECODE_ACTIVE: Cell<bool> = const { Cell::new(false) };
+}
+
+struct SaveBeforeHillProfileNodesDecodeGuard;
+
+impl Drop for SaveBeforeHillProfileNodesDecodeGuard {
+    fn drop(&mut self) {
+        SAVE_BEFORE_HILL_PROFILE_NODES_DECODE_ACTIVE.with(|active| active.set(false));
+    }
+}
+
+/// Decodes a save from before version 10: shaped elements use the frozen layout without hill profile
+/// nodes, and their hills are rebuilt with nodes as integrated, the geometry those saves were made with.
+pub fn with_save_before_hill_profile_nodes_decode_context<T>(decode: impl FnOnce() -> T) -> T {
+    let entered = SAVE_BEFORE_HILL_PROFILE_NODES_DECODE_ACTIVE.with(|active| !active.replace(true));
+    assert!(
+        entered,
+        "decode contexts for saves before hill profile nodes cannot be nested"
+    );
+    let _guard = SaveBeforeHillProfileNodesDecodeGuard;
+    decode()
 }
 
 struct LegacyV4SaveDecodeGuard;
@@ -116,6 +138,7 @@ fn capture_current_save_digest_mismatch(mismatch: GeometryDigestMismatch) -> boo
 use crate::world::World;
 
 mod crest_turn;
+mod inversions;
 mod precision;
 
 pub use crest_turn::{
@@ -135,6 +158,32 @@ const SHAPED_FLANK_SEARCH_STEPS: usize = 8;
 const SHAPED_HILL_NAME: &str = "Shaped airtime hill";
 const SHAPED_LEFT_TURN_NAME: &str = "Shaped banked turn left";
 const SHAPED_RIGHT_TURN_NAME: &str = "Shaped banked turn right";
+const SHAPED_LEFT_LOOP_NAME: &str = "Shaped vertical loop left";
+const SHAPED_RIGHT_LOOP_NAME: &str = "Shaped vertical loop right";
+const SHAPED_LEFT_STEEL_LOOP_NAME: &str = "Shaped steel-structure loop left";
+const SHAPED_RIGHT_STEEL_LOOP_NAME: &str = "Shaped steel-structure loop right";
+const SHAPED_LEFT_ZERO_G_ROLL_NAME: &str = "Shaped zero-g roll left";
+const SHAPED_RIGHT_ZERO_G_ROLL_NAME: &str = "Shaped zero-g roll right";
+const SHAPED_LEFT_RAVEN_TURN_NAME: &str = "Shaped Raven turn left";
+const SHAPED_RIGHT_RAVEN_TURN_NAME: &str = "Shaped Raven turn right";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LoopTopFeel {
+    Floaty,
+    Neutral,
+    PressedIn,
+}
+
+impl LoopTopFeel {
+    pub fn target_g(self) -> f64 {
+        match self {
+            Self::Floaty => 0.3,
+            Self::Neutral => 1.0,
+            Self::PressedIn => 1.5,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum HillSizeHint {
@@ -160,6 +209,20 @@ pub enum ElementIntent {
         hand: Hand,
         size: TurnSizeHint,
     },
+    Loop {
+        hand: Hand,
+        peak_g: f64,
+        top_feel: LoopTopFeel,
+    },
+    ZeroGRoll {
+        hand: Hand,
+        peak_g: f64,
+    },
+    RavenTurn {
+        hand: Hand,
+        peak_g: f64,
+        top_feel: LoopTopFeel,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -179,6 +242,7 @@ pub enum ElementSpec {
         profile_grid_half_tiles: u16,
         diagonal: bool,
         geometry_digest: u64,
+        profile_nodes: HillProfileNodes,
         profile: ResolvedHillProfile,
     },
     Turn {
@@ -195,6 +259,71 @@ pub enum ElementSpec {
         geometry_radius_m: f64,
         geometry_digest: u64,
         geometry: ResolvedTurnGeometry,
+    },
+    Loop {
+        design_speed_mps: f64,
+        cars: u8,
+        train_length_metres: f64,
+        hand: Hand,
+        top_feel: LoopTopFeel,
+        target_peak_g: f64,
+        delivered_peak_g: f64,
+        delivered_top_g: f64,
+        height_m: f64,
+        span_m: f64,
+        bottom_g: f64,
+        top_g: f64,
+        hold_degrees: f64,
+        profile_grid_half_tiles: u16,
+        diagonal: bool,
+        steel_structure: bool,
+        geometry_digest: u64,
+        profile: ResolvedHillProfile,
+    },
+    ZeroGRoll {
+        design_speed_mps: f64,
+        cars: u8,
+        train_length_metres: f64,
+        hand: Hand,
+        target_peak_g: f64,
+        delivered_peak_g: f64,
+        delivered_crest_g: f64,
+        peak_roll_rate_deg_s: f64,
+        height_m: f64,
+        span_m: f64,
+        pull_g: f64,
+        flank_angle_degrees: f64,
+        twist_ramp: f64,
+        twist_start_m: f64,
+        twist_end_m: f64,
+        profile_grid_half_tiles: u16,
+        diagonal: bool,
+        geometry_digest: u64,
+        profile: ResolvedHillProfile,
+    },
+    RavenTurn {
+        design_speed_mps: f64,
+        cars: u8,
+        train_length_metres: f64,
+        hand: Hand,
+        top_feel: LoopTopFeel,
+        target_peak_g: f64,
+        delivered_peak_g: f64,
+        delivered_top_g: f64,
+        peak_roll_rate_deg_s: f64,
+        height_m: f64,
+        span_m: f64,
+        bottom_g: f64,
+        top_g: f64,
+        hold_degrees: f64,
+        exit_dx_half_tiles: i32,
+        exit_dy_half_tiles: i32,
+        exit_dz_half_tiles: i32,
+        roll_dx_m: f64,
+        roll_lateral_m: f64,
+        diagonal: bool,
+        geometry_digest: u64,
+        half_loop: ResolvedHillProfile,
     },
 }
 
@@ -239,6 +368,87 @@ enum HumanReadableElementSpec {
         geometry_speed_loss_fraction: f64,
         #[serde(with = "recipe_f64")]
         geometry_radius_m: f64,
+        #[serde(with = "digest_u64")]
+        geometry_digest: u64,
+    },
+    Loop {
+        design_speed_mps: f64,
+        cars: u8,
+        hand: Hand,
+        top_feel: LoopTopFeel,
+        target_peak_g: f64,
+        delivered_peak_g: f64,
+        delivered_top_g: f64,
+        height_m: f64,
+        span_m: f64,
+        #[serde(with = "recipe_f64")]
+        train_length_metres: f64,
+        #[serde(with = "recipe_f64")]
+        bottom_g: f64,
+        #[serde(with = "recipe_f64")]
+        top_g: f64,
+        #[serde(with = "recipe_f64")]
+        hold_degrees: f64,
+        profile_grid_half_tiles: u16,
+        diagonal: bool,
+        steel_structure: bool,
+        #[serde(with = "digest_u64")]
+        geometry_digest: u64,
+    },
+    ZeroGRoll {
+        design_speed_mps: f64,
+        cars: u8,
+        hand: Hand,
+        target_peak_g: f64,
+        delivered_peak_g: f64,
+        delivered_crest_g: f64,
+        peak_roll_rate_deg_s: f64,
+        height_m: f64,
+        span_m: f64,
+        #[serde(with = "recipe_f64")]
+        train_length_metres: f64,
+        #[serde(with = "recipe_f64")]
+        pull_g: f64,
+        #[serde(with = "recipe_f64")]
+        flank_angle_degrees: f64,
+        #[serde(with = "recipe_f64")]
+        twist_ramp: f64,
+        #[serde(with = "recipe_f64")]
+        twist_start_m: f64,
+        #[serde(with = "recipe_f64")]
+        twist_end_m: f64,
+        profile_grid_half_tiles: u16,
+        diagonal: bool,
+        #[serde(with = "digest_u64")]
+        geometry_digest: u64,
+    },
+    RavenTurn {
+        design_speed_mps: f64,
+        cars: u8,
+        hand: Hand,
+        top_feel: LoopTopFeel,
+        target_peak_g: f64,
+        delivered_peak_g: f64,
+        delivered_top_g: f64,
+        peak_roll_rate_deg_s: f64,
+        height_m: f64,
+        span_m: f64,
+        #[serde(with = "recipe_f64")]
+        train_length_metres: f64,
+        #[serde(with = "recipe_f64")]
+        bottom_g: f64,
+        #[serde(with = "recipe_f64")]
+        top_g: f64,
+        #[serde(with = "recipe_f64")]
+        hold_degrees: f64,
+        exit_dx_half_tiles: i32,
+        exit_dy_half_tiles: i32,
+        exit_dz_half_tiles: i32,
+        #[serde(with = "recipe_f64")]
+        roll_dx_m: f64,
+        #[serde(with = "recipe_f64")]
+        roll_lateral_m: f64,
+        diagonal: bool,
         #[serde(with = "digest_u64")]
         geometry_digest: u64,
     },
@@ -298,8 +508,25 @@ mod digest_u64 {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-enum BinaryElementSpec {
+/// How a shaped hill's profile nodes were built. Saves before version 10 hold hills built with the
+/// nodes exactly as the step integrator left them; those keep that geometry so their stored digests
+/// still match. Every new solve and every ride file uses consistent nodes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HillProfileNodes {
+    AsIntegrated,
+    Consistent,
+}
+
+impl HillProfileNodes {
+    fn consistent(self) -> bool {
+        self == Self::Consistent
+    }
+}
+
+/// Frozen binary layout of shaped elements in saves before version 10, which only had hills and
+/// turns and stored no hill profile nodes.
+#[derive(Deserialize)]
+enum BinaryElementSpecBeforeHillProfileNodes {
     Hill {
         design_speed_mps: f64,
         cars: u8,
@@ -328,6 +555,169 @@ enum BinaryElementSpec {
         geometry_peak_bank_radians: f64,
         geometry_speed_loss_fraction: f64,
         geometry_radius_m: f64,
+        geometry_digest: u64,
+    },
+}
+
+impl BinaryElementSpecBeforeHillProfileNodes {
+    fn into_current(self) -> BinaryElementSpec {
+        match self {
+            Self::Hill {
+                design_speed_mps,
+                cars,
+                target_g,
+                delivered_g,
+                height_m,
+                span_m,
+                train_length_metres,
+                target_height_m,
+                pull_g,
+                crest_g,
+                flank_angle_degrees,
+                profile_grid_half_tiles,
+                diagonal,
+                geometry_digest,
+            } => BinaryElementSpec::Hill {
+                design_speed_mps,
+                cars,
+                target_g,
+                delivered_g,
+                height_m,
+                span_m,
+                train_length_metres,
+                target_height_m,
+                pull_g,
+                crest_g,
+                flank_angle_degrees,
+                profile_grid_half_tiles,
+                diagonal,
+                geometry_digest,
+                profile_nodes: HillProfileNodes::AsIntegrated,
+            },
+            Self::Turn {
+                design_speed_mps,
+                cars,
+                hand,
+                vertical_g,
+                lateral_g,
+                radius_m,
+                bank_degrees,
+                train_length_metres,
+                geometry_peak_bank_radians,
+                geometry_speed_loss_fraction,
+                geometry_radius_m,
+                geometry_digest,
+            } => BinaryElementSpec::Turn {
+                design_speed_mps,
+                cars,
+                hand,
+                vertical_g,
+                lateral_g,
+                radius_m,
+                bank_degrees,
+                train_length_metres,
+                geometry_peak_bank_radians,
+                geometry_speed_loss_fraction,
+                geometry_radius_m,
+                geometry_digest,
+            },
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+enum BinaryElementSpec {
+    Hill {
+        design_speed_mps: f64,
+        cars: u8,
+        target_g: f64,
+        delivered_g: f64,
+        height_m: f64,
+        span_m: f64,
+        train_length_metres: f64,
+        target_height_m: f64,
+        pull_g: f64,
+        crest_g: f64,
+        flank_angle_degrees: f64,
+        profile_grid_half_tiles: u16,
+        diagonal: bool,
+        geometry_digest: u64,
+        profile_nodes: HillProfileNodes,
+    },
+    Turn {
+        design_speed_mps: f64,
+        cars: u8,
+        hand: Hand,
+        vertical_g: f64,
+        lateral_g: f64,
+        radius_m: f64,
+        bank_degrees: f64,
+        train_length_metres: f64,
+        geometry_peak_bank_radians: f64,
+        geometry_speed_loss_fraction: f64,
+        geometry_radius_m: f64,
+        geometry_digest: u64,
+    },
+    Loop {
+        design_speed_mps: f64,
+        cars: u8,
+        hand: Hand,
+        top_feel: LoopTopFeel,
+        target_peak_g: f64,
+        delivered_peak_g: f64,
+        delivered_top_g: f64,
+        height_m: f64,
+        span_m: f64,
+        train_length_metres: f64,
+        bottom_g: f64,
+        top_g: f64,
+        hold_degrees: f64,
+        profile_grid_half_tiles: u16,
+        diagonal: bool,
+        steel_structure: bool,
+        geometry_digest: u64,
+    },
+    ZeroGRoll {
+        design_speed_mps: f64,
+        cars: u8,
+        hand: Hand,
+        target_peak_g: f64,
+        delivered_peak_g: f64,
+        delivered_crest_g: f64,
+        peak_roll_rate_deg_s: f64,
+        height_m: f64,
+        span_m: f64,
+        train_length_metres: f64,
+        pull_g: f64,
+        flank_angle_degrees: f64,
+        twist_ramp: f64,
+        twist_start_m: f64,
+        twist_end_m: f64,
+        profile_grid_half_tiles: u16,
+        diagonal: bool,
+        geometry_digest: u64,
+    },
+    RavenTurn {
+        design_speed_mps: f64,
+        cars: u8,
+        hand: Hand,
+        top_feel: LoopTopFeel,
+        target_peak_g: f64,
+        delivered_peak_g: f64,
+        delivered_top_g: f64,
+        peak_roll_rate_deg_s: f64,
+        height_m: f64,
+        span_m: f64,
+        train_length_metres: f64,
+        bottom_g: f64,
+        top_g: f64,
+        hold_degrees: f64,
+        exit_dx_half_tiles: i32,
+        exit_dy_half_tiles: i32,
+        exit_dz_half_tiles: i32,
+        roll_dx_m: f64,
+        roll_lateral_m: f64,
+        diagonal: bool,
         geometry_digest: u64,
     },
 }
@@ -366,6 +756,7 @@ fn resolve_human_readable_spec(
             profile_grid_half_tiles,
             diagonal,
             geometry_digest,
+            profile_nodes: HillProfileNodes::Consistent,
             profile: regenerate_hill_profile(
                 cars,
                 design_speed_mps,
@@ -374,6 +765,7 @@ fn resolve_human_readable_spec(
                 crest_g,
                 flank_angle_degrees,
                 profile_grid_half_tiles,
+                HillProfileNodes::Consistent,
             )
             .map_err(ElementSpecLoadError::InvalidRecipe)?,
         },
@@ -411,6 +803,166 @@ fn resolve_human_readable_spec(
             )
             .map_err(ElementSpecLoadError::InvalidRecipe)?,
         },
+        HumanReadableElementSpec::Loop {
+            design_speed_mps,
+            cars,
+            train_length_metres,
+            hand,
+            top_feel,
+            target_peak_g,
+            delivered_peak_g,
+            delivered_top_g,
+            height_m,
+            span_m,
+            bottom_g,
+            top_g,
+            hold_degrees,
+            profile_grid_half_tiles,
+            diagonal,
+            steel_structure,
+            geometry_digest,
+        } => ElementSpec::Loop {
+            design_speed_mps,
+            cars,
+            train_length_metres,
+            hand,
+            top_feel,
+            target_peak_g,
+            delivered_peak_g,
+            delivered_top_g,
+            height_m,
+            span_m,
+            bottom_g,
+            top_g,
+            hold_degrees,
+            profile_grid_half_tiles,
+            diagonal,
+            steel_structure,
+            geometry_digest,
+            profile: inversions::regenerate_loop_profile(
+                cars,
+                design_speed_mps,
+                train_length_metres,
+                bottom_g,
+                top_g,
+                hold_degrees,
+                profile_grid_half_tiles,
+                diagonal,
+            )
+            .map_err(ElementSpecLoadError::InvalidRecipe)?,
+        },
+        HumanReadableElementSpec::ZeroGRoll {
+            design_speed_mps,
+            cars,
+            train_length_metres,
+            hand,
+            target_peak_g,
+            delivered_peak_g,
+            delivered_crest_g,
+            peak_roll_rate_deg_s,
+            height_m,
+            span_m,
+            pull_g,
+            flank_angle_degrees,
+            twist_ramp,
+            twist_start_m,
+            twist_end_m,
+            profile_grid_half_tiles,
+            diagonal,
+            geometry_digest,
+        } => {
+            let profile = inversions::regenerate_zero_g_roll_profile(
+                cars,
+                design_speed_mps,
+                train_length_metres,
+                pull_g,
+                flank_angle_degrees,
+                twist_ramp,
+                twist_start_m,
+                twist_end_m,
+                profile_grid_half_tiles,
+                diagonal,
+            )
+            .map_err(ElementSpecLoadError::InvalidRecipe)?;
+            ElementSpec::ZeroGRoll {
+                design_speed_mps,
+                cars,
+                train_length_metres,
+                hand,
+                target_peak_g,
+                delivered_peak_g,
+                delivered_crest_g,
+                peak_roll_rate_deg_s,
+                height_m,
+                span_m,
+                pull_g,
+                flank_angle_degrees,
+                twist_ramp,
+                twist_start_m,
+                twist_end_m,
+                profile_grid_half_tiles,
+                diagonal,
+                geometry_digest,
+                profile,
+            }
+        }
+        HumanReadableElementSpec::RavenTurn {
+            design_speed_mps,
+            cars,
+            train_length_metres,
+            hand,
+            top_feel,
+            target_peak_g,
+            delivered_peak_g,
+            delivered_top_g,
+            peak_roll_rate_deg_s,
+            height_m,
+            span_m,
+            bottom_g,
+            top_g,
+            hold_degrees,
+            exit_dx_half_tiles,
+            exit_dy_half_tiles,
+            exit_dz_half_tiles,
+            roll_dx_m,
+            roll_lateral_m,
+            diagonal,
+            geometry_digest,
+        } => ElementSpec::RavenTurn {
+            design_speed_mps,
+            cars,
+            train_length_metres,
+            hand,
+            top_feel,
+            target_peak_g,
+            delivered_peak_g,
+            delivered_top_g,
+            peak_roll_rate_deg_s,
+            height_m,
+            span_m,
+            bottom_g,
+            top_g,
+            hold_degrees,
+            exit_dx_half_tiles,
+            exit_dy_half_tiles,
+            exit_dz_half_tiles,
+            roll_dx_m,
+            roll_lateral_m,
+            diagonal,
+            geometry_digest,
+            half_loop: inversions::regenerate_raven_turn_half_loop(
+                cars,
+                design_speed_mps,
+                train_length_metres,
+                bottom_g,
+                top_g,
+                hold_degrees,
+                exit_dz_half_tiles,
+                roll_dx_m,
+                roll_lateral_m,
+            )
+            .map_err(ElementSpecLoadError::InvalidRecipe)?,
+        },
     };
     canonicalize_element_spec(&mut spec);
     spec.verify_geometry_digest()
@@ -418,6 +970,7 @@ fn resolve_human_readable_spec(
     Ok(spec)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn regenerate_hill_profile(
     cars: u8,
     design_speed_mps: f64,
@@ -426,6 +979,7 @@ fn regenerate_hill_profile(
     crest_g: f64,
     flank_angle_degrees: f64,
     profile_grid_half_tiles: u16,
+    profile_nodes: HillProfileNodes,
 ) -> Result<ResolvedHillProfile, String> {
     let entry_speed_mps = round_element_value(design_speed_mps);
     if cars == 0
@@ -452,8 +1006,13 @@ fn regenerate_hill_profile(
         cars,
         length_metres: train_length_metres,
     };
-    let (mut profile, _, _) = solve_shaped_hill_offline_profile(profile_spec, train, PROFILE_STEPS)
-        .map_err(|error| format!("could not regenerate shaped hill geometry: {error:?}"))?;
+    let (mut profile, _, _) = solve_shaped_hill_offline_profile(
+        profile_spec,
+        train,
+        PROFILE_STEPS,
+        profile_nodes.consistent(),
+    )
+    .map_err(|error| format!("could not regenerate shaped hill geometry: {error:?}"))?;
     let snapped_span_metres = f64::from(profile_grid_half_tiles) * 2.0;
     let connector_insert_metres = snapped_span_metres - profile.endpoint()[0];
     if !connector_insert_metres.is_finite() || connector_insert_metres < 0.0 {
@@ -538,6 +1097,130 @@ impl Serialize for ElementSpec {
                     geometry_radius_m: *geometry_radius_m,
                     geometry_digest: *geometry_digest,
                 },
+                Self::Loop {
+                    design_speed_mps,
+                    cars,
+                    train_length_metres,
+                    hand,
+                    top_feel,
+                    target_peak_g,
+                    delivered_peak_g,
+                    delivered_top_g,
+                    height_m,
+                    span_m,
+                    bottom_g,
+                    top_g,
+                    hold_degrees,
+                    profile_grid_half_tiles,
+                    diagonal,
+                    steel_structure,
+                    geometry_digest,
+                    ..
+                } => HumanReadableElementSpec::Loop {
+                    design_speed_mps: *design_speed_mps,
+                    cars: *cars,
+                    train_length_metres: *train_length_metres,
+                    hand: *hand,
+                    top_feel: *top_feel,
+                    target_peak_g: *target_peak_g,
+                    delivered_peak_g: *delivered_peak_g,
+                    delivered_top_g: *delivered_top_g,
+                    height_m: *height_m,
+                    span_m: *span_m,
+                    bottom_g: *bottom_g,
+                    top_g: *top_g,
+                    hold_degrees: *hold_degrees,
+                    profile_grid_half_tiles: *profile_grid_half_tiles,
+                    diagonal: *diagonal,
+                    steel_structure: *steel_structure,
+                    geometry_digest: *geometry_digest,
+                },
+                Self::ZeroGRoll {
+                    design_speed_mps,
+                    cars,
+                    train_length_metres,
+                    hand,
+                    target_peak_g,
+                    delivered_peak_g,
+                    delivered_crest_g,
+                    peak_roll_rate_deg_s,
+                    height_m,
+                    span_m,
+                    pull_g,
+                    flank_angle_degrees,
+                    twist_ramp,
+                    twist_start_m,
+                    twist_end_m,
+                    profile_grid_half_tiles,
+                    diagonal,
+                    geometry_digest,
+                    ..
+                } => HumanReadableElementSpec::ZeroGRoll {
+                    design_speed_mps: *design_speed_mps,
+                    cars: *cars,
+                    train_length_metres: *train_length_metres,
+                    hand: *hand,
+                    target_peak_g: *target_peak_g,
+                    delivered_peak_g: *delivered_peak_g,
+                    delivered_crest_g: *delivered_crest_g,
+                    peak_roll_rate_deg_s: *peak_roll_rate_deg_s,
+                    height_m: *height_m,
+                    span_m: *span_m,
+                    pull_g: *pull_g,
+                    flank_angle_degrees: *flank_angle_degrees,
+                    twist_ramp: *twist_ramp,
+                    twist_start_m: *twist_start_m,
+                    twist_end_m: *twist_end_m,
+                    profile_grid_half_tiles: *profile_grid_half_tiles,
+                    diagonal: *diagonal,
+                    geometry_digest: *geometry_digest,
+                },
+                Self::RavenTurn {
+                    design_speed_mps,
+                    cars,
+                    train_length_metres,
+                    hand,
+                    top_feel,
+                    target_peak_g,
+                    delivered_peak_g,
+                    delivered_top_g,
+                    peak_roll_rate_deg_s,
+                    height_m,
+                    span_m,
+                    bottom_g,
+                    top_g,
+                    hold_degrees,
+                    exit_dx_half_tiles,
+                    exit_dy_half_tiles,
+                    exit_dz_half_tiles,
+                    roll_dx_m,
+                    roll_lateral_m,
+                    diagonal,
+                    geometry_digest,
+                    ..
+                } => HumanReadableElementSpec::RavenTurn {
+                    design_speed_mps: *design_speed_mps,
+                    cars: *cars,
+                    train_length_metres: *train_length_metres,
+                    hand: *hand,
+                    top_feel: *top_feel,
+                    target_peak_g: *target_peak_g,
+                    delivered_peak_g: *delivered_peak_g,
+                    delivered_top_g: *delivered_top_g,
+                    peak_roll_rate_deg_s: *peak_roll_rate_deg_s,
+                    height_m: *height_m,
+                    span_m: *span_m,
+                    bottom_g: *bottom_g,
+                    top_g: *top_g,
+                    hold_degrees: *hold_degrees,
+                    exit_dx_half_tiles: *exit_dx_half_tiles,
+                    exit_dy_half_tiles: *exit_dy_half_tiles,
+                    exit_dz_half_tiles: *exit_dz_half_tiles,
+                    roll_dx_m: *roll_dx_m,
+                    roll_lateral_m: *roll_lateral_m,
+                    diagonal: *diagonal,
+                    geometry_digest: *geometry_digest,
+                },
             };
             spec.serialize(serializer)
         } else {
@@ -557,6 +1240,7 @@ impl Serialize for ElementSpec {
                     profile_grid_half_tiles,
                     diagonal,
                     geometry_digest,
+                    profile_nodes,
                     ..
                 } => BinaryElementSpec::Hill {
                     design_speed_mps: *design_speed_mps,
@@ -573,6 +1257,7 @@ impl Serialize for ElementSpec {
                     profile_grid_half_tiles: *profile_grid_half_tiles,
                     diagonal: *diagonal,
                     geometry_digest: *geometry_digest,
+                    profile_nodes: *profile_nodes,
                 },
                 Self::Turn {
                     design_speed_mps,
@@ -602,6 +1287,130 @@ impl Serialize for ElementSpec {
                     geometry_radius_m: *geometry_radius_m,
                     geometry_digest: *geometry_digest,
                 },
+                Self::Loop {
+                    design_speed_mps,
+                    cars,
+                    train_length_metres,
+                    hand,
+                    top_feel,
+                    target_peak_g,
+                    delivered_peak_g,
+                    delivered_top_g,
+                    height_m,
+                    span_m,
+                    bottom_g,
+                    top_g,
+                    hold_degrees,
+                    profile_grid_half_tiles,
+                    diagonal,
+                    steel_structure,
+                    geometry_digest,
+                    ..
+                } => BinaryElementSpec::Loop {
+                    design_speed_mps: *design_speed_mps,
+                    cars: *cars,
+                    train_length_metres: *train_length_metres,
+                    hand: *hand,
+                    top_feel: *top_feel,
+                    target_peak_g: *target_peak_g,
+                    delivered_peak_g: *delivered_peak_g,
+                    delivered_top_g: *delivered_top_g,
+                    height_m: *height_m,
+                    span_m: *span_m,
+                    bottom_g: *bottom_g,
+                    top_g: *top_g,
+                    hold_degrees: *hold_degrees,
+                    profile_grid_half_tiles: *profile_grid_half_tiles,
+                    diagonal: *diagonal,
+                    steel_structure: *steel_structure,
+                    geometry_digest: *geometry_digest,
+                },
+                Self::ZeroGRoll {
+                    design_speed_mps,
+                    cars,
+                    train_length_metres,
+                    hand,
+                    target_peak_g,
+                    delivered_peak_g,
+                    delivered_crest_g,
+                    peak_roll_rate_deg_s,
+                    height_m,
+                    span_m,
+                    pull_g,
+                    flank_angle_degrees,
+                    twist_ramp,
+                    twist_start_m,
+                    twist_end_m,
+                    profile_grid_half_tiles,
+                    diagonal,
+                    geometry_digest,
+                    ..
+                } => BinaryElementSpec::ZeroGRoll {
+                    design_speed_mps: *design_speed_mps,
+                    cars: *cars,
+                    train_length_metres: *train_length_metres,
+                    hand: *hand,
+                    target_peak_g: *target_peak_g,
+                    delivered_peak_g: *delivered_peak_g,
+                    delivered_crest_g: *delivered_crest_g,
+                    peak_roll_rate_deg_s: *peak_roll_rate_deg_s,
+                    height_m: *height_m,
+                    span_m: *span_m,
+                    pull_g: *pull_g,
+                    flank_angle_degrees: *flank_angle_degrees,
+                    twist_ramp: *twist_ramp,
+                    twist_start_m: *twist_start_m,
+                    twist_end_m: *twist_end_m,
+                    profile_grid_half_tiles: *profile_grid_half_tiles,
+                    diagonal: *diagonal,
+                    geometry_digest: *geometry_digest,
+                },
+                Self::RavenTurn {
+                    design_speed_mps,
+                    cars,
+                    train_length_metres,
+                    hand,
+                    top_feel,
+                    target_peak_g,
+                    delivered_peak_g,
+                    delivered_top_g,
+                    peak_roll_rate_deg_s,
+                    height_m,
+                    span_m,
+                    bottom_g,
+                    top_g,
+                    hold_degrees,
+                    exit_dx_half_tiles,
+                    exit_dy_half_tiles,
+                    exit_dz_half_tiles,
+                    roll_dx_m,
+                    roll_lateral_m,
+                    diagonal,
+                    geometry_digest,
+                    ..
+                } => BinaryElementSpec::RavenTurn {
+                    design_speed_mps: *design_speed_mps,
+                    cars: *cars,
+                    train_length_metres: *train_length_metres,
+                    hand: *hand,
+                    top_feel: *top_feel,
+                    target_peak_g: *target_peak_g,
+                    delivered_peak_g: *delivered_peak_g,
+                    delivered_top_g: *delivered_top_g,
+                    peak_roll_rate_deg_s: *peak_roll_rate_deg_s,
+                    height_m: *height_m,
+                    span_m: *span_m,
+                    bottom_g: *bottom_g,
+                    top_g: *top_g,
+                    hold_degrees: *hold_degrees,
+                    exit_dx_half_tiles: *exit_dx_half_tiles,
+                    exit_dy_half_tiles: *exit_dy_half_tiles,
+                    exit_dz_half_tiles: *exit_dz_half_tiles,
+                    roll_dx_m: *roll_dx_m,
+                    roll_lateral_m: *roll_lateral_m,
+                    diagonal: *diagonal,
+                    geometry_digest: *geometry_digest,
+                },
             };
             spec.serialize(serializer)
         }
@@ -622,7 +1431,12 @@ impl<'de> Deserialize<'de> for ElementSpec {
                     "version 4 saves with shaped coaster elements are unsupported",
                 ));
             }
-            let mut spec = match BinaryElementSpec::deserialize(deserializer)? {
+            let binary_spec = if SAVE_BEFORE_HILL_PROFILE_NODES_DECODE_ACTIVE.with(Cell::get) {
+                BinaryElementSpecBeforeHillProfileNodes::deserialize(deserializer)?.into_current()
+            } else {
+                BinaryElementSpec::deserialize(deserializer)?
+            };
+            let mut spec = match binary_spec {
                 BinaryElementSpec::Hill {
                     design_speed_mps,
                     cars,
@@ -638,6 +1452,7 @@ impl<'de> Deserialize<'de> for ElementSpec {
                     profile_grid_half_tiles,
                     diagonal,
                     geometry_digest,
+                    profile_nodes,
                 } => Self::Hill {
                     design_speed_mps,
                     cars,
@@ -653,6 +1468,7 @@ impl<'de> Deserialize<'de> for ElementSpec {
                     profile_grid_half_tiles,
                     diagonal,
                     geometry_digest,
+                    profile_nodes,
                     profile: regenerate_hill_profile(
                         cars,
                         design_speed_mps,
@@ -661,6 +1477,7 @@ impl<'de> Deserialize<'de> for ElementSpec {
                         crest_g,
                         flank_angle_degrees,
                         profile_grid_half_tiles,
+                        profile_nodes,
                     )
                     .map_err(D::Error::custom)?,
                 },
@@ -698,6 +1515,166 @@ impl<'de> Deserialize<'de> for ElementSpec {
                     )
                     .map_err(D::Error::custom)?,
                 },
+                BinaryElementSpec::Loop {
+                    design_speed_mps,
+                    cars,
+                    train_length_metres,
+                    hand,
+                    top_feel,
+                    target_peak_g,
+                    delivered_peak_g,
+                    delivered_top_g,
+                    height_m,
+                    span_m,
+                    bottom_g,
+                    top_g,
+                    hold_degrees,
+                    profile_grid_half_tiles,
+                    diagonal,
+                    steel_structure,
+                    geometry_digest,
+                } => Self::Loop {
+                    design_speed_mps,
+                    cars,
+                    train_length_metres,
+                    hand,
+                    top_feel,
+                    target_peak_g,
+                    delivered_peak_g,
+                    delivered_top_g,
+                    height_m,
+                    span_m,
+                    bottom_g,
+                    top_g,
+                    hold_degrees,
+                    profile_grid_half_tiles,
+                    diagonal,
+                    steel_structure,
+                    geometry_digest,
+                    profile: inversions::regenerate_loop_profile(
+                        cars,
+                        design_speed_mps,
+                        train_length_metres,
+                        bottom_g,
+                        top_g,
+                        hold_degrees,
+                        profile_grid_half_tiles,
+                        diagonal,
+                    )
+                    .map_err(D::Error::custom)?,
+                },
+                BinaryElementSpec::ZeroGRoll {
+                    design_speed_mps,
+                    cars,
+                    train_length_metres,
+                    hand,
+                    target_peak_g,
+                    delivered_peak_g,
+                    delivered_crest_g,
+                    peak_roll_rate_deg_s,
+                    height_m,
+                    span_m,
+                    pull_g,
+                    flank_angle_degrees,
+                    twist_ramp,
+                    twist_start_m,
+                    twist_end_m,
+                    profile_grid_half_tiles,
+                    diagonal,
+                    geometry_digest,
+                } => {
+                    let profile = inversions::regenerate_zero_g_roll_profile(
+                        cars,
+                        design_speed_mps,
+                        train_length_metres,
+                        pull_g,
+                        flank_angle_degrees,
+                        twist_ramp,
+                        twist_start_m,
+                        twist_end_m,
+                        profile_grid_half_tiles,
+                        diagonal,
+                    )
+                    .map_err(D::Error::custom)?;
+                    Self::ZeroGRoll {
+                        design_speed_mps,
+                        cars,
+                        train_length_metres,
+                        hand,
+                        target_peak_g,
+                        delivered_peak_g,
+                        delivered_crest_g,
+                        peak_roll_rate_deg_s,
+                        height_m,
+                        span_m,
+                        pull_g,
+                        flank_angle_degrees,
+                        twist_ramp,
+                        twist_start_m,
+                        twist_end_m,
+                        profile_grid_half_tiles,
+                        diagonal,
+                        geometry_digest,
+                        profile,
+                    }
+                }
+                BinaryElementSpec::RavenTurn {
+                    design_speed_mps,
+                    cars,
+                    train_length_metres,
+                    hand,
+                    top_feel,
+                    target_peak_g,
+                    delivered_peak_g,
+                    delivered_top_g,
+                    peak_roll_rate_deg_s,
+                    height_m,
+                    span_m,
+                    bottom_g,
+                    top_g,
+                    hold_degrees,
+                    exit_dx_half_tiles,
+                    exit_dy_half_tiles,
+                    exit_dz_half_tiles,
+                    roll_dx_m,
+                    roll_lateral_m,
+                    diagonal,
+                    geometry_digest,
+                } => Self::RavenTurn {
+                    design_speed_mps,
+                    cars,
+                    train_length_metres,
+                    hand,
+                    top_feel,
+                    target_peak_g,
+                    delivered_peak_g,
+                    delivered_top_g,
+                    peak_roll_rate_deg_s,
+                    height_m,
+                    span_m,
+                    bottom_g,
+                    top_g,
+                    hold_degrees,
+                    exit_dx_half_tiles,
+                    exit_dy_half_tiles,
+                    exit_dz_half_tiles,
+                    roll_dx_m,
+                    roll_lateral_m,
+                    diagonal,
+                    geometry_digest,
+                    half_loop: inversions::regenerate_raven_turn_half_loop(
+                        cars,
+                        design_speed_mps,
+                        train_length_metres,
+                        bottom_g,
+                        top_g,
+                        hold_degrees,
+                        exit_dz_half_tiles,
+                        roll_dx_m,
+                        roll_lateral_m,
+                    )
+                    .map_err(D::Error::custom)?,
+                },
             };
             canonicalize_element_spec(&mut spec);
             if let Err(mismatch) = spec.verify_geometry_digest() {
@@ -723,8 +1700,33 @@ impl ElementSpec {
         let mut hash = StateHasher::new();
         hash.write_tag(b"shaped-geometry-v1");
         match self {
-            Self::Hill { profile, .. } => profile.hash_into(&mut hash),
+            Self::Hill { profile, .. } | Self::Loop { profile, .. } => profile.hash_into(&mut hash),
             Self::Turn { geometry, .. } => geometry.hash_into(&mut hash),
+            Self::ZeroGRoll {
+                profile,
+                twist_ramp,
+                twist_start_m,
+                twist_end_m,
+                ..
+            } => {
+                profile.hash_into(&mut hash);
+                Twist::ZeroGRoll {
+                    ramp: *twist_ramp,
+                    start: *twist_start_m,
+                    end: *twist_end_m,
+                }
+                .hash_into(&mut hash);
+            }
+            Self::RavenTurn {
+                half_loop,
+                roll_dx_m,
+                roll_lateral_m,
+                ..
+            } => {
+                half_loop.hash_into(&mut hash);
+                hash.write_f64(*roll_dx_m);
+                hash.write_f64(*roll_lateral_m);
+            }
         }
         hash.finish()
     }
@@ -735,6 +1737,15 @@ impl ElementSpec {
                 geometry_digest, ..
             }
             | Self::Turn {
+                geometry_digest, ..
+            }
+            | Self::Loop {
+                geometry_digest, ..
+            }
+            | Self::ZeroGRoll {
+                geometry_digest, ..
+            }
+            | Self::RavenTurn {
                 geometry_digest, ..
             } => (*geometry_digest, self.resolved_geometry_digest()),
         };
@@ -752,6 +1763,15 @@ impl ElementSpec {
                 geometry_digest, ..
             }
             | Self::Turn {
+                geometry_digest, ..
+            }
+            | Self::Loop {
+                geometry_digest, ..
+            }
+            | Self::ZeroGRoll {
+                geometry_digest, ..
+            }
+            | Self::RavenTurn {
                 geometry_digest, ..
             } => *geometry_digest = digest,
         }
@@ -774,6 +1794,8 @@ impl ElementSpec {
                 profile_grid_half_tiles: _,
                 diagonal: _,
                 geometry_digest: _,
+                // The profile is hashed, and it already differs between the two node builds.
+                profile_nodes: _,
                 profile,
             } => {
                 hash.write_u8(0);
@@ -810,6 +1832,98 @@ impl ElementSpec {
                 hash.write_f64(*bank_degrees);
                 geometry.hash_into(hash);
             }
+            Self::Loop {
+                design_speed_mps,
+                cars,
+                hand,
+                top_feel,
+                target_peak_g,
+                delivered_peak_g,
+                delivered_top_g,
+                height_m,
+                span_m,
+                steel_structure,
+                profile,
+                ..
+            } => {
+                hash.write_u8(2);
+                hash.write_f64(*design_speed_mps);
+                hash.write_u8(*cars);
+                hash.write_u8(*hand as u8);
+                hash.write_u8(*top_feel as u8);
+                hash.write_f64(*target_peak_g);
+                hash.write_f64(*delivered_peak_g);
+                hash.write_f64(*delivered_top_g);
+                hash.write_f64(*height_m);
+                hash.write_f64(*span_m);
+                hash.write_bool(*steel_structure);
+                profile.hash_into(hash);
+            }
+            Self::ZeroGRoll {
+                design_speed_mps,
+                cars,
+                hand,
+                target_peak_g,
+                delivered_peak_g,
+                delivered_crest_g,
+                peak_roll_rate_deg_s,
+                height_m,
+                span_m,
+                profile,
+                twist_ramp,
+                twist_start_m,
+                twist_end_m,
+                ..
+            } => {
+                hash.write_u8(3);
+                hash.write_f64(*design_speed_mps);
+                hash.write_u8(*cars);
+                hash.write_u8(*hand as u8);
+                hash.write_f64(*target_peak_g);
+                hash.write_f64(*delivered_peak_g);
+                hash.write_f64(*delivered_crest_g);
+                hash.write_f64(*peak_roll_rate_deg_s);
+                hash.write_f64(*height_m);
+                hash.write_f64(*span_m);
+                profile.hash_into(hash);
+                Twist::ZeroGRoll {
+                    ramp: *twist_ramp,
+                    start: *twist_start_m,
+                    end: *twist_end_m,
+                }
+                .hash_into(hash);
+            }
+            Self::RavenTurn {
+                design_speed_mps,
+                cars,
+                hand,
+                top_feel,
+                target_peak_g,
+                delivered_peak_g,
+                delivered_top_g,
+                peak_roll_rate_deg_s,
+                height_m,
+                span_m,
+                roll_dx_m,
+                roll_lateral_m,
+                half_loop,
+                ..
+            } => {
+                hash.write_u8(4);
+                hash.write_f64(*design_speed_mps);
+                hash.write_u8(*cars);
+                hash.write_u8(*hand as u8);
+                hash.write_u8(*top_feel as u8);
+                hash.write_f64(*target_peak_g);
+                hash.write_f64(*delivered_peak_g);
+                hash.write_f64(*delivered_top_g);
+                hash.write_f64(*peak_roll_rate_deg_s);
+                hash.write_f64(*height_m);
+                hash.write_f64(*span_m);
+                hash.write_f64(*roll_dx_m);
+                hash.write_f64(*roll_lateral_m);
+                half_loop.hash_into(hash);
+            }
         }
     }
 
@@ -820,13 +1934,26 @@ impl ElementSpec {
             }
             | Self::Turn {
                 design_speed_mps, ..
+            }
+            | Self::Loop {
+                design_speed_mps, ..
+            }
+            | Self::ZeroGRoll {
+                design_speed_mps, ..
+            }
+            | Self::RavenTurn {
+                design_speed_mps, ..
             } => *design_speed_mps,
         }
     }
 
     pub fn cars(&self) -> u8 {
         match self {
-            Self::Hill { cars, .. } | Self::Turn { cars, .. } => *cars,
+            Self::Hill { cars, .. }
+            | Self::Turn { cars, .. }
+            | Self::Loop { cars, .. }
+            | Self::ZeroGRoll { cars, .. }
+            | Self::RavenTurn { cars, .. } => *cars,
         }
     }
 }
@@ -924,6 +2051,15 @@ pub enum SolveRefusal {
         entry_speed_mps: f64,
         minimum_speed_mps: f64,
     },
+    /// A Raven turn's train-average crest force cannot get within the top-feel tolerance of the
+    /// target without breaking a force limit. The lowest and highest single-car crest forces
+    /// show the spread along the train.
+    TopFeelOutOfReach {
+        target_top_g: f64,
+        average_top_g: f64,
+        lowest_car_top_g: f64,
+        highest_car_top_g: f64,
+    },
     UnsupportedScope,
     PreviewTimedOut,
     InvalidContext,
@@ -958,6 +2094,11 @@ pub struct ShapedProfile {
     pub maximum_turn_radius_m: f64,
     pub finish_turn_max_vertical_g: f64,
     pub finish_turn_max_lateral_g: f64,
+    pub minimum_inversion_speed_mps: f64,
+    pub maximum_inversion_speed_mps: f64,
+    pub default_loop_peak_g: f64,
+    pub default_zero_g_roll_peak_g: f64,
+    pub default_raven_turn_peak_g: f64,
 }
 
 impl ShapedProfile {
@@ -997,16 +2138,45 @@ pub fn solve_preview(
     solve_with_preview_limit(intent, context, 1, true, None)
 }
 
+pub fn default_loop_peak_g(model: &CoasterModel) -> f64 {
+    model
+        .shaped_profile
+        .filter(|profile| profile.default_loop_peak_g > 0.0)
+        .map_or(4.0, |profile| profile.default_loop_peak_g)
+}
+
+pub fn default_zero_g_roll_peak_g(model: &CoasterModel) -> f64 {
+    model
+        .shaped_profile
+        .filter(|profile| profile.default_zero_g_roll_peak_g > 0.0)
+        .map_or(3.8, |profile| profile.default_zero_g_roll_peak_g)
+}
+
+pub fn default_raven_turn_peak_g(model: &CoasterModel) -> f64 {
+    model
+        .shaped_profile
+        .filter(|profile| profile.default_raven_turn_peak_g > 0.0)
+        .map_or(4.0, |profile| profile.default_raven_turn_peak_g)
+}
+
 pub fn solve_confirm(
     intent: &ElementIntent,
     context: &mut SolveContext<'_>,
     preview: &SolvedElement,
 ) -> Result<SolvedElement, SolveRefusal> {
     validate_context(context)?;
-    let profile = validate_scope(context)?;
+    let profile = match intent {
+        ElementIntent::Hill { .. } | ElementIntent::Turn { .. } => validate_scope(context)?,
+        ElementIntent::Loop { .. }
+        | ElementIntent::ZeroGRoll { .. }
+        | ElementIntent::RavenTurn { .. } => inversions::validate_inversion_scope(intent, context)?,
+    };
     if !preview_candidate_is_confirmed(intent, context, profile, preview) {
         let maximum_previews = match intent {
-            ElementIntent::Hill { .. } => MAXIMUM_SHAPED_PREVIEWS,
+            ElementIntent::Hill { .. }
+            | ElementIntent::Loop { .. }
+            | ElementIntent::ZeroGRoll { .. }
+            | ElementIntent::RavenTurn { .. } => MAXIMUM_SHAPED_PREVIEWS,
             ElementIntent::Turn { .. } => 3,
         };
         return solve_with_preview_limit(intent, context, maximum_previews, false, Some(preview));
@@ -1024,31 +2194,84 @@ fn solve_with_preview_limit(
     preview_seed: Option<&SolvedElement>,
 ) -> Result<SolvedElement, SolveRefusal> {
     validate_context(context)?;
-    let profile = validate_scope(context)?;
     match intent {
         ElementIntent::Hill {
             feel,
             strength_g,
             size,
-        } => solve_hill(
-            profile,
-            *feel,
-            *strength_g,
-            *size,
-            maximum_previews,
-            provisional,
-            preview_seed,
-            context,
-        ),
-        ElementIntent::Turn { hand, size } => solve_turn(
-            profile,
-            *hand,
-            *size,
-            maximum_previews.min(3),
-            provisional,
-            preview_seed,
-            context,
-        ),
+        } => {
+            let profile = validate_scope(context)?;
+            verify_prefix_entry_speed(context)?;
+            solve_hill(
+                profile,
+                *feel,
+                *strength_g,
+                *size,
+                maximum_previews,
+                provisional,
+                preview_seed,
+                context,
+            )
+        }
+        ElementIntent::Turn { hand, size } => {
+            let profile = validate_scope(context)?;
+            verify_prefix_entry_speed(context)?;
+            solve_turn(
+                profile,
+                *hand,
+                *size,
+                maximum_previews.min(3),
+                provisional,
+                preview_seed,
+                context,
+            )
+        }
+        ElementIntent::Loop {
+            hand,
+            peak_g,
+            top_feel,
+        } => {
+            inversions::validate_inversion_scope(intent, context)?;
+            verify_prefix_entry_speed(context)?;
+            inversions::solve_loop(
+                *hand,
+                *peak_g,
+                *top_feel,
+                maximum_previews,
+                provisional,
+                preview_seed,
+                context,
+            )
+        }
+        ElementIntent::ZeroGRoll { hand, peak_g } => {
+            inversions::validate_inversion_scope(intent, context)?;
+            verify_prefix_entry_speed(context)?;
+            inversions::solve_zero_g_roll(
+                *hand,
+                *peak_g,
+                maximum_previews,
+                provisional,
+                preview_seed,
+                context,
+            )
+        }
+        ElementIntent::RavenTurn {
+            hand,
+            peak_g,
+            top_feel,
+        } => {
+            inversions::validate_inversion_scope(intent, context)?;
+            verify_prefix_entry_speed(context)?;
+            inversions::solve_raven_turn(
+                *hand,
+                *peak_g,
+                *top_feel,
+                maximum_previews,
+                provisional,
+                preview_seed,
+                context,
+            )
+        }
     }
 }
 
@@ -1176,6 +2399,11 @@ fn preview_candidate_is_confirmed(
                 requested_radius,
             )
         }
+        ElementIntent::Loop { peak_g, .. }
+        | ElementIntent::ZeroGRoll { peak_g, .. }
+        | ElementIntent::RavenTurn { peak_g, .. } => {
+            inversions::inversion_within_model_vibe(context.model, *peak_g)
+        }
     };
     let (passes_budget, _) =
         candidate_passes_force_budget(context.model, &seed.preview.cars, within_vibe);
@@ -1199,6 +2427,41 @@ fn preview_candidate_is_confirmed(
                 .map(|car| car.peaks.maximum_lateral_g)
                 .fold(0.0, f64::max)
                 <= MAXIMUM_FULLY_BANKED_LATERAL_G
+        }
+        (ElementSpec::Loop { target_peak_g, .. }, ElementIntent::Loop { .. }) => {
+            let delivered = seed
+                .preview
+                .cars
+                .iter()
+                .map(|car| car.peaks.maximum_vertical_g)
+                .fold(f64::NEG_INFINITY, f64::max);
+            (delivered - target_peak_g).abs() <= inversions::MAXIMUM_INVERSION_PEAK_ERROR_G
+                && candidate.piece.maximum_curvature() <= 1.0 / context.model.minimum_radius_metres
+        }
+        (ElementSpec::ZeroGRoll { target_peak_g, .. }, ElementIntent::ZeroGRoll { .. })
+        | (ElementSpec::RavenTurn { target_peak_g, .. }, ElementIntent::RavenTurn { .. }) => {
+            let raven_top_feel_ok = match &candidate.spec {
+                ElementSpec::RavenTurn { top_feel, .. } => {
+                    inversions::raven_top_feel_reached(&seed.preview.cars, top_feel.target_g())
+                }
+                _ => true,
+            };
+            let delivered = seed
+                .preview
+                .cars
+                .iter()
+                .map(|car| car.peaks.maximum_vertical_g)
+                .fold(f64::NEG_INFINITY, f64::max);
+            let peak_roll_rate = seed
+                .preview
+                .cars
+                .iter()
+                .map(|car| car.peak_roll_rate_deg_s)
+                .fold(0.0_f64, f64::max);
+            (delivered - target_peak_g).abs() <= inversions::MAXIMUM_INVERSION_PEAK_ERROR_G
+                && peak_roll_rate <= inversions::MAXIMUM_SHAPED_ROLL_RATE_DEG_S
+                && raven_top_feel_ok
+                && candidate.piece.maximum_curvature() <= 1.0 / context.model.minimum_radius_metres
         }
         _ => false,
     }
@@ -1377,6 +2640,7 @@ fn solve_hill_analytically(
             profile_grid_half_tiles,
             diagonal,
             geometry_digest: 0,
+            profile_nodes: HillProfileNodes::Consistent,
             profile,
         };
         canonicalize_element_spec(&mut candidate_spec);
@@ -1562,7 +2826,7 @@ fn hill_profile_for_height(
     };
     let mut low_flank_degrees: f64 = 2.0;
     let mut high_flank_degrees: f64 = 75.0;
-    let mut best: Option<(f64, SolvedProfile, f64)> = None;
+    let mut best: Option<(f64, f64)> = None;
     for _ in 0..SHAPED_FLANK_SEARCH_STEPS {
         let flank_degrees = (low_flank_degrees + high_flank_degrees) / 2.0;
         let profile_spec = OfflineHillSpec {
@@ -1572,22 +2836,16 @@ fn hill_profile_for_height(
             flank_angle_radians: flank_degrees.to_radians(),
             taper_angle_radians: Some(SHAPED_HILL_TAPER_ANGLE),
         };
-        let Ok((profile, _, _)) = solve_shaped_hill_offline_profile(profile_spec, train, 256)
-        else {
+        let Ok(height_m) = solve_shaped_hill_apex_height_offline(profile_spec, train, 256) else {
             high_flank_degrees = flank_degrees;
             continue;
         };
-        let height_m = profile
-            .resolved_points()
-            .iter()
-            .map(|point| point[2])
-            .fold(f64::NEG_INFINITY, f64::max);
         let error_m = (height_m - target_height_m).abs();
         if best
             .as_ref()
-            .is_none_or(|(best_error, ..)| error_m < *best_error)
+            .is_none_or(|(best_error, _)| error_m < *best_error)
         {
-            best = Some((error_m, profile.clone(), flank_degrees));
+            best = Some((error_m, flank_degrees));
         }
         if height_m < target_height_m {
             low_flank_degrees = flank_degrees;
@@ -1595,7 +2853,7 @@ fn hill_profile_for_height(
             high_flank_degrees = flank_degrees;
         }
     }
-    let (_, _, flank_degrees) = best.ok_or(SolveRefusal::InvalidGeometry)?;
+    let (_, flank_degrees) = best.ok_or(SolveRefusal::InvalidGeometry)?;
     let profile_spec = OfflineHillSpec {
         entry_speed_mps: design_speed_mps,
         pull_g,
@@ -1603,19 +2861,21 @@ fn hill_profile_for_height(
         flank_angle_radians: flank_degrees.to_radians(),
         taper_angle_radians: Some(SHAPED_HILL_TAPER_ANGLE),
     };
-    let (mut profile, _, _) = solve_shaped_hill_offline_profile(profile_spec, train, PROFILE_STEPS)
-        .map_err(|failure| match failure {
-            crate::track::profile::OfflineSolveError::NonPositiveSpeedSquared { height_metres } => {
-                SolveRefusal::Stall {
+    let (mut profile, _, _) =
+        solve_shaped_hill_offline_profile(profile_spec, train, PROFILE_STEPS, true).map_err(
+            |failure| match failure {
+                crate::track::profile::OfflineSolveError::NonPositiveSpeedSquared {
+                    height_metres,
+                } => SolveRefusal::Stall {
                     entry_speed_mps: design_speed_mps,
                     height_m: height_metres,
+                },
+                crate::track::profile::OfflineSolveError::InvalidCurvature { .. }
+                | crate::track::profile::OfflineSolveError::DidNotConverge => {
+                    SolveRefusal::InvalidGeometry
                 }
-            }
-            crate::track::profile::OfflineSolveError::InvalidCurvature { .. }
-            | crate::track::profile::OfflineSolveError::DidNotConverge => {
-                SolveRefusal::InvalidGeometry
-            }
-        })?;
+            },
+        )?;
     let diagonal_scale = if context.entry.heading.index() % 2 == 0 {
         1.0
     } else {
@@ -1656,21 +2916,21 @@ pub(crate) fn synthesize_hill_profile(
         flank_angle_radians: flank_angle,
         taper_angle_radians: Some(SHAPED_HILL_TAPER_ANGLE),
     };
-    let (mut profile, _, _) = solve_shaped_hill_offline_profile(spec, train, PROFILE_STEPS)
+    let (mut profile, _, _) = solve_shaped_hill_offline_profile(spec, train, PROFILE_STEPS, true)
         .map_err(|failure| match failure {
-            crate::track::profile::OfflineSolveError::NonPositiveSpeedSquared { height_metres } => {
-                SolveRefusal::Stall {
-                    entry_speed_mps: design_speed_mps,
-                    height_m: height_metres,
-                }
+        crate::track::profile::OfflineSolveError::NonPositiveSpeedSquared { height_metres } => {
+            SolveRefusal::Stall {
+                entry_speed_mps: design_speed_mps,
+                height_m: height_metres,
             }
-            crate::track::profile::OfflineSolveError::InvalidCurvature { .. } => {
-                SolveRefusal::InvalidGeometry
-            }
-            crate::track::profile::OfflineSolveError::DidNotConverge => {
-                unreachable!("single profile integration does not iterate")
-            }
-        })?;
+        }
+        crate::track::profile::OfflineSolveError::InvalidCurvature { .. } => {
+            SolveRefusal::InvalidGeometry
+        }
+        crate::track::profile::OfflineSolveError::DidNotConverge => {
+            unreachable!("single profile integration does not iterate")
+        }
+    })?;
     let endpoint_x = profile.endpoint()[0];
     let span_metres = (endpoint_x * connector_grid_scale / connector_grid_span_metres).ceil()
         * connector_grid_span_metres;
@@ -2026,6 +3286,18 @@ pub(super) fn piece_from_spec(
             Hand::Left => PieceId::ShapedTurnLeft,
             Hand::Right => PieceId::ShapedTurnRight,
         },
+        ElementSpec::Loop { hand, .. } => match hand {
+            Hand::Left => PieceId::ShapedLoopLeft,
+            Hand::Right => PieceId::ShapedLoopRight,
+        },
+        ElementSpec::ZeroGRoll { hand, .. } => match hand {
+            Hand::Left => PieceId::ShapedZeroGRollLeft,
+            Hand::Right => PieceId::ShapedZeroGRollRight,
+        },
+        ElementSpec::RavenTurn { hand, .. } => match hand {
+            Hand::Left => PieceId::ShapedRavenTurnLeft,
+            Hand::Right => PieceId::ShapedRavenTurnRight,
+        },
     };
     let template = catalog()
         .iter()
@@ -2035,11 +3307,46 @@ pub(super) fn piece_from_spec(
         .at(entry)
         .ok_or(SolveRefusal::UnsupportedConnector)?;
     piece.id = id;
-    piece.name = match id {
-        PieceId::ShapedHill => SHAPED_HILL_NAME,
-        PieceId::ShapedTurnLeft => SHAPED_LEFT_TURN_NAME,
-        PieceId::ShapedTurnRight => SHAPED_RIGHT_TURN_NAME,
-        _ => unreachable!(),
+    piece.name = match spec {
+        ElementSpec::Hill { .. } => SHAPED_HILL_NAME,
+        ElementSpec::Turn {
+            hand: Hand::Left, ..
+        } => SHAPED_LEFT_TURN_NAME,
+        ElementSpec::Turn {
+            hand: Hand::Right, ..
+        } => SHAPED_RIGHT_TURN_NAME,
+        ElementSpec::Loop {
+            hand: Hand::Left,
+            steel_structure: true,
+            ..
+        } => SHAPED_LEFT_STEEL_LOOP_NAME,
+        ElementSpec::Loop {
+            hand: Hand::Right,
+            steel_structure: true,
+            ..
+        } => SHAPED_RIGHT_STEEL_LOOP_NAME,
+        ElementSpec::Loop {
+            hand: Hand::Left,
+            steel_structure: false,
+            ..
+        } => SHAPED_LEFT_LOOP_NAME,
+        ElementSpec::Loop {
+            hand: Hand::Right,
+            steel_structure: false,
+            ..
+        } => SHAPED_RIGHT_LOOP_NAME,
+        ElementSpec::ZeroGRoll {
+            hand: Hand::Left, ..
+        } => SHAPED_LEFT_ZERO_G_ROLL_NAME,
+        ElementSpec::ZeroGRoll {
+            hand: Hand::Right, ..
+        } => SHAPED_RIGHT_ZERO_G_ROLL_NAME,
+        ElementSpec::RavenTurn {
+            hand: Hand::Left, ..
+        } => SHAPED_LEFT_RAVEN_TURN_NAME,
+        ElementSpec::RavenTurn {
+            hand: Hand::Right, ..
+        } => SHAPED_RIGHT_RAVEN_TURN_NAME,
     };
     let spec = Arc::new(spec.clone());
     match spec.as_ref() {
@@ -2072,6 +3379,66 @@ pub(super) fn piece_from_spec(
                 spec: Arc::clone(&spec),
             };
             piece.exit = turn_exit(entry, *hand, *radius_m)?;
+        }
+        ElementSpec::Loop {
+            hand,
+            span_m,
+            steel_structure,
+            profile,
+            ..
+        } => {
+            if profile.length() <= 0.0 || profile.endpoint()[1].abs() > 0.01 {
+                return Err(SolveRefusal::InvalidContext);
+            }
+            piece.shape = Shape::ShapedProfile {
+                spec: Arc::clone(&spec),
+            };
+            piece.inversion = Some(Inversion::VerticalLoop);
+            piece.heartlining = Some(Heartlining::NotHeartlined);
+            piece.structure_material = steel_structure.then_some(Material::Steel);
+            piece.mirrored = matches!(hand, Hand::Right);
+            piece.exit = inversions::loop_exit(entry, *hand, *span_m)?;
+        }
+        ElementSpec::ZeroGRoll {
+            hand,
+            span_m,
+            profile,
+            ..
+        } => {
+            if profile.length() <= 0.0 || profile.endpoint()[1].abs() > 0.01 {
+                return Err(SolveRefusal::InvalidContext);
+            }
+            piece.shape = Shape::ShapedProfile {
+                spec: Arc::clone(&spec),
+            };
+            piece.inversion = Some(Inversion::HeartlineRoll);
+            piece.heartlining = Some(Heartlining::Heartlined);
+            piece.mirrored = matches!(hand, Hand::Right);
+            piece.exit = inversions::zero_g_roll_exit(entry, *span_m)?;
+        }
+        ElementSpec::RavenTurn {
+            hand,
+            exit_dx_half_tiles,
+            exit_dy_half_tiles,
+            exit_dz_half_tiles,
+            half_loop,
+            ..
+        } => {
+            if half_loop.length() <= 0.0 {
+                return Err(SolveRefusal::InvalidContext);
+            }
+            piece.shape = Shape::ShapedProfile {
+                spec: Arc::clone(&spec),
+            };
+            piece.inversion = Some(Inversion::VerticalLoop);
+            piece.heartlining = Some(Heartlining::NotHeartlined);
+            piece.mirrored = matches!(hand, Hand::Right);
+            piece.exit = inversions::raven_turn_exit(
+                entry,
+                *exit_dx_half_tiles,
+                *exit_dy_half_tiles,
+                *exit_dz_half_tiles,
+            )?;
         }
     }
     piece.kind = PieceKind::Track;
@@ -2162,10 +3529,7 @@ fn grid_heading_delta(heading: Heading, tiles: i32) -> (i32, i32) {
     }
 }
 
-fn calibrate_piece(
-    context: &mut SolveContext<'_>,
-    candidate: &Piece,
-) -> Result<CandidateCalibrationPreview, SolveRefusal> {
+fn verify_prefix_entry_speed(context: &mut SolveContext<'_>) -> Result<(), SolveRefusal> {
     let entry_preview = context
         .preview_cache
         .preview(context.prefix, context.model, context.physics)
@@ -2179,6 +3543,13 @@ fn calibrate_piece(
     if (observed_speed - context.entry_speed_mps).abs() > 0.01 {
         return Err(SolveRefusal::InvalidContext);
     }
+    Ok(())
+}
+
+fn calibrate_piece(
+    context: &mut SolveContext<'_>,
+    candidate: &Piece,
+) -> Result<CandidateCalibrationPreview, SolveRefusal> {
     let straight = catalog()
         .iter()
         .find(|piece| piece.id == PieceId::Straight)
@@ -2207,7 +3578,12 @@ fn calibrate_piece(
         PreviewStatus::ReachedEnd => Ok(preview),
         PreviewStatus::Stalled => {
             let height_m = match candidate.element_spec() {
-                Some(ElementSpec::Hill { height_m, .. }) => *height_m,
+                Some(
+                    ElementSpec::Hill { height_m, .. }
+                    | ElementSpec::Loop { height_m, .. }
+                    | ElementSpec::ZeroGRoll { height_m, .. }
+                    | ElementSpec::RavenTurn { height_m, .. },
+                ) => *height_m,
                 _ => 0.0,
             };
             Err(SolveRefusal::Stall {
@@ -2553,6 +3929,14 @@ fn intent_matches_spec(
                     knot.x.is_finite() && knot.y.is_finite() && knot.heading.is_finite()
                 })
         }
+        (
+            ElementIntent::Loop { .. }
+            | ElementIntent::ZeroGRoll { .. }
+            | ElementIntent::RavenTurn { .. },
+            ElementSpec::Loop { .. }
+            | ElementSpec::ZeroGRoll { .. }
+            | ElementSpec::RavenTurn { .. },
+        ) => inversions::inversion_intent_matches_spec(intent, spec, model, entry),
         _ => false,
     }
 }
@@ -2889,6 +4273,11 @@ mod turn_radius_guard_tests {
             maximum_turn_radius_m: 256.0,
             finish_turn_max_vertical_g: 3.5,
             finish_turn_max_lateral_g: 0.6,
+            minimum_inversion_speed_mps: 22.0,
+            maximum_inversion_speed_mps: 36.0,
+            default_loop_peak_g: 4.0,
+            default_zero_g_roll_peak_g: 3.8,
+            default_raven_turn_peak_g: 4.0,
         }
     }
 
@@ -2911,17 +4300,21 @@ mod turn_radius_guard_tests {
 
     #[test]
     fn solver_source_names_no_coaster_model_key() {
-        let source = include_str!("shaped.rs");
-        let production_source = source
-            .split("\n#[cfg(test)]\n")
-            .next()
-            .expect("shaped.rs has production source before tests");
-        for model in crate::track::coaster_models() {
-            let quoted_key = format!("\"{}\"", model.key);
-            assert!(
-                !production_source.contains(&quoted_key),
-                "shaped.rs production code must read ShapedProfile instead of naming model key {quoted_key}"
-            );
+        for (name, source) in [
+            ("shaped.rs", include_str!("shaped.rs")),
+            ("shaped/inversions.rs", include_str!("shaped/inversions.rs")),
+        ] {
+            let production_source = source
+                .split("\n#[cfg(test)]\n")
+                .next()
+                .expect("solver source has production code before tests");
+            for model in crate::track::coaster_models() {
+                let quoted_key = format!("\"{}\"", model.key);
+                assert!(
+                    !production_source.contains(&quoted_key),
+                    "{name} production code must read ShapedProfile instead of naming model key {quoted_key}"
+                );
+            }
         }
     }
 

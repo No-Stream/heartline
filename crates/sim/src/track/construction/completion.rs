@@ -173,7 +173,12 @@ pub fn shaped_turn_intent(spec: &ElementSpec) -> ElementIntent {
             hand: *hand,
             size: TurnSizeHint::Radius(*radius_m),
         },
-        ElementSpec::Hill { .. } => panic!("the finish search places no shaped hills"),
+        ElementSpec::Hill { .. }
+        | ElementSpec::Loop { .. }
+        | ElementSpec::ZeroGRoll { .. }
+        | ElementSpec::RavenTurn { .. } => {
+            panic!("the finish search places only shaped turns")
+        }
     }
 }
 

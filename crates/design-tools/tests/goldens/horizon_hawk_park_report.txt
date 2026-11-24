@@ -1,13 +1,13 @@
 Park: Horizon Hawk Park (seed 42, 16 guests, 20 minutes)
 Coaster: Horizon Hawk (hyper)
-Scores: excitement 7.58, intensity 6.76, nausea 1.63
+Scores: excitement 7.74, intensity 6.75, nausea 1.65
 Expectations: pass
 Force targets: excitement 6.0-8.0 (pass); pullout 3.3; target 3.0 to 3.5 g for 0.5 s (pass); airtime -0.9; target -1.2 to -0.8 g for 0.3 s (pass); lateral 0.4 g / <= 0.6 g (pass)
 Worst pieces: pullout Begin gentle climb; airtime End gentle climb; lateral Shaped banked turn right; longitudinal Begin wide 60-degree descent
 Native agreement: pass
 Trains: 1; seats per train: 32; completed guest rides: 41; unique riders: 9 (56.2% of guests)
-Riders/hour: 123.0 / 1061.2
-Average guest rating: 39.1/100 enjoyment
+Riders/hour: 123.0 / 1059.7
+Average guest rating: 40.1/100 enjoyment
 Guests with unmet needs: 9 (56.2% of guests)
 Queue lengths at end:
   facility 1: 0

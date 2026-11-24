@@ -477,6 +477,7 @@
 .builder__hill-current {
   min-width: 0;
   margin-left: auto;
+  padding-inline-end: 0.2rem;
   overflow: hidden;
   color: var(--ink-soft);
   font: italic 0.82rem/1.2 var(--body-font);
@@ -486,7 +487,7 @@
 .builder__hill-body { display: grid; gap: 0.45rem; padding-top: 0.55rem; }
 .builder__hill-steppers { display: grid; gap: 0.3rem; }
 .builder__hill .stepper { grid-template-columns: 4.3rem 1.6rem minmax(0, 1fr) 1.6rem; }
-.builder__shape-controls .stepper { grid-template-columns: 4.3rem 1.6rem minmax(0, 1fr) 1.6rem auto; }
+.builder__shape-controls .stepper:has([data-shape-auto]:not([hidden])) { grid-template-columns: 4.3rem 1.6rem minmax(0, 1fr) 1.6rem auto; }
 .builder__hill-suggestion { color: var(--ink-soft); font-size: 0.8rem; font-style: italic; }
 .builder__hill-suggestion:has(span:empty):has(button[hidden]) { display: none; }
 .builder__hill-readout {

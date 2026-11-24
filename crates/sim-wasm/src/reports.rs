@@ -426,6 +426,15 @@ mod wire_tests {
                     "manufacturer": model.manufacturer,
                     "description": model.ui_description,
                     "track_material": track_material(&model),
+                    "allowed_inversions": model
+                        .allowed_inversions
+                        .iter()
+                        .map(|inversion| match inversion {
+                            theme_park_sim::track::Inversion::VerticalLoop => "VerticalLoop",
+                            theme_park_sim::track::Inversion::Corkscrew => "Corkscrew",
+                            theme_park_sim::track::Inversion::HeartlineRoll => "HeartlineRoll",
+                        })
+                        .collect::<Vec<_>>(),
                     "default_colors": {
                         "track": model.default_colors.track.name(),
                         "supports": model.default_colors.supports.name(),

@@ -400,6 +400,12 @@ pub enum PieceId {
     ShapedTurnLeft,
     ShapedTurnRight,
     GigaSixtyDownToLevel,
+    ShapedLoopLeft,
+    ShapedLoopRight,
+    ShapedZeroGRollLeft,
+    ShapedZeroGRollRight,
+    ShapedRavenTurnLeft,
+    ShapedRavenTurnRight,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PieceKind {
@@ -861,6 +867,46 @@ fn track_cos(value: f64) -> f64 {
     crate::math::cos(value)
 }
 
+/// Vertical roll-out of a Raven turn after its curved inverted crest, given the parameter scale of
+/// the roll-out and how far the exit rail sits below the crest rail. The heart runs on the inside
+/// of the crest, so at the join it moves (1 - kH) as fast as the rail with curvature k / (1 - kH);
+/// matching both keeps the rail C2 across the join.
+pub(crate) fn raven_crest_dive(
+    half_loop: &crate::track::profile::SolvedProfile,
+    roll_scale: f64,
+    rail_drop_m: f64,
+) -> Option<super::roll::CrestDive> {
+    super::roll::CrestDive::new(
+        raven_crest_heart_acceleration(half_loop, roll_scale)?,
+        rail_drop_m - 2.0 * HEART_HEIGHT_METRES,
+    )
+}
+
+/// Rail drop from crest to exit that tapers the crest curvature out over `crest_fraction` of the
+/// roll-out.
+pub(crate) fn raven_crest_dive_rail_drop_m(
+    half_loop: &crate::track::profile::SolvedProfile,
+    roll_scale: f64,
+    crest_fraction: f64,
+) -> Option<f64> {
+    let heart_drop_m = super::roll::CrestDive::drop_for(
+        raven_crest_heart_acceleration(half_loop, roll_scale)?,
+        crest_fraction,
+    );
+    Some(heart_drop_m + 2.0 * HEART_HEIGHT_METRES)
+}
+
+fn raven_crest_heart_acceleration(
+    half_loop: &crate::track::profile::SolvedProfile,
+    roll_scale: f64,
+) -> Option<f64> {
+    let (_, _, apex_second) = half_loop.sample(half_loop.length());
+    let apex_rail_curvature = -apex_second[1];
+    let heart_speed_ratio = 1.0 - apex_rail_curvature * HEART_HEIGHT_METRES;
+    (apex_rail_curvature > 0.0 && heart_speed_ratio > 0.0)
+        .then(|| apex_rail_curvature * heart_speed_ratio * crate::math::powi(roll_scale, 2))
+}
+
 #[cfg(test)]
 mod shaped_turn_math_tests {
     use super::{track_cos, track_sin};
@@ -1275,16 +1321,27 @@ impl Piece {
     }
 
     fn rolled_profile_sample(&self, profile: &SolvedProfile, twist: Twist, t: f64) -> RollSample {
-        let length = profile.length();
-        let (position, first, second, third) = profile.sample_with_third(t * length);
-        let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
-        let left = Vec3::new(-forward.y, forward.x, 0.0);
-        let vertical = Vec3::new(0.0, 0.0, 1.0);
         let diagonal = if self.entry.heading.index() % 2 == 0 {
             1.0
         } else {
             std::f64::consts::SQRT_2
         };
+        self.rolled_profile_sample_with_scale(profile, twist, t, diagonal, false)
+    }
+
+    fn rolled_profile_sample_with_scale(
+        &self,
+        profile: &SolvedProfile,
+        twist: Twist,
+        t: f64,
+        diagonal: f64,
+        smooth_omega_derivative: bool,
+    ) -> RollSample {
+        let length = profile.length();
+        let (position, first, second, third) = profile.sample_with_third(t * length);
+        let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
+        let left = Vec3::new(-forward.y, forward.x, 0.0);
+        let vertical = Vec3::new(0.0, 0.0, 1.0);
         let correction =
             self.exit.position().z - self.entry.position().z - profile.endpoint()[1] * diagonal;
         let (smooth, smooth_first, smooth_second) = smooth(t);
@@ -1301,8 +1358,32 @@ impl Piece {
         let base_up = (forward * -tangent.z + vertical * tangent.dot(forward)).unit();
         let speed_squared = velocity.dot(velocity);
         let omega = -velocity.cross(acceleration).dot(left) / speed_squared;
-        let omega_first = -velocity.cross(jerk).dot(left) / speed_squared
-            - 2.0 * omega * velocity.dot(acceleration) / speed_squared;
+        let omega_first = if smooth_omega_derivative {
+            let ds = 0.05_f64.min(length * 0.25);
+            let omega_at = |distance: f64| {
+                let (_, f, s) = profile.sample(distance.clamp(0.0, length));
+                let v = (forward * f[0] + vertical * f[1]) * (length * diagonal);
+                let a =
+                    (forward * s[0] + vertical * s[1]) * (crate::math::powi(length, 2) * diagonal);
+                -v.cross(a).dot(left) / v.dot(v)
+            };
+            let s = t * length;
+            let (s0, s1) = if s < ds {
+                (0.0, (2.0 * ds).min(length))
+            } else if length - s < ds {
+                ((length - 2.0 * ds).max(0.0), length)
+            } else {
+                (s - ds, s + ds)
+            };
+            if s1 > s0 {
+                (omega_at(s1) - omega_at(s0)) / ((s1 - s0) / length)
+            } else {
+                0.0
+            }
+        } else {
+            -velocity.cross(jerk).dot(left) / speed_squared
+                - 2.0 * omega * velocity.dot(acceleration) / speed_squared
+        };
         let base_first = tangent * -omega;
         let base_second = tangent * -omega_first - base_up * crate::math::powi(omega, 2);
         let (angle, angle_first, angle_second) = twist.sample(t * length, self.mirrored);
@@ -1326,6 +1407,121 @@ impl Piece {
             heart,
             up,
             roll: angle,
+        }
+    }
+
+    fn raven_turn_sample(
+        &self,
+        half_loop: &SolvedProfile,
+        roll_dx_m: f64,
+        roll_lateral_m: f64,
+        t: f64,
+    ) -> RollSample {
+        let loop_length = half_loop.length();
+        let roll_scale = crate::math::hypot(roll_dx_m, roll_lateral_m);
+        let total_scale = loop_length + roll_scale;
+        let split = loop_length / total_scale;
+        let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
+        let vertical = Vec3::new(0.0, 0.0, 1.0);
+        if t <= split {
+            let u = (t / split).clamp(0.0, 1.0);
+            let (pos, first, second) = half_loop.sample(u * loop_length);
+            let position = self.entry.position() + forward * pos[0] + vertical * pos[1];
+            let velocity = (forward * first[0] + vertical * first[1]) * total_scale;
+            let acceleration =
+                (forward * second[0] + vertical * second[1]) * crate::math::powi(total_scale, 2);
+            let tangent = velocity.unit();
+            let up = (forward * (-tangent.z) + vertical * tangent.dot(forward)).unit();
+            return RollSample {
+                position,
+                first: velocity,
+                second: acceleration,
+                heart: position + up * HEART_HEIGHT_METRES,
+                up,
+                roll: 0.0,
+            };
+        }
+
+        let u = ((t - split) / (1.0 - split)).clamp(0.0, 1.0);
+        let apex = half_loop.endpoint();
+        let (_, _, apex_second) = half_loop.sample(loop_length);
+        let join_rail = self.entry.position() + forward * apex[0] + vertical * apex[1];
+        let exit_rail = self.exit.position();
+        let start_heart = join_rail - vertical * HEART_HEIGHT_METRES;
+        let end_heart = exit_rail + vertical * HEART_HEIGHT_METRES;
+        let exit_tangent = forward * -1.0;
+        let roll_dir = if self.mirrored { -1.0 } else { 1.0 };
+        let apex_rail_curvature = -apex_second[1];
+        let start_heart_tangent =
+            exit_tangent * (roll_scale * (1.0 - apex_rail_curvature * HEART_HEIGHT_METRES));
+        let dive = raven_crest_dive(half_loop, roll_scale, join_rail.z - exit_rail.z)
+            .expect("validated Raven turn recipes have a reachable crest dive");
+        let level_end_heart = Vec3::new(end_heart.x, end_heart.y, start_heart.z);
+
+        let roll_rail = |param: f64| -> (Vec3, Vec3, Vec3, f64, Vec3) {
+            let (level_heart, level_heart_first, _) = super::roll::spline_kinematics(
+                start_heart,
+                level_end_heart,
+                start_heart_tangent,
+                exit_tangent * roll_scale,
+                param,
+            );
+            let (dive_offset, dive_first, _) = dive.sample(param);
+            let heart = level_heart + vertical * dive_offset;
+            let heart_first = level_heart_first + vertical * dive_first;
+            let heart_tangent = heart_first.unit();
+            let base_up = super::roll::unbanked_up(heart_tangent);
+            let left_exit = base_up.cross(heart_tangent).unit();
+            let phi = std::f64::consts::PI * super::roll::roll_schedule(param, 0.25).0;
+            let (sin_phi, cos_phi) = crate::math::sin_cos(phi);
+            let desired_up = base_up * (-cos_phi) + left_exit * (roll_dir * sin_phi);
+            let position = heart - desired_up * HEART_HEIGHT_METRES;
+            (position, heart, desired_up, roll_dir * phi, heart_first)
+        };
+
+        let (position, heart, desired_up, roll, heart_first) = roll_rail(u);
+        let step = 1.0e-5;
+        let (first_u, second_u) = if u == 0.0 {
+            (
+                exit_tangent * roll_scale,
+                vertical * (-apex_rail_curvature * crate::math::powi(roll_scale, 2)),
+            )
+        } else if u == 1.0 {
+            (heart_first, Vec3::new(0.0, 0.0, 0.0))
+        } else if u < step {
+            let p1 = roll_rail(u + step).0;
+            let p2 = roll_rail(u + 2.0 * step).0;
+            (
+                (position * -3.0 + p1 * 4.0 - p2) / (2.0 * step),
+                (position - p1 * 2.0 + p2) / crate::math::powi(step, 2),
+            )
+        } else if 1.0 - u < step {
+            let p1 = roll_rail(u - step).0;
+            let p2 = roll_rail(u - 2.0 * step).0;
+            (
+                (position * 3.0 - p1 * 4.0 + p2) / (2.0 * step),
+                (position - p1 * 2.0 + p2) / crate::math::powi(step, 2),
+            )
+        } else {
+            let prev = roll_rail(u - step).0;
+            let next = roll_rail(u + step).0;
+            (
+                (next - prev) / (2.0 * step),
+                (prev - position * 2.0 + next) / crate::math::powi(step, 2),
+            )
+        };
+        let inv_span = 1.0 / (1.0 - split);
+        let first = first_u * inv_span;
+        let second = second_u * crate::math::powi(inv_span, 2);
+        let tangent = first.unit();
+        let up = (desired_up - tangent * desired_up.dot(tangent)).unit();
+        RollSample {
+            position,
+            first,
+            second,
+            heart,
+            up,
+            roll,
         }
     }
 
@@ -1422,17 +1618,38 @@ impl Piece {
                 geometry.sample(self.entry, self.exit, self.mirrored, self.tangent_scale, t);
             return (sample.position, sample.first, sample.second);
         }
-        let shaped_profile = match &self.shape {
-            Shape::Profile(profile) => Some(profile.as_ref()),
-            Shape::ShapedProfile { spec } => match spec.as_ref() {
-                crate::track::shaped::ElementSpec::Hill { profile, .. } => Some(profile),
-                crate::track::shaped::ElementSpec::Turn { .. } => {
-                    panic!("resolved profile shape has a turn specification")
+        if let Shape::ShapedProfile { spec } = &self.shape {
+            match spec.as_ref() {
+                crate::track::shaped::ElementSpec::ZeroGRoll {
+                    profile,
+                    twist_ramp,
+                    twist_start_m,
+                    twist_end_m,
+                    ..
+                } => {
+                    let twist = Twist::ZeroGRoll {
+                        ramp: *twist_ramp,
+                        start: *twist_start_m,
+                        end: *twist_end_m,
+                    };
+                    let sample =
+                        self.rolled_profile_sample_with_scale(profile, twist, t, 1.0, true);
+                    return (sample.position, sample.first, sample.second);
                 }
-            },
-            _ => None,
-        };
-        if let Some(profile) = shaped_profile {
+                crate::track::shaped::ElementSpec::RavenTurn {
+                    half_loop,
+                    roll_dx_m,
+                    roll_lateral_m,
+                    ..
+                } => {
+                    let sample = self.raven_turn_sample(half_loop, *roll_dx_m, *roll_lateral_m, t);
+                    return (sample.position, sample.first, sample.second);
+                }
+                _ => {}
+            }
+        }
+        let shaped_profile = self.planar_profile_with_diagonal_flag();
+        if let Some((profile, use_diagonal_scale)) = shaped_profile {
             let ascending = self.exit.z >= self.entry.z;
             let distance = if ascending {
                 t * profile.length()
@@ -1475,10 +1692,10 @@ impl Piece {
             let side_displacement = (self.exit.position() - self.entry.position()).dot(left);
             let (smooth, smooth_first, smooth_second) = smooth(t);
             let scale = profile.length();
-            let diagonal_scale = if self.entry.heading.index() % 2 == 0 {
-                1.0
-            } else {
+            let diagonal_scale = if use_diagonal_scale && self.entry.heading.index() % 2 != 0 {
                 std::f64::consts::SQRT_2
+            } else {
+                1.0
             };
             let vertical_correction = if diagonal_scale == 1.0 {
                 0.0
@@ -1671,7 +1888,149 @@ impl Piece {
         }
     }
     pub(crate) fn tangent_at(&self, distance: f64) -> Vec3 {
-        self.raw(self.parameter_at_distance(distance)).1.unit()
+        let t = self.parameter_at_distance(distance);
+        if let Some((profile, use_diagonal_scale)) = self.planar_profile_with_diagonal_flag() {
+            return self
+                .planar_profile_pos_velocity(profile, t, use_diagonal_scale)
+                .1
+                .unit();
+        }
+        self.raw(t).1.unit()
+    }
+
+    pub(crate) fn sample_for_physics(&self, distance: f64) -> TrackSample {
+        if let Some((profile, use_diagonal_scale)) = self.planar_profile_with_diagonal_flag() {
+            let t = self.parameter_at_distance(distance);
+            let (position, velocity) =
+                self.planar_profile_pos_velocity(profile, t, use_diagonal_scale);
+            let tangent = velocity.unit();
+            let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
+            let base_up =
+                (forward * (-tangent.z) + Vec3::new(0.0, 0.0, 1.0) * tangent.dot(forward)).unit();
+            let angle = self.entry.bank.radians();
+            let up = if angle == 0.0 {
+                base_up
+            } else {
+                let left = base_up.cross(tangent).unit();
+                base_up * crate::math::cos(angle) + left * crate::math::sin(angle)
+            };
+            let roll = angle
+                + if self.entry.bank == Bank::Inverted || self.exit.bank == Bank::Inverted {
+                    std::f64::consts::PI * smooth(t).0
+                } else {
+                    0.0
+                };
+            return TrackSample {
+                position,
+                heart: position + up * HEART_HEIGHT_METRES,
+                tangent,
+                up,
+                curvature: 0.0,
+                roll,
+            };
+        }
+        self.sample(distance)
+    }
+
+    pub(crate) fn heart_at(&self, distance: f64) -> Vec3 {
+        let t = self.parameter_at_distance(distance);
+        if let Some((profile, use_diagonal_scale)) = self.planar_profile_with_diagonal_flag() {
+            let (position, velocity) =
+                self.planar_profile_pos_velocity(profile, t, use_diagonal_scale);
+            let tangent = velocity.unit();
+            let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
+            let base_up =
+                (forward * (-tangent.z) + Vec3::new(0.0, 0.0, 1.0) * tangent.dot(forward)).unit();
+            let angle = self.entry.bank.radians();
+            let up = if angle == 0.0 {
+                base_up
+            } else {
+                let left = base_up.cross(tangent).unit();
+                base_up * crate::math::cos(angle) + left * crate::math::sin(angle)
+            };
+            return position + up * HEART_HEIGHT_METRES;
+        }
+        self.sample(distance).heart
+    }
+
+    fn planar_profile_with_diagonal_flag(&self) -> Option<(&SolvedProfile, bool)> {
+        match &self.shape {
+            Shape::Profile(profile) => Some((profile.as_ref(), true)),
+            Shape::ShapedProfile { spec } => match spec.as_ref() {
+                crate::track::shaped::ElementSpec::Hill { profile, .. } => Some((profile, true)),
+                crate::track::shaped::ElementSpec::Loop { profile, .. } => Some((profile, false)),
+                crate::track::shaped::ElementSpec::Turn { .. }
+                | crate::track::shaped::ElementSpec::ZeroGRoll { .. }
+                | crate::track::shaped::ElementSpec::RavenTurn { .. } => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn planar_profile_pos_velocity(
+        &self,
+        profile: &SolvedProfile,
+        t: f64,
+        use_diagonal_scale: bool,
+    ) -> (Vec3, Vec3) {
+        let ascending = self.exit.z >= self.entry.z;
+        let distance = if ascending {
+            t * profile.length()
+        } else {
+            (1.0 - t) * profile.length()
+        };
+        let (position, first) = profile.sample_pos_tangent(distance);
+        let endpoint = profile.endpoint();
+        let (x, z, dx, dz) = if ascending {
+            (position[0], position[1], first[0], first[1])
+        } else if self.id == PieceId::HalfLoopDown {
+            (
+                position[0] - endpoint[0],
+                position[1] - endpoint[1],
+                -first[0],
+                -first[1],
+            )
+        } else {
+            (
+                endpoint[0] - position[0],
+                position[1] - endpoint[1],
+                first[0],
+                -first[1],
+            )
+        };
+        let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
+        let left = Vec3::new(-forward.y, forward.x, 0.0);
+        let up = Vec3::new(0.0, 0.0, 1.0);
+        let side_displacement = (self.exit.position() - self.entry.position()).dot(left);
+        let scale = profile.length();
+        let diagonal_scale = if use_diagonal_scale && self.entry.heading.index() % 2 != 0 {
+            std::f64::consts::SQRT_2
+        } else {
+            1.0
+        };
+        let vertical_correction = if diagonal_scale == 1.0 {
+            0.0
+        } else {
+            self.exit.position().z
+                - self.entry.position().z
+                - if ascending { endpoint[1] } else { -endpoint[1] } * diagonal_scale
+        };
+        if side_displacement == 0.0 && vertical_correction == 0.0 {
+            return (
+                self.entry.position() + forward * (x * diagonal_scale) + up * (z * diagonal_scale),
+                forward * (dx * scale * diagonal_scale) + up * (dz * scale * diagonal_scale),
+            );
+        }
+        let (smooth, smooth_first, _) = smooth(t);
+        (
+            self.entry.position()
+                + forward * (x * diagonal_scale)
+                + left * (side_displacement * smooth)
+                + up * (z * diagonal_scale + vertical_correction * smooth),
+            forward * (dx * scale * diagonal_scale)
+                + left * (side_displacement * smooth_first)
+                + up * (dz * scale * diagonal_scale + vertical_correction * smooth_first),
+        )
     }
     pub fn sample(&self, distance: f64) -> TrackSample {
         let t = self.parameter_at_distance(distance);
@@ -1716,6 +2075,52 @@ impl Piece {
                     / crate::math::powi(sample.first.length(), 3),
                 roll: sample.roll,
             };
+        }
+        if let Shape::ShapedProfile { spec } = &self.shape {
+            match spec.as_ref() {
+                crate::track::shaped::ElementSpec::ZeroGRoll {
+                    profile,
+                    twist_ramp,
+                    twist_start_m,
+                    twist_end_m,
+                    ..
+                } => {
+                    let twist = Twist::ZeroGRoll {
+                        ramp: *twist_ramp,
+                        start: *twist_start_m,
+                        end: *twist_end_m,
+                    };
+                    let sample =
+                        self.rolled_profile_sample_with_scale(profile, twist, t, 1.0, true);
+                    return TrackSample {
+                        position: sample.position,
+                        heart: sample.heart,
+                        tangent: sample.first.unit(),
+                        up: sample.up,
+                        curvature: sample.first.cross(sample.second).length()
+                            / crate::math::powi(sample.first.length(), 3),
+                        roll: sample.roll,
+                    };
+                }
+                crate::track::shaped::ElementSpec::RavenTurn {
+                    half_loop,
+                    roll_dx_m,
+                    roll_lateral_m,
+                    ..
+                } => {
+                    let sample = self.raven_turn_sample(half_loop, *roll_dx_m, *roll_lateral_m, t);
+                    return TrackSample {
+                        position: sample.position,
+                        heart: sample.heart,
+                        tangent: sample.first.unit(),
+                        up: sample.up,
+                        curvature: sample.first.cross(sample.second).length()
+                            / crate::math::powi(sample.first.length(), 3),
+                        roll: sample.roll,
+                    };
+                }
+                _ => {}
+            }
         }
         if let Shape::Roll(geometry) = &self.shape {
             let sample =

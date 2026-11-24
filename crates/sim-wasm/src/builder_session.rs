@@ -1484,12 +1484,12 @@ mod tests {
             (
                 "Daisy Dash",
                 include_str!("../../../content/rides/daisy-dash.ride.json"),
-                0x2b92b2bf56dbcae9,
+                0x118a1d00ba34163d,
             ),
             (
                 "Horizon Hawk",
                 include_str!("../../../content/rides/horizon-hawk.ride.json"),
-                0x40a6e5bed02c797d,
+                0x54dfa205b1f41441,
             ),
             (
                 "Timber Tumbler",
@@ -1537,12 +1537,12 @@ mod tests {
                 (
                     "Daisy Dash",
                     include_str!("../../../content/rides/daisy-dash.ride.json"),
-                    0x424647458a464a17,
+                    0xd7a457fab133631e,
                 ),
                 (
                     "Horizon Hawk",
                     include_str!("../../../content/rides/horizon-hawk.ride.json"),
-                    0x804778258ec5c6d4,
+                    0xe80660a37f0aa687,
                 ),
                 (
                     "Timber Tumbler",

@@ -11,12 +11,14 @@ use theme_park_sim::track::ride_file::{
 };
 use theme_park_sim::track::saved_shape_check::check_saved_shaped_geometry;
 use theme_park_sim::track::shaped::{
-    ElementIntent, ElementSpec, HillSizeHint, ShapedConstructionError, SolveContext, SolveRefusal,
-    TurnSizeHint, default_hill_strength, solve, solve_confirm, solve_preview,
+    ElementIntent, ElementSpec, HillSizeHint, LoopTopFeel, ShapedConstructionError, SolveContext,
+    SolveRefusal, TurnSizeHint, default_hill_strength, default_loop_peak_g,
+    default_raven_turn_peak_g, default_zero_g_roll_peak_g, solve, solve_confirm, solve_preview,
 };
 use theme_park_sim::track::{
-    Bank, CoasterModel, Hand, HillFeel, HorizontalCurvature, Piece, PieceId, PieceKind, Slope,
-    TrackState, TrainConfiguration, VerticalCurvature, catalog, hyper_model,
+    Bank, CoasterModel, Hand, Heading, Heartlining, HillFeel, HorizontalCurvature, Inversion,
+    Material, Piece, PieceId, PieceKind, Slope, TrackState, TrainConfiguration, VerticalCurvature,
+    catalog, coaster_models, family_coaster_model, hybrid_model, hyper_model, wooden_twister_model,
 };
 use theme_park_sim::world::{Surface, World};
 
@@ -418,6 +420,15 @@ fn shaped_ride_specs_store_compact_recipes_and_reject_a_changed_geometry_digest(
                 geometry_digest, ..
             }
             | ElementSpec::Turn {
+                geometry_digest, ..
+            }
+            | ElementSpec::Loop {
+                geometry_digest, ..
+            }
+            | ElementSpec::ZeroGRoll {
+                geometry_digest, ..
+            }
+            | ElementSpec::RavenTurn {
                 geometry_digest, ..
             } => *geometry_digest = geometry_digest.wrapping_add(1),
         }
@@ -1705,5 +1716,1073 @@ fn shaped_hill_and_turn_solves_are_deterministic_and_save_round_trip() {
             "save round trip changed resolved spec"
         );
         assert_ride_file_shape_round_trip(&base_model, 8, &intent, &first.spec);
+    }
+}
+
+fn lift_prefix_with_heading(model: &CoasterModel, speed_mps: f64, heading: Heading) -> Vec<Piece> {
+    let templates = catalog();
+    let station_template = templates
+        .iter()
+        .find(|piece| piece.id == PieceId::Station)
+        .expect("catalog includes a station");
+    let straight_template = templates
+        .iter()
+        .find(|piece| piece.id == PieceId::Straight)
+        .expect("catalog includes straight track");
+    let origin = TrackState {
+        heading,
+        ..TrackState::origin()
+    };
+    let mut prefix = vec![
+        station_template
+            .at(origin)
+            .expect("station starts at origin"),
+    ];
+    let default_physics = PhysicsConfig::default();
+    let acceleration_distance_m = (theme_park_sim::math::powi(speed_mps, 2)
+        - theme_park_sim::math::powi(default_physics.station_speed, 2))
+    .max(0.0)
+        / (2.0 * default_physics.drive_acceleration);
+    let required_lift_length_m = acceleration_distance_m + model.train.length_metres + 40.0;
+    let straight_count = (required_lift_length_m / straight_template.length()).ceil() as usize;
+
+    for _ in 0..straight_count {
+        let mut lift = straight_template
+            .at(prefix.last().expect("prefix has a station").exit)
+            .expect("straight pieces connect");
+        lift.kind = PieceKind::Lift;
+        prefix.push(lift);
+    }
+    prefix
+}
+
+fn solve_with_heading_prefix(
+    intent: ElementIntent,
+    base_model: &CoasterModel,
+    cars: u8,
+    speed_mps: f64,
+    heading: Heading,
+) -> Result<
+    (
+        CoasterModel,
+        Vec<Piece>,
+        theme_park_sim::track::shaped::SolvedElement,
+    ),
+    SolveRefusal,
+> {
+    let model = model_with_train_length(base_model, cars);
+    let prefix = lift_prefix_with_heading(&model, speed_mps, heading);
+    let physics = PhysicsConfig {
+        lift_speed: speed_mps,
+        ..PhysicsConfig::default()
+    };
+    let (_, mut preview_cache) = entry_preview(&prefix, &model, speed_mps, physics);
+    let entry = prefix.last().expect("prefix has a station").exit;
+    let mut context = SolveContext {
+        entry,
+        entry_speed_mps: speed_mps,
+        model: &model,
+        train: &model.train,
+        prefix: &prefix,
+        preview_cache: &mut preview_cache,
+        physics,
+    };
+    let solved = solve(&intent, &mut context)?;
+    Ok((model, prefix, solved))
+}
+
+fn assert_inversion_envelope(
+    prefix: &[Piece],
+    model: &CoasterModel,
+    piece: &Piece,
+    design_speed_mps: f64,
+    target_peak_g: f64,
+    within_model_vibe: bool,
+    description: &str,
+) {
+    let candidate_index = prefix.len();
+    for speed_offset_mps in [-0.5, 0.0, 0.5] {
+        let entry_speed_mps = design_speed_mps + speed_offset_mps;
+        let preview = simulate_with_preview(prefix, model, piece, entry_speed_mps);
+        let construction_test =
+            simulate_with_construction_test_physics(prefix, model, piece, entry_speed_mps);
+        let design_speed = speed_offset_mps == 0.0;
+        for (physics_name, report) in [
+            ("preview", &preview.report),
+            ("construction-test", &construction_test),
+        ] {
+            if within_model_vibe {
+                assert_force_limits(
+                    report,
+                    candidate_index,
+                    model,
+                    design_speed,
+                    &format!("{description}, {physics_name} at {entry_speed_mps:.1} m/s"),
+                );
+            } else {
+                let peaks: Vec<_> = report
+                    .car_piece_force_peaks()
+                    .into_iter()
+                    .filter(|entry| entry.piece_index == candidate_index)
+                    .collect();
+                assert_eq!(peaks.len(), usize::from(model.train.cars));
+                let astm = theme_park_sim::track::ENVELOPE_DISPLAY_LIMITS;
+                for car in peaks {
+                    assert!(
+                        car.peaks.maximum_vertical_g <= astm.maximum_vertical_g + 0.05,
+                        "{description}, {physics_name} at {entry_speed_mps:.1} m/s: vertical {:.3} g exceeds ASTM",
+                        car.peaks.maximum_vertical_g
+                    );
+                    assert!(
+                        car.peaks.minimum_vertical_g >= astm.minimum_vertical_g - 0.05,
+                        "{description}, {physics_name} at {entry_speed_mps:.1} m/s: min vertical {:.3} g below ASTM",
+                        car.peaks.minimum_vertical_g
+                    );
+                    assert!(
+                        car.peaks.maximum_lateral_g <= astm.maximum_lateral_g + 0.05,
+                        "{description}, {physics_name} at {entry_speed_mps:.1} m/s: lateral {:.3} g exceeds ASTM",
+                        car.peaks.maximum_lateral_g
+                    );
+                }
+            }
+            if design_speed {
+                let worst_peak = report
+                    .car_piece_force_peaks()
+                    .into_iter()
+                    .filter(|entry| entry.piece_index == candidate_index)
+                    .map(|entry| entry.peaks.maximum_vertical_g)
+                    .fold(f64::NEG_INFINITY, f64::max);
+                assert!(
+                    (worst_peak - target_peak_g).abs() <= 0.25,
+                    "{description}, {physics_name}: peak {worst_peak:.3} g differs from target {target_peak_g:.2} g"
+                );
+            }
+        }
+        assert!(
+            preview.report.statistics.inversions >= 1,
+            "{description}: expected at least 1 inversion at {entry_speed_mps:.1} m/s, got {}",
+            preview.report.statistics.inversions
+        );
+    }
+}
+
+/// Each car's felt crest force, read from an independent force preview of the solved piece.
+fn raven_crest_vertical_g_by_car(
+    prefix: &[Piece],
+    model: &CoasterModel,
+    piece: &Piece,
+    entry_speed_mps: f64,
+) -> Vec<f64> {
+    let physics = PhysicsConfig {
+        lift_speed: entry_speed_mps,
+        ..PhysicsConfig::default()
+    };
+    let mut pieces = prefix.to_vec();
+    pieces.push(piece.clone());
+    pieces.extend(runout_from(piece, &model.train));
+    let (_, mut cache) = entry_preview(prefix, model, entry_speed_mps, physics);
+    cache
+        .preview_candidate(&pieces, model, physics, prefix.len())
+        .expect("Raven candidate preview completes")
+        .cars
+        .iter()
+        .map(|car| {
+            car.inverted_crest_vertical_g
+                .expect("every car crosses the Raven crest inverted")
+        })
+        .collect()
+}
+
+fn velocity_viper_model() -> CoasterModel {
+    coaster_models()
+        .into_iter()
+        .find(|model| model.key == "velocity_viper")
+        .expect("velocity_viper model exists")
+}
+
+#[test]
+fn shaped_vertical_loops_meet_peak_force_and_grid_contract_across_inverting_models() {
+    let cases = [
+        (
+            velocity_viper_model(),
+            vec![3, 6],
+            vec![22.0, 26.0, 30.0, 34.0],
+        ),
+        (hybrid_model(), vec![4, 8], vec![22.0, 26.0, 30.0, 34.0]),
+        (
+            wooden_twister_model(),
+            vec![4, 8, 12],
+            vec![26.0, 28.0, 30.0],
+        ),
+    ];
+    for (base_model, car_counts, speeds) in cases {
+        for cars in car_counts {
+            let mut previous_height_m: Option<f64> = None;
+            let default_peak = default_loop_peak_g(&base_model);
+            for speed_mps in &speeds {
+                let intent = ElementIntent::Loop {
+                    hand: Hand::Left,
+                    peak_g: default_peak,
+                    top_feel: LoopTopFeel::Neutral,
+                };
+                let (model, prefix, solved) =
+                    solve_with_prefix(intent, &base_model, cars, *speed_mps).unwrap_or_else(
+                        |refusal| {
+                            panic!(
+                                "{} {cars}-car loop at {speed_mps:.1} m/s refused: {refusal:?}",
+                                base_model.name
+                            )
+                        },
+                    );
+                let ElementSpec::Loop {
+                    target_peak_g,
+                    delivered_peak_g,
+                    height_m,
+                    steel_structure,
+                    ..
+                } = solved.spec
+                else {
+                    panic!("expected Loop spec");
+                };
+                assert!((delivered_peak_g - target_peak_g).abs() <= 0.20);
+                assert_eq!(steel_structure, model.track_material == Material::Wood);
+                assert_eq!(
+                    solved.piece.structure_material,
+                    (model.track_material == Material::Wood).then_some(Material::Steel)
+                );
+                assert_eq!(solved.piece.id, PieceId::ShapedLoopLeft);
+                assert_grid_connector(solved.piece.exit);
+                assert!(model.allows_piece(&solved.piece));
+                assert_model_minimum_radius(&solved.piece, &model, "shaped vertical loop");
+                assert!(!solved.exceeds_model_feel);
+                if let Some(prev) = previous_height_m {
+                    assert!(
+                        height_m >= prev - 0.1,
+                        "{} {cars}-car loop height decreased from {prev:.2} m to {height_m:.2} m at {speed_mps:.1} m/s",
+                        model.name
+                    );
+                }
+                previous_height_m = Some(height_m);
+                assert_inversion_envelope(
+                    &prefix,
+                    &model,
+                    &solved.piece,
+                    *speed_mps,
+                    target_peak_g,
+                    true,
+                    &format!("{} {cars}-car loop at {speed_mps:.1} m/s", model.name),
+                );
+            }
+        }
+    }
+
+    // Exercise peak-g steps, top feels, hands, and diagonal headings on Velocity Viper & Briar Blitz.
+    let viper = velocity_viper_model();
+    for peak_g in [3.5, 3.8, 4.0, 4.2, 4.5] {
+        for top_feel in [
+            LoopTopFeel::Floaty,
+            LoopTopFeel::Neutral,
+            LoopTopFeel::PressedIn,
+        ] {
+            let (model, prefix, solved) = solve_with_prefix(
+                ElementIntent::Loop {
+                    hand: Hand::Right,
+                    peak_g,
+                    top_feel,
+                },
+                &viper,
+                4,
+                30.0,
+            )
+            .unwrap_or_else(|refusal| {
+                panic!("viper loop {peak_g}g {top_feel:?} refused: {refusal:?}")
+            });
+            assert_eq!(solved.piece.id, PieceId::ShapedLoopRight);
+            assert_grid_connector(solved.piece.exit);
+            let within_vibe = peak_g <= model.design_force_targets.maximum_vertical_g - 0.25 + 1e-9;
+            assert_inversion_envelope(
+                &prefix,
+                &model,
+                &solved.piece,
+                30.0,
+                peak_g,
+                within_vibe,
+                &format!("viper loop {peak_g}g {top_feel:?}"),
+            );
+        }
+    }
+
+    // Pushing Briar Blitz past its 4.0 g model target up to 4.5 g succeeds with amber exceeds_model_feel.
+    let briar = wooden_twister_model();
+    let (model, prefix, pushed) = solve_with_prefix(
+        ElementIntent::Loop {
+            hand: Hand::Left,
+            peak_g: 4.2,
+            top_feel: LoopTopFeel::Neutral,
+        },
+        &briar,
+        6,
+        28.0,
+    )
+    .expect("Briar Blitz allows pushing loop peak force into ASTM band");
+    assert!(pushed.exceeds_model_feel);
+    assert_eq!(pushed.piece.structure_material, Some(Material::Steel));
+    assert_inversion_envelope(
+        &prefix,
+        &model,
+        &pushed.piece,
+        28.0,
+        4.2,
+        false,
+        "Briar Blitz pushed 4.2 g steel loop",
+    );
+
+    // Diagonal placement stays on grid and hits peak-force contract.
+    let (diag_model, diag_prefix, diag_solved) = solve_with_heading_prefix(
+        ElementIntent::Loop {
+            hand: Hand::Left,
+            peak_g: 4.0,
+            top_feel: LoopTopFeel::Neutral,
+        },
+        &viper,
+        4,
+        28.0,
+        Heading::NorthEast,
+    )
+    .expect("diagonal loop solves");
+    assert_grid_connector(diag_solved.piece.exit);
+    assert_eq!(diag_solved.piece.exit.heading, Heading::NorthEast);
+    assert_inversion_envelope(
+        &diag_prefix,
+        &diag_model,
+        &diag_solved.piece,
+        28.0,
+        4.0,
+        true,
+        "viper diagonal loop",
+    );
+}
+
+#[test]
+fn shaped_zero_g_rolls_meet_peak_force_crest_and_roll_rate_contract() {
+    for (base_model, car_counts) in [
+        (velocity_viper_model(), vec![3, 6]),
+        (hybrid_model(), vec![4, 8]),
+    ] {
+        let default_peak = default_zero_g_roll_peak_g(&base_model);
+        for cars in car_counts {
+            for speed_mps in [22.0, 26.0, 30.0, 34.0] {
+                for hand in [Hand::Left, Hand::Right] {
+                    let (model, prefix, solved) = solve_with_prefix(
+                        ElementIntent::ZeroGRoll {
+                            hand,
+                            peak_g: default_peak,
+                        },
+                        &base_model,
+                        cars,
+                        speed_mps,
+                    )
+                    .unwrap_or_else(|refusal| {
+                        panic!(
+                            "{} {cars}-car zero-g roll {hand:?} at {speed_mps:.1} m/s refused: {refusal:?}",
+                            base_model.name
+                        )
+                    });
+                    let ElementSpec::ZeroGRoll {
+                        target_peak_g,
+                        delivered_peak_g,
+                        delivered_crest_g,
+                        peak_roll_rate_deg_s,
+                        ..
+                    } = solved.spec
+                    else {
+                        panic!("expected ZeroGRoll spec");
+                    };
+                    assert!((delivered_peak_g - target_peak_g).abs() <= 0.20);
+                    assert!(
+                        delivered_crest_g.abs() <= 0.65,
+                        "crest g {delivered_crest_g:.3} too far from zero-g"
+                    );
+                    assert!(
+                        peak_roll_rate_deg_s <= 200.0,
+                        "roll rate {peak_roll_rate_deg_s:.1} deg/s exceeded 200 deg/s"
+                    );
+                    assert_eq!(solved.piece.heartlining, Some(Heartlining::Heartlined));
+                    assert_grid_connector(solved.piece.exit);
+                    assert!(model.allows_piece(&solved.piece));
+                    assert_model_minimum_radius(&solved.piece, &model, "shaped zero-g roll");
+                    assert_inversion_envelope(
+                        &prefix,
+                        &model,
+                        &solved.piece,
+                        speed_mps,
+                        target_peak_g,
+                        true,
+                        &format!(
+                            "{} {cars}-car zero-g roll {hand:?} at {speed_mps:.1} m/s",
+                            model.name
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    // Diagonal zero-g roll on hybrid.
+    let hybrid = hybrid_model();
+    let (model, prefix, solved) = solve_with_heading_prefix(
+        ElementIntent::ZeroGRoll {
+            hand: Hand::Left,
+            peak_g: 4.0,
+        },
+        &hybrid,
+        4,
+        28.0,
+        Heading::NorthEast,
+    )
+    .expect("diagonal zero-g roll solves");
+    assert_grid_connector(solved.piece.exit);
+    assert_eq!(solved.piece.exit.heading, Heading::NorthEast);
+    assert_inversion_envelope(
+        &prefix,
+        &model,
+        &solved.piece,
+        28.0,
+        4.0,
+        true,
+        "hybrid diagonal zero-g roll",
+    );
+}
+
+#[test]
+fn shaped_zero_g_roll_peak_force_steps_are_calibrated_for_each_supported_model() {
+    let cases = [
+        (velocity_viper_model(), 4, [Hand::Left, Hand::Right]),
+        (hybrid_model(), 4, [Hand::Right, Hand::Left]),
+    ];
+    for (base_model, cars, hands) in cases {
+        for (index, peak_g) in [3.0, 3.5, 3.8, 4.0, 4.2, 4.5].into_iter().enumerate() {
+            let (model, prefix, solved) = solve_with_prefix(
+                ElementIntent::ZeroGRoll {
+                    hand: hands[index % hands.len()],
+                    peak_g,
+                },
+                &base_model,
+                cars,
+                30.0,
+            )
+            .unwrap_or_else(|refusal| {
+                panic!(
+                    "{} {cars}-car zero-g roll at {peak_g:.1} g refused: {refusal:?}",
+                    base_model.name
+                )
+            });
+            let ElementSpec::ZeroGRoll {
+                target_peak_g,
+                delivered_peak_g,
+                delivered_crest_g,
+                peak_roll_rate_deg_s,
+                ..
+            } = solved.spec
+            else {
+                panic!("expected ZeroGRoll spec");
+            };
+            assert!((delivered_peak_g - target_peak_g).abs() <= 0.20);
+            assert!(delivered_crest_g.abs() <= 0.45);
+            assert!(peak_roll_rate_deg_s < 200.0);
+            assert_eq!(solved.piece.inversion, Some(Inversion::HeartlineRoll));
+            assert_eq!(solved.piece.heartlining, Some(Heartlining::Heartlined));
+            let within_model_vibe =
+                peak_g <= model.design_force_targets.maximum_vertical_g - 0.25 + 1e-9;
+            assert_inversion_envelope(
+                &prefix,
+                &model,
+                &solved.piece,
+                30.0,
+                peak_g,
+                within_model_vibe,
+                &format!("{} {cars}-car zero-g roll at {peak_g:.1} g", model.name),
+            );
+        }
+    }
+}
+
+#[test]
+fn shaped_raven_turns_meet_peak_force_reversal_and_roll_rate_contract() {
+    for (base_model, cars, speeds) in [
+        (velocity_viper_model(), 3, vec![22.0, 26.0, 30.0, 34.0]),
+        (velocity_viper_model(), 6, vec![26.0, 30.0, 34.0, 36.0]),
+        (hybrid_model(), 4, vec![22.0, 26.0, 30.0, 34.0]),
+        (hybrid_model(), 8, vec![30.0, 34.0, 36.0]),
+    ] {
+        let default_peak = default_raven_turn_peak_g(&base_model);
+        let mut previous_height_m: Option<f64> = None;
+        // Floaty is the top feel every one of these trains can reach at these speeds; the
+        // top-feel matrix test covers where the other feels are out of reach.
+        for speed_mps in speeds {
+            let (model, prefix, solved) = solve_with_prefix(
+                ElementIntent::RavenTurn {
+                    hand: Hand::Left,
+                    peak_g: default_peak,
+                    top_feel: LoopTopFeel::Floaty,
+                },
+                &base_model,
+                cars,
+                speed_mps,
+            )
+            .unwrap_or_else(|refusal| {
+                panic!(
+                    "{} {cars}-car Raven turn at {speed_mps:.1} m/s refused: {refusal:?}",
+                    base_model.name
+                )
+            });
+            let ElementSpec::RavenTurn {
+                target_peak_g,
+                delivered_peak_g,
+                peak_roll_rate_deg_s,
+                height_m,
+                ..
+            } = solved.spec
+            else {
+                panic!("expected RavenTurn spec");
+            };
+            assert!((delivered_peak_g - target_peak_g).abs() <= 0.20);
+            assert!(
+                peak_roll_rate_deg_s <= 200.0,
+                "Raven turn roll rate {peak_roll_rate_deg_s:.1} deg/s exceeded 200 deg/s"
+            );
+            assert_eq!(solved.piece.exit.heading, Heading::West);
+            assert!(solved.piece.exit.z > solved.piece.entry.z);
+            assert_grid_connector(solved.piece.exit);
+            assert!(model.allows_piece(&solved.piece));
+            assert_model_minimum_radius(&solved.piece, &model, "shaped Raven turn");
+            if let Some(prev) = previous_height_m {
+                assert!(
+                    height_m >= prev - 0.1,
+                    "{} {cars}-car Raven turn height decreased from {prev:.2} m to {height_m:.2} m at {speed_mps:.1} m/s",
+                    model.name
+                );
+            }
+            previous_height_m = Some(height_m);
+            assert_inversion_envelope(
+                &prefix,
+                &model,
+                &solved.piece,
+                speed_mps,
+                target_peak_g,
+                true,
+                &format!("{} {cars}-car Raven turn at {speed_mps:.1} m/s", model.name),
+            );
+        }
+    }
+
+    // A long 8-car Hybrid train at 22 m/s crosses the crest so slowly that pressing it in to a
+    // neutral top pulls the rear cars past the longitudinal limit, so the top feel is out of reach.
+    let hybrid = hybrid_model();
+    let long_train_refusal = solve_with_prefix(
+        ElementIntent::RavenTurn {
+            hand: Hand::Left,
+            peak_g: default_raven_turn_peak_g(&hybrid),
+            top_feel: LoopTopFeel::Neutral,
+        },
+        &hybrid,
+        8,
+        22.0,
+    );
+    assert!(
+        matches!(
+            long_train_refusal,
+            Err(SolveRefusal::TopFeelOutOfReach { .. })
+        ),
+        "expected a top-feel refusal for the 8-car Hybrid Raven turn at 22 m/s, got {long_train_refusal:?}"
+    );
+
+    // Right-hand and diagonal Raven turn.
+    let viper = velocity_viper_model();
+    let (model, prefix, solved) = solve_with_heading_prefix(
+        ElementIntent::RavenTurn {
+            hand: Hand::Right,
+            peak_g: 4.0,
+            top_feel: LoopTopFeel::Floaty,
+        },
+        &viper,
+        4,
+        30.0,
+        Heading::NorthEast,
+    )
+    .expect("diagonal Raven turn solves");
+    assert_eq!(solved.piece.id, PieceId::ShapedRavenTurnRight);
+    assert_eq!(solved.piece.exit.heading, Heading::SouthWest);
+    assert_grid_connector(solved.piece.exit);
+    assert_inversion_envelope(
+        &prefix,
+        &model,
+        &solved.piece,
+        30.0,
+        4.0,
+        true,
+        "viper diagonal Raven turn right floaty",
+    );
+}
+
+#[test]
+fn shaped_raven_turn_peak_force_and_top_feel_steps_are_calibrated() {
+    let model = velocity_viper_model();
+    let mut apex_force_misses = Vec::new();
+    let peak_forces_g = [3.5, 3.8, 4.0, 4.2, 4.5];
+    let top_feels = [
+        LoopTopFeel::Floaty,
+        LoopTopFeel::Neutral,
+        LoopTopFeel::PressedIn,
+    ];
+    for (case_index, (peak_g, top_feel)) in peak_forces_g
+        .into_iter()
+        .flat_map(|peak_g| {
+            top_feels
+                .into_iter()
+                .map(move |top_feel| (peak_g, top_feel))
+        })
+        .enumerate()
+    {
+        let hand = if case_index % 2 == 0 {
+            Hand::Left
+        } else {
+            Hand::Right
+        };
+        let result = solve_with_prefix(
+            ElementIntent::RavenTurn {
+                hand,
+                peak_g,
+                top_feel,
+            },
+            &model,
+            4,
+            30.0,
+        );
+        // A soft 3.5 g pullout makes a tall, slow crest; pressing riders in there needs a crest
+        // tight enough that the 4-car train breaks the model's force headroom, so the top feel
+        // is out of reach.
+        if peak_g == 3.5 && top_feel == LoopTopFeel::PressedIn {
+            assert!(
+                matches!(result, Err(SolveRefusal::TopFeelOutOfReach { .. })),
+                "Viper Raven turn at {peak_g:.1} g PressedIn: {:?}",
+                result.map(|(_, _, solved)| solved.spec)
+            );
+            continue;
+        }
+        let (model, prefix, solved) = result.unwrap_or_else(|refusal| {
+            panic!("Viper Raven turn at {peak_g:.1} g {top_feel:?} refused: {refusal:?}")
+        });
+        let ElementSpec::RavenTurn {
+            target_peak_g,
+            delivered_peak_g,
+            top_feel: delivered_top_feel,
+            peak_roll_rate_deg_s,
+            ..
+        } = solved.spec
+        else {
+            panic!("expected RavenTurn spec");
+        };
+        assert!((delivered_peak_g - target_peak_g).abs() <= 0.20);
+        assert_eq!(delivered_top_feel, top_feel);
+        assert!(peak_roll_rate_deg_s <= 200.0);
+        assert_eq!(
+            solved.piece.id,
+            match hand {
+                Hand::Left => PieceId::ShapedRavenTurnLeft,
+                Hand::Right => PieceId::ShapedRavenTurnRight,
+            }
+        );
+        let within_model_vibe =
+            peak_g <= model.design_force_targets.maximum_vertical_g - 0.25 + 1e-9;
+        assert_inversion_envelope(
+            &prefix,
+            &model,
+            &solved.piece,
+            30.0,
+            peak_g,
+            within_model_vibe,
+            &format!("Viper Raven turn at {peak_g:.1} g {top_feel:?}"),
+        );
+        let crest_vertical_g_by_car =
+            raven_crest_vertical_g_by_car(&prefix, &model, &solved.piece, 30.0);
+        for (car_index, crest_vertical_g) in crest_vertical_g_by_car.into_iter().enumerate() {
+            if (crest_vertical_g - top_feel.target_g()).abs() > 0.35 {
+                apex_force_misses.push(format!(
+                    "{peak_g:.1} g {top_feel:?} car {car_index}: crest {crest_vertical_g:.3} g, target {:.3} g",
+                    top_feel.target_g()
+                ));
+            }
+        }
+    }
+    assert!(
+        apex_force_misses.is_empty(),
+        "Raven apex top-feel calibration missed its 0.35 g tolerance:\n{}",
+        apex_force_misses.join("\n")
+    );
+}
+
+#[test]
+fn shaped_inversion_refusals_and_construction_validation() {
+    let loop_intent = ElementIntent::Loop {
+        hand: Hand::Left,
+        peak_g: 4.0,
+        top_feel: LoopTopFeel::Neutral,
+    };
+    let roll_intent = ElementIntent::ZeroGRoll {
+        hand: Hand::Left,
+        peak_g: 3.5,
+    };
+    let raven_intent = ElementIntent::RavenTurn {
+        hand: Hand::Left,
+        peak_g: 4.0,
+        top_feel: LoopTopFeel::Neutral,
+    };
+
+    // Hyper and family coaster disallow all shaped inversions.
+    for non_inverting in [hyper_model(), family_coaster_model()] {
+        for intent in [&loop_intent, &roll_intent, &raven_intent] {
+            let err = solve_with_prefix(
+                intent.clone(),
+                &non_inverting,
+                non_inverting.train.cars,
+                26.0,
+            )
+            .unwrap_err();
+            assert_eq!(err, SolveRefusal::UnsupportedScope);
+        }
+    }
+
+    // Briar Blitz allows vertical loops but disallows zero-g rolls and Raven turns.
+    let briar = wooden_twister_model();
+    assert_eq!(
+        solve_with_prefix(roll_intent.clone(), &briar, 6, 26.0).unwrap_err(),
+        SolveRefusal::UnsupportedScope
+    );
+    assert_eq!(
+        solve_with_prefix(raven_intent.clone(), &briar, 6, 26.0).unwrap_err(),
+        SolveRefusal::UnsupportedScope
+    );
+
+    // Below minimum inversion speed returns typed BelowMinimumSpeed.
+    let viper = velocity_viper_model();
+    assert!(matches!(
+        solve_with_prefix(loop_intent.clone(), &viper, 4, 18.0).unwrap_err(),
+        SolveRefusal::BelowMinimumSpeed { .. }
+    ));
+
+    // Out-of-range peak force returns typed InfeasibleTarget.
+    assert!(matches!(
+        solve_with_prefix(
+            ElementIntent::Loop {
+                hand: Hand::Left,
+                peak_g: 6.0,
+                top_feel: LoopTopFeel::Neutral,
+            },
+            &viper,
+            4,
+            28.0,
+        )
+        .unwrap_err(),
+        SolveRefusal::InfeasibleTarget { .. }
+    ));
+
+    // Construction::append_resolved validates clearance and supports for a wooden-twister steel loop.
+    let (briar_model, _, briar_loop) = solve_with_prefix(
+        ElementIntent::Loop {
+            hand: Hand::Left,
+            peak_g: default_loop_peak_g(&briar),
+            top_feel: LoopTopFeel::Neutral,
+        },
+        &briar,
+        6,
+        26.0,
+    )
+    .expect("Briar Blitz steel loop solves");
+    let world = World::new(
+        512,
+        512,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
+    let mut construction = Construction::new(
+        TrackState {
+            x: 128,
+            y: 128,
+            z: 2,
+            ..TrackState::origin()
+        },
+        briar_model,
+    );
+    let placed_intent = ElementIntent::Loop {
+        hand: Hand::Left,
+        peak_g: default_loop_peak_g(&briar),
+        top_feel: LoopTopFeel::Neutral,
+    };
+    construction
+        .append_resolved(&placed_intent, &briar_loop.spec, &world, &[])
+        .expect("Briar Blitz steel loop passes construction clearance and supports");
+}
+
+#[test]
+fn shaped_inversions_are_deterministic_and_save_round_trip() {
+    let viper = velocity_viper_model();
+    for intent in [
+        ElementIntent::Loop {
+            hand: Hand::Left,
+            peak_g: 4.0,
+            top_feel: LoopTopFeel::Neutral,
+        },
+        ElementIntent::ZeroGRoll {
+            hand: Hand::Right,
+            peak_g: 3.5,
+        },
+        ElementIntent::RavenTurn {
+            hand: Hand::Left,
+            peak_g: 4.0,
+            top_feel: LoopTopFeel::Floaty,
+        },
+    ] {
+        let first = solve_with_prefix(intent.clone(), &viper, 4, 28.0)
+            .expect("first inversion solve succeeds")
+            .2;
+        let second = solve_with_prefix(intent.clone(), &viper, 4, 28.0)
+            .expect("second inversion solve succeeds")
+            .2;
+        let first_piece_bytes = postcard::to_allocvec(&first.piece).expect("piece serializes");
+        let second_piece_bytes = postcard::to_allocvec(&second.piece).expect("piece serializes");
+        assert_eq!(first_piece_bytes, second_piece_bytes);
+        let restored_piece: Piece =
+            postcard::from_bytes(&first_piece_bytes).expect("piece deserializes");
+        assert_eq!(
+            postcard::to_allocvec(&restored_piece).expect("restored piece serializes"),
+            first_piece_bytes
+        );
+        let first_spec_bytes = postcard::to_allocvec(&first.spec).expect("spec serializes");
+        let restored_spec: ElementSpec =
+            postcard::from_bytes(&first_spec_bytes).expect("spec deserializes");
+        assert_eq!(
+            postcard::to_allocvec(&restored_spec).expect("restored spec serializes"),
+            first_spec_bytes
+        );
+        assert_ride_file_shape_round_trip(&viper, 4, &intent, &first.spec);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum RavenTopFeelOutcome {
+    Reached,
+    /// The train's average crest force cannot get within 0.35 g of the target without the crest
+    /// breaking a force limit. On slow or long trains a tight crest pulls the rear cars past the
+    /// longitudinal limit.
+    TopFeelOutOfReach,
+    /// The pullout's peak breaks the force budget, which no top feel can change.
+    PeakOutOfReach,
+    /// The crest is too tight or too low for the model's minimum radius or exit height.
+    Geometry,
+}
+
+/// The top feel is a target for the train as a whole: the average crest force over the cars must
+/// be within 0.35 g of it. Single cars spread around that average, bounded only by the force limits.
+#[test]
+fn shaped_raven_turn_top_feels_reach_the_train_average_or_refuse_with_a_reason() {
+    use RavenTopFeelOutcome::{Geometry, PeakOutOfReach, TopFeelOutOfReach};
+    let expected_refusals: &[(&str, u8, f64, LoopTopFeel)] = &[
+        ("velocity_viper", 3, 22.0, LoopTopFeel::Neutral),
+        ("velocity_viper", 3, 22.0, LoopTopFeel::PressedIn),
+        ("velocity_viper", 3, 26.0, LoopTopFeel::PressedIn),
+        ("velocity_viper", 6, 22.0, LoopTopFeel::Neutral),
+        ("velocity_viper", 6, 22.0, LoopTopFeel::PressedIn),
+        ("velocity_viper", 6, 26.0, LoopTopFeel::PressedIn),
+        ("hybrid", 4, 22.0, LoopTopFeel::PressedIn),
+        ("hybrid", 4, 26.0, LoopTopFeel::PressedIn),
+        ("hybrid", 8, 22.0, LoopTopFeel::Neutral),
+        ("hybrid", 8, 22.0, LoopTopFeel::PressedIn),
+        ("hybrid", 8, 26.0, LoopTopFeel::PressedIn),
+        ("hybrid", 8, 30.0, LoopTopFeel::PressedIn),
+    ];
+    let mut mismatches = Vec::new();
+    for (base_model, cars) in [
+        (velocity_viper_model(), 3),
+        (velocity_viper_model(), 6),
+        (hybrid_model(), 4),
+        (hybrid_model(), 8),
+    ] {
+        let peak_g = default_raven_turn_peak_g(&base_model);
+        for speed_mps in [22.0, 26.0, 30.0, 34.0, 36.0] {
+            for top_feel in [
+                LoopTopFeel::Floaty,
+                LoopTopFeel::Neutral,
+                LoopTopFeel::PressedIn,
+            ] {
+                let expected =
+                    if expected_refusals.contains(&(base_model.key, cars, speed_mps, top_feel)) {
+                        TopFeelOutOfReach
+                    } else {
+                        RavenTopFeelOutcome::Reached
+                    };
+                for hand in [Hand::Left, Hand::Right] {
+                    let label = format!(
+                        "{} {cars}-car {speed_mps:.0} m/s {top_feel:?} {hand:?}",
+                        base_model.key
+                    );
+                    let outcome = match solve_with_prefix(
+                        ElementIntent::RavenTurn {
+                            hand,
+                            peak_g,
+                            top_feel,
+                        },
+                        &base_model,
+                        cars,
+                        speed_mps,
+                    ) {
+                        Ok((model, prefix, solved)) => {
+                            let ElementSpec::RavenTurn {
+                                delivered_peak_g,
+                                delivered_top_g,
+                                peak_roll_rate_deg_s,
+                                exit_dz_half_tiles,
+                                ..
+                            } = solved.spec
+                            else {
+                                panic!("{label}: expected a RavenTurn spec");
+                            };
+                            let crest_g = raven_crest_vertical_g_by_car(
+                                &prefix,
+                                &model,
+                                &solved.piece,
+                                speed_mps,
+                            );
+                            let average_crest_g =
+                                crest_g.iter().sum::<f64>() / crest_g.len() as f64;
+                            let lowest_crest_g =
+                                crest_g.iter().copied().fold(f64::INFINITY, f64::min);
+                            let highest_crest_g =
+                                crest_g.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                            eprintln!(
+                                "Raven top feel {label}: target {:.2} g, train average {average_crest_g:.2} g (solver {delivered_top_g:.2} g), cars {lowest_crest_g:.2} to {highest_crest_g:.2} g",
+                                top_feel.target_g(),
+                            );
+                            assert!(
+                                (average_crest_g - top_feel.target_g()).abs() <= 0.35,
+                                "{label}: train average crest {average_crest_g:.3} g"
+                            );
+                            assert!(
+                                (delivered_top_g - average_crest_g).abs() <= 0.1,
+                                "{label}: solver average {delivered_top_g:.3} g, ride average {average_crest_g:.3} g"
+                            );
+                            assert!((delivered_peak_g - peak_g).abs() <= 0.20, "{label}");
+                            assert!(peak_roll_rate_deg_s <= 200.0, "{label}");
+                            assert!(exit_dz_half_tiles >= 3, "{label}");
+                            assert_inversion_envelope(
+                                &prefix,
+                                &model,
+                                &solved.piece,
+                                speed_mps,
+                                peak_g,
+                                true,
+                                &label,
+                            );
+                            RavenTopFeelOutcome::Reached
+                        }
+                        Err(SolveRefusal::TopFeelOutOfReach {
+                            target_top_g,
+                            average_top_g,
+                            lowest_car_top_g,
+                            highest_car_top_g,
+                        }) => {
+                            eprintln!(
+                                "Raven top feel {label}: refused, train average {average_top_g:.2} g, cars {lowest_car_top_g:.2} to {highest_car_top_g:.2} g"
+                            );
+                            assert_eq!(target_top_g, top_feel.target_g(), "{label}");
+                            assert!(
+                                lowest_car_top_g <= average_top_g
+                                    && average_top_g <= highest_car_top_g,
+                                "{label}: average outside the car spread"
+                            );
+                            TopFeelOutOfReach
+                        }
+                        Err(SolveRefusal::InfeasibleTarget { .. }) => PeakOutOfReach,
+                        Err(SolveRefusal::InvalidGeometry) => Geometry,
+                        Err(refusal) => panic!("{label}: unexpected refusal {refusal:?}"),
+                    };
+                    if outcome != expected {
+                        mismatches.push(format!("{label}: {outcome:?}, expected {expected:?}"));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "Raven top-feel outcomes changed:\n{}",
+        mismatches.join("\n")
+    );
+}
+
+/// Largest change in heart-line tangential acceleration, in g at the frictionless speed for the
+/// given entry speed, between rail samples 0.01 m apart, using the same 0.02 m central differences
+/// the rider-force model uses.
+fn largest_heart_tangential_jump_g(piece: &Piece, entry_speed_mps: f64) -> (f64, f64) {
+    let difference_step_m = 0.02;
+    let sample_step_m = 0.01;
+    let entry_height_m = piece.sample(0.0).heart.z;
+    let tangential_g = |distance: f64| {
+        let previous = piece.sample(distance - difference_step_m).heart;
+        let current = piece.sample(distance);
+        let next = piece.sample(distance + difference_step_m).heart;
+        let heart_second = (previous - current.heart * 2.0 + next)
+            * (1.0 / (difference_step_m * difference_step_m));
+        let speed_squared =
+            entry_speed_mps * entry_speed_mps - 2.0 * 9.81 * (current.heart.z - entry_height_m);
+        heart_second.dot(current.tangent) * speed_squared.max(0.0) / 9.81
+    };
+    let sample_count = ((piece.length() - 4.0 * difference_step_m) / sample_step_m) as usize;
+    let readings: Vec<f64> = (0..sample_count)
+        .map(|index| tangential_g(2.0 * difference_step_m + index as f64 * sample_step_m))
+        .collect();
+    let (worst_index, worst_jump) = readings
+        .windows(2)
+        .map(|pair| (pair[1] - pair[0]).abs())
+        .enumerate()
+        .fold((0, 0.0_f64), |best, (index, jump)| {
+            if jump > best.1 { (index, jump) } else { best }
+        });
+    (
+        worst_jump,
+        2.0 * difference_step_m + worst_index as f64 * sample_step_m,
+    )
+}
+
+/// Before the shared profile nodes were made consistent, neighbouring samples on these pieces
+/// differed by up to 4.7 g. What remains is a sawtooth of about 0.15 g where the 512-step schedule
+/// discretises a fast curvature rise just after a taper starts, which the 5 Hz force filter removes.
+#[test]
+fn loop_and_raven_heart_lines_have_no_sample_to_sample_force_noise() {
+    let viper = velocity_viper_model();
+    let loop_intent = ElementIntent::Loop {
+        hand: Hand::Left,
+        peak_g: default_loop_peak_g(&viper),
+        top_feel: LoopTopFeel::Neutral,
+    };
+    let raven_intent = ElementIntent::RavenTurn {
+        hand: Hand::Left,
+        peak_g: default_raven_turn_peak_g(&viper),
+        top_feel: LoopTopFeel::Floaty,
+    };
+    for (description, intent, speed_mps) in [
+        ("loop", loop_intent.clone(), 30.0),
+        ("slow loop", loop_intent, 22.0),
+        ("Raven turn", raven_intent, 30.0),
+    ] {
+        let (_, _, solved) = solve_with_prefix(intent, &viper, 3, speed_mps)
+            .unwrap_or_else(|refusal| panic!("{description} refused: {refusal:?}"));
+        let (worst_jump_g, at_m) = largest_heart_tangential_jump_g(&solved.piece, speed_mps);
+        assert!(
+            worst_jump_g <= 0.25,
+            "{description} heart-line tangential force jumps {worst_jump_g:.2} g between samples 0.01 m apart at {at_m:.2} m"
+        );
     }
 }

@@ -17,6 +17,7 @@ mod save_v6;
 mod save_v7;
 #[path = "save_v8.rs"]
 mod save_v8;
+mod save_v9;
 pub use save::SaveLoadError;
 #[cfg(test)]
 mod save_tests;

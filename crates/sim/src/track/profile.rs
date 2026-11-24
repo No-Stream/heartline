@@ -1,4 +1,5 @@
 use std::f64::consts::PI;
+use std::sync::{Arc, OnceLock};
 
 use crate::state_hash::StateHasher;
 use crate::track::curves::{HEART_HEIGHT_METRES, RatedSpeeds};
@@ -68,25 +69,19 @@ pub struct OfflineSolvedHill {
 #[derive(Clone, Copy, Debug)]
 enum Schedule {
     Constant(f64),
-    #[cfg(test)]
-    Loop {
-        bottom: f64,
-        top: f64,
-        hold: f64,
-    },
+    Loop { bottom: f64, top: f64, hold: f64 },
 }
 
 impl Schedule {
-    fn force(self, _angle: f64) -> f64 {
+    fn force(self, angle: f64) -> f64 {
         match self {
             Self::Constant(force) => force,
-            #[cfg(test)]
             Self::Loop { bottom, top, hold } => {
-                if _angle <= hold {
+                if angle <= hold {
                     bottom
                 } else {
                     top + (bottom - top)
-                        * (1.0 + crate::math::cos(PI * (_angle - hold) / (PI - hold)))
+                        * (1.0 + crate::math::cos(PI * (angle - hold) / (PI - hold)))
                         / 2.0
                 }
             }
@@ -112,7 +107,15 @@ pub(crate) struct ProfileSpec {
     mirror_apex: bool,
     start_angle: f64,
     taper_angle: Option<f64>,
+    /// The last arc keeps its scheduled curvature to its end, for a crest that continues into the
+    /// next part of the piece instead of a straight join.
+    curved_end: bool,
     heart_speed_correction: bool,
+    /// Integrates step lengths exactly through the taper, keeps nodes at least a centimetre apart
+    /// and rebuilds node curvatures and positions so the interpolating segments agree with them.
+    /// Without it the rider-force model reads several g of heart-line noise; the frozen catalog
+    /// tables were generated without it.
+    consistent_nodes: bool,
     #[cfg(test)]
     name: &'static str,
 }
@@ -134,7 +137,10 @@ impl ProfileSpec {
             mirror_apex: false,
             start_angle: 0.0,
             taper_angle: None,
+            curved_end: false,
             heart_speed_correction: false,
+            consistent_nodes: false,
+            #[cfg(test)]
             name: "half loop",
         }
     }
@@ -150,7 +156,9 @@ impl ProfileSpec {
             mirror_apex: false,
             start_angle,
             taper_angle: None,
+            curved_end: false,
             heart_speed_correction: false,
+            consistent_nodes: false,
             name: "pull profile",
         }
     }
@@ -173,7 +181,9 @@ impl ProfileSpec {
             mirror_apex: false,
             start_angle,
             taper_angle: None,
+            curved_end: false,
             heart_speed_correction: false,
+            consistent_nodes: false,
             name: "crest profile",
         }
     }
@@ -181,6 +191,7 @@ impl ProfileSpec {
     pub(crate) fn full_loop(maximum_entry: f64, bottom: f64, top: f64) -> Self {
         Self {
             mirror_apex: true,
+            #[cfg(test)]
             name: "full loop",
             ..Self::half_loop(maximum_entry, bottom, top)
         }
@@ -209,7 +220,9 @@ impl ProfileSpec {
             mirror_apex: true,
             start_angle: 0.0,
             taper_angle: None,
+            curved_end: false,
             heart_speed_correction: false,
+            consistent_nodes: false,
             #[cfg(test)]
             name: "airtime hill",
         }
@@ -230,7 +243,9 @@ impl ProfileSpec {
             mirror_apex: false,
             start_angle: 0.0,
             taper_angle: None,
+            curved_end: false,
             heart_speed_correction: false,
+            consistent_nodes: false,
             name: "test arc",
         }
     }
@@ -257,14 +272,143 @@ struct Point {
     curvature: f64,
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug)]
+struct ProfileSegment {
+    d0: f64,
+    length: f64,
+    length_sq: f64,
+    p: [f64; 2],
+    m: [f64; 2],
+    n0: [f64; 2],
+    half_n0: [f64; 2],
+    c: [f64; 2],
+    b: [f64; 2],
+    a: [f64; 2],
+}
+
+#[derive(Clone, Debug)]
+struct ProfileSegmentCache {
+    distances: Vec<f64>,
+    segments: Vec<ProfileSegment>,
+}
+
+impl ProfileSegmentCache {
+    fn new(points: &[Point]) -> Self {
+        let len = points.len();
+        let mut distances = Vec::with_capacity(len);
+        let mut trig = Vec::with_capacity(len);
+        for point in points {
+            distances.push(point.distance);
+            trig.push(crate::math::sin_cos(point.angle));
+        }
+        let mut segments = Vec::with_capacity(len.saturating_sub(1));
+        for index in 1..len {
+            let start = points[index - 1];
+            let end = points[index];
+            let d0 = start.distance;
+            let length = end.distance - d0;
+            let length_sq = crate::math::powi(length, 2);
+            let (sin0, cos0) = trig[index - 1];
+            let (sin1, cos1) = trig[index];
+            let mut p = [0.0; 2];
+            let mut m = [0.0; 2];
+            let mut n0_arr = [0.0; 2];
+            let mut half_n0 = [0.0; 2];
+            let mut c = [0.0; 2];
+            let mut b = [0.0; 2];
+            let mut a = [0.0; 2];
+            for axis in 0..2 {
+                let (p0, p1, v0, v1, k0, k1) = if axis == 0 {
+                    (
+                        start.x,
+                        end.x,
+                        cos0,
+                        cos1,
+                        -sin0 * start.curvature,
+                        -sin1 * end.curvature,
+                    )
+                } else {
+                    (
+                        start.z,
+                        end.z,
+                        sin0,
+                        sin1,
+                        cos0 * start.curvature,
+                        cos1 * end.curvature,
+                    )
+                };
+                let delta = p1 - p0;
+                let m0 = length * v0;
+                let m1 = length * v1;
+                let n0 = length_sq * k0;
+                let n1 = length_sq * k1;
+                p[axis] = p0;
+                m[axis] = m0;
+                n0_arr[axis] = n0;
+                half_n0[axis] = n0 / 2.0;
+                a[axis] = 6.0 * delta - 3.0 * (m0 + m1) - (n0 - n1) / 2.0;
+                b[axis] = -15.0 * delta + 8.0 * m0 + 7.0 * m1 + 1.5 * n0 - n1;
+                c[axis] = 10.0 * delta - 6.0 * m0 - 4.0 * m1 - 1.5 * n0 + n1 / 2.0;
+            }
+            segments.push(ProfileSegment {
+                d0,
+                length,
+                length_sq,
+                p,
+                m,
+                n0: n0_arr,
+                half_n0,
+                c,
+                b,
+                a,
+            });
+        }
+        Self {
+            distances,
+            segments,
+        }
+    }
+
+    #[inline]
+    fn segment_and_u(&self, distance: f64) -> (&ProfileSegment, f64) {
+        let index = self
+            .distances
+            .partition_point(|point_distance| *point_distance < distance)
+            .clamp(1, self.distances.len() - 1);
+        let seg = &self.segments[index - 1];
+        (seg, (distance - seg.d0) / seg.length)
+    }
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SolvedProfile {
     points: Vec<Point>,
     cached_minimum_entry: Option<f64>,
     cached_minimum_radius: Option<f64>,
+    #[serde(skip, default)]
+    segment_cache: Arc<OnceLock<ProfileSegmentCache>>,
+}
+
+impl PartialEq for SolvedProfile {
+    fn eq(&self, other: &Self) -> bool {
+        self.points == other.points
+            && self.cached_minimum_entry == other.cached_minimum_entry
+            && self.cached_minimum_radius == other.cached_minimum_radius
+    }
 }
 
 impl SolvedProfile {
+    fn segment_cache(&self) -> &ProfileSegmentCache {
+        self.segment_cache
+            .get_or_init(|| ProfileSegmentCache::new(&self.points))
+    }
+
+    fn invalidate_caches(&mut self) {
+        self.cached_minimum_entry = None;
+        self.cached_minimum_radius = None;
+        self.segment_cache = Arc::new(OnceLock::new());
+    }
+
     pub(crate) fn round_to_nine_decimal_places(&mut self) {
         let round = |value: f64| (value * 1_000_000_000.0).round() / 1_000_000_000.0;
         for point in &mut self.points {
@@ -275,8 +419,7 @@ impl SolvedProfile {
             point.heart_curvature = round(point.heart_curvature);
             point.curvature = round(point.curvature);
         }
-        self.cached_minimum_entry = None;
-        self.cached_minimum_radius = None;
+        self.invalidate_caches();
     }
 
     pub(crate) fn resolved_points(&self) -> Vec<[f64; 6]> {
@@ -310,8 +453,7 @@ impl SolvedProfile {
             heart_curvature: 0.0,
             curvature: 0.0,
         });
-        self.cached_minimum_entry = None;
-        self.cached_minimum_radius = None;
+        self.invalidate_caches();
     }
 }
 
@@ -406,6 +548,7 @@ where
         points,
         cached_minimum_entry: Some(minimum_entry),
         cached_minimum_radius: Some(minimum_radius),
+        segment_cache: Arc::new(OnceLock::new()),
     }
 }
 
@@ -439,6 +582,7 @@ where
         points,
         cached_minimum_entry: Some(minimum_entry),
         cached_minimum_radius: Some(minimum_radius),
+        segment_cache: Arc::new(OnceLock::new()),
     }
 }
 
@@ -549,59 +693,64 @@ impl SolvedProfile {
             .fold(f64::INFINITY, f64::min)
     }
     pub(crate) fn sample(&self, distance: f64) -> ([f64; 2], [f64; 2], [f64; 2]) {
-        let (position, first, second, _) = self.sample_with_third(distance);
+        let (seg, u) = self.segment_cache().segment_and_u(distance);
+        let mut position = [0.0; 2];
+        let mut first = [0.0; 2];
+        let mut second = [0.0; 2];
+        for axis in 0..2 {
+            let a = seg.a[axis];
+            let b = seg.b[axis];
+            let c = seg.c[axis];
+            let n0 = seg.n0[axis];
+            let m0 = seg.m[axis];
+            position[axis] =
+                ((((a * u + b) * u + c) * u + seg.half_n0[axis]) * u + m0) * u + seg.p[axis];
+            first[axis] =
+                ((((5.0 * a * u + 4.0 * b) * u + 3.0 * c) * u + n0) * u + m0) / seg.length;
+            second[axis] = (((20.0 * a * u + 12.0 * b) * u + 6.0 * c) * u + n0) / seg.length_sq;
+        }
         (position, first, second)
+    }
+
+    pub(crate) fn sample_pos_tangent(&self, distance: f64) -> ([f64; 2], [f64; 2]) {
+        let (seg, u) = self.segment_cache().segment_and_u(distance);
+        let mut position = [0.0; 2];
+        let mut first = [0.0; 2];
+        for axis in 0..2 {
+            let a = seg.a[axis];
+            let b = seg.b[axis];
+            let c = seg.c[axis];
+            let m0 = seg.m[axis];
+            position[axis] =
+                ((((a * u + b) * u + c) * u + seg.half_n0[axis]) * u + m0) * u + seg.p[axis];
+            first[axis] = ((((5.0 * a * u + 4.0 * b) * u + 3.0 * c) * u + seg.n0[axis]) * u + m0)
+                / seg.length;
+        }
+        (position, first)
     }
 
     pub(crate) fn sample_with_third(
         &self,
         distance: f64,
     ) -> ([f64; 2], [f64; 2], [f64; 2], [f64; 2]) {
-        let index = self
-            .points
-            .partition_point(|point| point.distance < distance)
-            .clamp(1, self.points.len() - 1);
-        let start = self.points[index - 1];
-        let end = self.points[index];
-        let length = end.distance - start.distance;
-        let u = (distance - start.distance) / length;
+        let (seg, u) = self.segment_cache().segment_and_u(distance);
+        let length_cu = crate::math::powi(seg.length, 3);
         let mut position = [0.0; 2];
         let mut first = [0.0; 2];
         let mut second = [0.0; 2];
         let mut third = [0.0; 2];
         for axis in 0..2 {
-            let (p0, p1, v0, v1, k0, k1) = if axis == 0 {
-                (
-                    start.x,
-                    end.x,
-                    crate::math::cos(start.angle),
-                    crate::math::cos(end.angle),
-                    -crate::math::sin(start.angle) * start.curvature,
-                    -crate::math::sin(end.angle) * end.curvature,
-                )
-            } else {
-                (
-                    start.z,
-                    end.z,
-                    crate::math::sin(start.angle),
-                    crate::math::sin(end.angle),
-                    crate::math::cos(start.angle) * start.curvature,
-                    crate::math::cos(end.angle) * end.curvature,
-                )
-            };
-            let delta = p1 - p0;
-            let m0 = length * v0;
-            let m1 = length * v1;
-            let n0 = crate::math::powi(length, 2) * k0;
-            let n1 = crate::math::powi(length, 2) * k1;
-            let a = 6.0 * delta - 3.0 * (m0 + m1) - (n0 - n1) / 2.0;
-            let b = -15.0 * delta + 8.0 * m0 + 7.0 * m1 + 1.5 * n0 - n1;
-            let c = 10.0 * delta - 6.0 * m0 - 4.0 * m1 - 1.5 * n0 + n1 / 2.0;
-            position[axis] = ((((a * u + b) * u + c) * u + n0 / 2.0) * u + m0) * u + p0;
-            first[axis] = ((((5.0 * a * u + 4.0 * b) * u + 3.0 * c) * u + n0) * u + m0) / length;
-            second[axis] =
-                (((20.0 * a * u + 12.0 * b) * u + 6.0 * c) * u + n0) / crate::math::powi(length, 2);
-            third[axis] = ((60.0 * a * u + 24.0 * b) * u + 6.0 * c) / crate::math::powi(length, 3);
+            let a = seg.a[axis];
+            let b = seg.b[axis];
+            let c = seg.c[axis];
+            let n0 = seg.n0[axis];
+            let m0 = seg.m[axis];
+            position[axis] =
+                ((((a * u + b) * u + c) * u + seg.half_n0[axis]) * u + m0) * u + seg.p[axis];
+            first[axis] =
+                ((((5.0 * a * u + 4.0 * b) * u + 3.0 * c) * u + n0) * u + m0) / seg.length;
+            second[axis] = (((20.0 * a * u + 12.0 * b) * u + 6.0 * c) * u + n0) / seg.length_sq;
+            third[axis] = ((60.0 * a * u + 24.0 * b) * u + 6.0 * c) / length_cu;
         }
         (position, first, second, third)
     }
@@ -629,99 +778,263 @@ pub(crate) fn integrate_checked(
         })
 }
 
+struct PrecomputedArcStep {
+    midpoint_angle: f64,
+    angle_step: f64,
+    mid_sin: f64,
+    mid_cos: f64,
+    mid_force_term: f64,
+    end_angle: f64,
+    end_sin: f64,
+    end_cos: f64,
+    end_force_term: f64,
+}
+
+enum PrecomputedSegment {
+    Arc(Vec<PrecomputedArcStep>),
+    #[cfg(test)]
+    Insert(f64),
+}
+
+struct PrecomputedProfileSchedule {
+    start_angle: f64,
+    start_sin: f64,
+    start_cos: f64,
+    maximum_entry: f64,
+    maximum_entry_sq: f64,
+    fixed_speed: bool,
+    mirror_apex: bool,
+    heart_speed_correction: bool,
+    consistent_nodes: bool,
+    segments: Vec<PrecomputedSegment>,
+}
+
+impl PrecomputedProfileSchedule {
+    fn new(spec: &ProfileSpec, steps: usize) -> Self {
+        let (start_sin, start_cos) = crate::math::sin_cos(spec.start_angle);
+        let mut angle = spec.start_angle;
+        let mut segments = Vec::with_capacity(spec.segments.len());
+        let smooth = |t: f64| crate::math::powi(t, 3) * (10.0 + t * (-15.0 + 6.0 * t));
+        for (segment_index, segment) in spec.segments.iter().enumerate() {
+            match *segment {
+                #[cfg(test)]
+                Segment::Insert(length) => {
+                    segments.push(PrecomputedSegment::Insert(length));
+                }
+                Segment::Arc {
+                    angle: delta,
+                    schedule,
+                } => {
+                    let start_angle = angle;
+                    let taper_angle = spec.taper_angle.unwrap_or_else(|| {
+                        0.3_f64
+                            .min(delta.abs() / 4.0 * if delta.abs() < PI / 3.0 { 1.0 } else { 4.0 })
+                    });
+                    let untapered_end = (spec.mirror_apex || spec.curved_end)
+                        && segment_index + 1 == spec.segments.len();
+                    let mut arc_steps = Vec::with_capacity(steps);
+                    for index in 0..steps {
+                        let midpoint_parameter = (index as f64 + 0.5) / steps as f64;
+                        let midpoint_angle = start_angle + delta * smooth(midpoint_parameter);
+                        let step_start_angle = angle;
+                        let taper_at = |target_angle: f64| -> f64 {
+                            let start_ratio = (target_angle - start_angle).abs() / taper_angle;
+                            let start_taper = if start_ratio >= 1.0 {
+                                1.0
+                            } else {
+                                crate::math::powf(start_ratio, 2.0 / 3.0)
+                            };
+                            if untapered_end {
+                                start_taper
+                            } else {
+                                let end_ratio =
+                                    (start_angle + delta - target_angle).abs() / taper_angle;
+                                let end_taper = if end_ratio >= 1.0 {
+                                    1.0
+                                } else {
+                                    crate::math::powf(end_ratio, 2.0 / 3.0)
+                                };
+                                start_taper.min(end_taper)
+                            }
+                        };
+                        let turn_over_taper = |target_angle: f64| -> f64 {
+                            let arc_turn = delta.abs();
+                            let taper_switch = if untapered_end {
+                                arc_turn
+                            } else {
+                                arc_turn / 2.0
+                            };
+                            let one_sided = |turn: f64| {
+                                if turn <= taper_angle {
+                                    3.0 * crate::math::powf(taper_angle, 2.0 / 3.0)
+                                        * crate::math::powf(turn, 1.0 / 3.0)
+                                } else {
+                                    2.0 * taper_angle + turn
+                                }
+                            };
+                            let turn = (target_angle - start_angle).abs().min(arc_turn);
+                            if turn <= taper_switch {
+                                one_sided(turn)
+                            } else {
+                                one_sided(taper_switch) + one_sided(arc_turn - taper_switch)
+                                    - one_sided(arc_turn - turn)
+                            }
+                        };
+                        let taper = taper_at(midpoint_angle);
+                        let (mid_sin, mid_cos) = crate::math::sin_cos(midpoint_angle);
+                        let mid_force_term =
+                            GRAVITY * (schedule.force(midpoint_angle) - mid_cos) * taper;
+                        angle = start_angle + delta * smooth((index + 1) as f64 / steps as f64);
+                        // The heart distance of a step is the integral of dangle / curvature. The
+                        // curvature is a smooth schedule times the taper, so integrating 1 / taper
+                        // exactly keeps both a curved end, where the turn rate falls to zero, and a
+                        // tapered end, where the curvature does, from bending the step lengths.
+                        let angle_step = if spec.consistent_nodes {
+                            (turn_over_taper(angle) - turn_over_taper(step_start_angle))
+                                * delta.signum()
+                                * taper
+                        } else {
+                            delta
+                                * 30.0
+                                * crate::math::powi(midpoint_parameter, 2)
+                                * crate::math::powi(1.0 - midpoint_parameter, 2)
+                                / steps as f64
+                        };
+                        let end_taper = taper_at(angle);
+                        let (end_sin, end_cos) = crate::math::sin_cos(angle);
+                        let end_force_term =
+                            GRAVITY * (schedule.force(angle) - end_cos) * end_taper;
+                        arc_steps.push(PrecomputedArcStep {
+                            midpoint_angle,
+                            angle_step,
+                            mid_sin,
+                            mid_cos,
+                            mid_force_term,
+                            end_angle: angle,
+                            end_sin,
+                            end_cos,
+                            end_force_term,
+                        });
+                    }
+                    segments.push(PrecomputedSegment::Arc(arc_steps));
+                }
+            }
+        }
+        Self {
+            start_angle: spec.start_angle,
+            start_sin,
+            start_cos,
+            maximum_entry: spec.maximum_entry,
+            maximum_entry_sq: crate::math::powi(spec.maximum_entry, 2),
+            fixed_speed: spec.fixed_speed,
+            mirror_apex: spec.mirror_apex,
+            heart_speed_correction: spec.heart_speed_correction,
+            consistent_nodes: spec.consistent_nodes,
+            segments,
+        }
+    }
+}
+
 fn integrate_checked_with_train(
     spec: &ProfileSpec,
     previous: Option<&SolvedProfile>,
     steps: usize,
     train: ProfileTrain,
 ) -> Result<SolvedProfile, OfflineSolveError> {
-    let mut points = vec![Point {
+    let schedule = PrecomputedProfileSchedule::new(spec, steps);
+    integrate_precomputed_with_train(&schedule, previous, train)
+}
+
+fn integrate_precomputed_with_train(
+    schedule: &PrecomputedProfileSchedule,
+    previous: Option<&SolvedProfile>,
+    train: ProfileTrain,
+) -> Result<SolvedProfile, OfflineSolveError> {
+    let previous_heights = previous.map(RailHeightTable::new);
+    let total_steps: usize = schedule
+        .segments
+        .iter()
+        .map(|segment| match segment {
+            PrecomputedSegment::Arc(arc_steps) => arc_steps.len(),
+            #[cfg(test)]
+            PrecomputedSegment::Insert(_) => 1,
+        })
+        .sum();
+    let mut points = Vec::with_capacity(total_steps + 1);
+    points.push(Point {
         distance: 0.0,
         x: 0.0,
         z: 0.0,
-        angle: spec.start_angle,
+        angle: schedule.start_angle,
         heart_curvature: 0.0,
         curvature: 0.0,
-    }];
-    let mut heart_x = -HEART_HEIGHT * crate::math::sin(spec.start_angle);
-    let mut heart_z = HEART_HEIGHT * crate::math::cos(spec.start_angle);
-    let mut angle: f64 = spec.start_angle;
+    });
+    let mut heart_x = -HEART_HEIGHT * schedule.start_sin;
+    let mut heart_z = HEART_HEIGHT * schedule.start_cos;
+    let mut cos_angle: f64 = schedule.start_cos;
     let mut distance = 0.0;
-    for (segment_index, segment) in spec.segments.iter().enumerate() {
-        match *segment {
+    let mut height_hint = 0_usize;
+    let mut cached_table_speed_squared = previous_heights.as_ref().map(|table| {
+        worst_speed_squared_for_train_table(
+            table,
+            0.0,
+            schedule.maximum_entry,
+            schedule.mirror_apex,
+            train,
+            &mut height_hint,
+        )
+    });
+    for segment in &schedule.segments {
+        match segment {
             #[cfg(test)]
-            Segment::Insert(length) if length > 0.0 => {
+            PrecomputedSegment::Insert(length) if *length > 0.0 => {
                 assert_eq!(points.last().unwrap().curvature, 0.0);
-                heart_x += length * crate::math::cos(angle);
-                heart_z += length * crate::math::sin(angle);
-                distance += length;
+                let angle = points.last().unwrap().angle;
+                let sin_angle = crate::math::sin(angle);
+                heart_x += *length * cos_angle;
+                heart_z += *length * sin_angle;
+                distance += *length;
+                cached_table_speed_squared = previous_heights.as_ref().map(|table| {
+                    worst_speed_squared_for_train_table(
+                        table,
+                        distance,
+                        schedule.maximum_entry,
+                        schedule.mirror_apex,
+                        train,
+                        &mut height_hint,
+                    )
+                });
                 points.push(Point {
                     distance,
-                    x: heart_x + HEART_HEIGHT * crate::math::sin(angle),
-                    z: heart_z - HEART_HEIGHT * crate::math::cos(angle),
+                    x: heart_x + HEART_HEIGHT * sin_angle,
+                    z: heart_z - HEART_HEIGHT * cos_angle,
                     angle,
                     heart_curvature: 0.0,
                     curvature: 0.0,
                 });
             }
             #[cfg(test)]
-            Segment::Insert(_) => {}
-            Segment::Arc {
-                angle: delta,
-                schedule,
-            } => {
-                let start_angle = angle;
-                let taper_angle = spec.taper_angle.unwrap_or_else(|| {
-                    0.3_f64.min(delta.abs() / 4.0 * if delta.abs() < PI / 3.0 { 1.0 } else { 4.0 })
-                });
-                for index in 0..steps {
-                    let midpoint_parameter = (index as f64 + 0.5) / steps as f64;
-                    let smooth = |t: f64| crate::math::powi(t, 3) * (10.0 + t * (-15.0 + 6.0 * t));
-                    let midpoint_angle = start_angle + delta * smooth(midpoint_parameter);
-                    let angle_step = delta
-                        * 30.0
-                        * crate::math::powi(midpoint_parameter, 2)
-                        * crate::math::powi(1.0 - midpoint_parameter, 2)
-                        / steps as f64;
-                    let taper = crate::math::powf(
-                        (midpoint_angle - start_angle).abs() / taper_angle,
-                        2.0 / 3.0,
-                    )
-                    .min(
-                        if spec.mirror_apex && segment_index + 1 == spec.segments.len() {
-                            1.0
-                        } else {
-                            crate::math::powf(
-                                (start_angle + delta - midpoint_angle).abs() / taper_angle,
-                                2.0 / 3.0,
-                            )
-                        },
-                    )
-                    .min(1.0);
-                    let point_speed_squared = crate::math::powi(spec.maximum_entry, 2)
-                        - if spec.fixed_speed {
+            PrecomputedSegment::Insert(_) => {}
+            PrecomputedSegment::Arc(arc_steps) => {
+                let last_index = arc_steps.len().saturating_sub(1);
+                for (index, step) in arc_steps.iter().enumerate() {
+                    let point_speed_squared = schedule.maximum_entry_sq
+                        - if schedule.fixed_speed {
                             0.0
                         } else {
-                            2.0 * GRAVITY * (heart_z - HEART_HEIGHT * crate::math::cos(angle))
+                            2.0 * GRAVITY * (heart_z - HEART_HEIGHT * cos_angle)
                         };
-                    let speed_squared = previous.map_or(point_speed_squared, |profile| {
-                        worst_speed_squared_for_train(
-                            profile,
-                            distance,
-                            spec.maximum_entry,
-                            spec.mirror_apex,
-                            train,
-                        )
-                    });
+                    let speed_squared = cached_table_speed_squared.unwrap_or(point_speed_squared);
                     if !speed_squared.is_finite() || speed_squared <= 0.0 {
-                        let height_m = previous.map_or(
-                            heart_z - HEART_HEIGHT * crate::math::cos(midpoint_angle),
-                            |profile| {
-                                minimum_mean_height_for_train(
-                                    profile,
+                        let height_m = previous_heights.as_ref().map_or(
+                            heart_z - HEART_HEIGHT * step.mid_cos,
+                            |table| {
+                                minimum_mean_height_for_train_table(
+                                    table,
                                     distance,
-                                    spec.mirror_apex,
+                                    schedule.mirror_apex,
                                     train,
+                                    &mut height_hint,
                                 )
                             },
                         );
@@ -729,68 +1042,58 @@ fn integrate_checked_with_train(
                             height_metres: height_m,
                         });
                     }
-                    let scheduled_curvature = GRAVITY
-                        * (schedule.force(midpoint_angle) - crate::math::cos(midpoint_angle))
-                        * taper
-                        / speed_squared;
-                    let curvature = if spec.heart_speed_correction {
+                    let scheduled_curvature = step.mid_force_term / speed_squared;
+                    let curvature = if schedule.heart_speed_correction {
                         heart_speed_corrected_curvature(scheduled_curvature)
                     } else {
                         scheduled_curvature
                     };
-                    let heart_distance = angle_step / curvature;
+                    let heart_distance = step.angle_step / curvature;
                     if !curvature.is_finite()
                         || !heart_distance.is_finite()
                         || heart_distance <= 0.0
                     {
                         return Err(OfflineSolveError::InvalidCurvature {
-                            angle_radians: midpoint_angle,
+                            angle_radians: step.midpoint_angle,
                             curvature_per_metre: curvature,
-                            height_metres: heart_z
-                                - HEART_HEIGHT * crate::math::cos(midpoint_angle),
+                            height_metres: heart_z - HEART_HEIGHT * step.mid_cos,
                         });
                     }
-                    heart_x += heart_distance * crate::math::cos(midpoint_angle);
-                    heart_z += heart_distance * crate::math::sin(midpoint_angle);
+                    heart_x += heart_distance * step.mid_cos;
+                    heart_z += heart_distance * step.mid_sin;
                     distance += heart_distance * (1.0 + HEART_HEIGHT * curvature);
-                    angle = start_angle + delta * smooth((index + 1) as f64 / steps as f64);
-                    let end_taper =
-                        crate::math::powf((angle - start_angle).abs() / taper_angle, 2.0 / 3.0)
-                            .min(
-                                if spec.mirror_apex && segment_index + 1 == spec.segments.len() {
-                                    1.0
-                                } else {
-                                    crate::math::powf(
-                                        (start_angle + delta - angle).abs() / taper_angle,
-                                        2.0 / 3.0,
-                                    )
-                                },
-                            )
-                            .min(1.0);
-                    let end_point_speed_squared = crate::math::powi(spec.maximum_entry, 2)
-                        - if spec.fixed_speed {
+                    cos_angle = step.end_cos;
+                    let end_point_speed_squared = schedule.maximum_entry_sq
+                        - if schedule.fixed_speed {
                             0.0
                         } else {
-                            2.0 * GRAVITY * (heart_z - HEART_HEIGHT * crate::math::cos(angle))
+                            2.0 * GRAVITY * (heart_z - HEART_HEIGHT * cos_angle)
                         };
-                    let end_speed_squared = previous.map_or(end_point_speed_squared, |profile| {
-                        worst_speed_squared_for_train(
-                            profile,
-                            distance,
-                            spec.maximum_entry,
-                            spec.mirror_apex,
-                            train,
-                        )
-                    });
-                    if !end_speed_squared.is_finite() || end_speed_squared <= 0.0 {
-                        let height_m = previous.map_or(
-                            heart_z - HEART_HEIGHT * crate::math::cos(angle),
-                            |profile| {
-                                minimum_mean_height_for_train(
-                                    profile,
+                    let end_speed_squared =
+                        previous_heights
+                            .as_ref()
+                            .map_or(end_point_speed_squared, |table| {
+                                let speed_sq = worst_speed_squared_for_train_table(
+                                    table,
                                     distance,
-                                    spec.mirror_apex,
+                                    schedule.maximum_entry,
+                                    schedule.mirror_apex,
                                     train,
+                                    &mut height_hint,
+                                );
+                                cached_table_speed_squared = Some(speed_sq);
+                                speed_sq
+                            });
+                    if !end_speed_squared.is_finite() || end_speed_squared <= 0.0 {
+                        let height_m = previous_heights.as_ref().map_or(
+                            heart_z - HEART_HEIGHT * cos_angle,
+                            |table| {
+                                minimum_mean_height_for_train_table(
+                                    table,
+                                    distance,
+                                    schedule.mirror_apex,
+                                    train,
+                                    &mut height_hint,
                                 )
                             },
                         );
@@ -798,25 +1101,28 @@ fn integrate_checked_with_train(
                             height_metres: height_m,
                         });
                     }
-                    let scheduled_heart_curvature =
-                        GRAVITY * (schedule.force(angle) - crate::math::cos(angle)) * end_taper
-                            / end_speed_squared;
-                    let heart_curvature = if spec.heart_speed_correction {
+                    let scheduled_heart_curvature = step.end_force_term / end_speed_squared;
+                    let heart_curvature = if schedule.heart_speed_correction {
                         heart_speed_corrected_curvature(scheduled_heart_curvature)
                     } else {
                         scheduled_heart_curvature
                     };
                     let point = Point {
                         distance,
-                        x: heart_x + HEART_HEIGHT * crate::math::sin(angle),
-                        z: heart_z - HEART_HEIGHT * crate::math::cos(angle),
-                        angle,
+                        x: heart_x + HEART_HEIGHT * step.end_sin,
+                        z: heart_z - HEART_HEIGHT * cos_angle,
+                        angle: step.end_angle,
                         heart_curvature,
                         curvature: heart_curvature / (1.0 + HEART_HEIGHT * heart_curvature),
                     };
-                    const MINIMUM_POINT_SPACING: f64 = 0.001_000_001;
-                    if distance - points.last().unwrap().distance < MINIMUM_POINT_SPACING {
-                        if index + 1 == steps {
+                    // Shorter segments let the nine-decimal rounding of saved profiles tilt the heart line.
+                    let minimum_point_spacing = if schedule.consistent_nodes {
+                        0.01
+                    } else {
+                        0.001_000_001
+                    };
+                    if distance - points.last().unwrap().distance < minimum_point_spacing {
+                        if index == last_index {
                             assert!(
                                 points.len() > 1,
                                 "arc is shorter than minimum point spacing"
@@ -831,11 +1137,89 @@ fn integrate_checked_with_train(
             }
         }
     }
+    if schedule.consistent_nodes {
+        make_profile_points_consistent(&mut points, schedule.mirror_apex);
+    }
     Ok(SolvedProfile {
         points,
         cached_minimum_entry: None,
         cached_minimum_radius: None,
+        segment_cache: Arc::new(OnceLock::new()),
     })
+}
+
+/// Rebuilds node curvatures and positions from the node angles and distances so every segment's
+/// quintic interpolates consistent data. Integration steps leave first-order mismatches between a
+/// segment's turn, its end curvatures and its chord; on short segments the quintic turns those into
+/// large curvature-rate wiggles, which the rider-force model reads as heart-line tangential force.
+fn make_profile_points_consistent(points: &mut [Point], mirror_apex: bool) {
+    if points.len() < 3 {
+        return;
+    }
+    let segment_lengths: Vec<f64> = points
+        .windows(2)
+        .map(|pair| pair[1].distance - pair[0].distance)
+        .collect();
+    let segment_curvatures: Vec<f64> = points
+        .windows(2)
+        .zip(&segment_lengths)
+        .map(|(pair, length)| (pair[1].angle - pair[0].angle) / length)
+        .collect();
+    let last = points.len() - 1;
+    // Zero scheduled curvature marks a taper end or a straight, which must stay straight to join
+    // its neighbour; every other node takes the curvature its two segments imply.
+    for index in 1..last {
+        if points[index].curvature == 0.0 {
+            continue;
+        }
+        let (previous_length, next_length) = (segment_lengths[index - 1], segment_lengths[index]);
+        points[index].curvature = (segment_curvatures[index - 1] * next_length
+            + segment_curvatures[index] * previous_length)
+            / (previous_length + next_length);
+    }
+    if points[0].curvature != 0.0 {
+        points[0].curvature = segment_curvatures[0]
+            - (segment_curvatures[1] - segment_curvatures[0]) * segment_lengths[0]
+                / (segment_lengths[0] + segment_lengths[1]);
+    }
+    if mirror_apex {
+        // The reflected half continues with the same segment curvature, so the apex sits between equal ones.
+        points[last].curvature = segment_curvatures[last - 1];
+    } else if points[last].curvature != 0.0 {
+        points[last].curvature = segment_curvatures[last - 1]
+            + (segment_curvatures[last - 1] - segment_curvatures[last - 2])
+                * segment_lengths[last - 1]
+                / (segment_lengths[last - 1] + segment_lengths[last - 2]);
+    }
+    const GAUSS_NODES: [(f64, f64); 3] = [
+        (0.112_701_665_379_258_31, 0.277_777_777_777_777_8),
+        (0.5, 0.444_444_444_444_444_4),
+        (0.887_298_334_620_741_7, 0.277_777_777_777_777_8),
+    ];
+    for index in 0..last {
+        let (start, end) = (points[index], points[index + 1]);
+        let length = segment_lengths[index];
+        let turn = end.angle - start.angle;
+        let start_slope = start.curvature * length;
+        let end_slope = end.curvature * length;
+        let (mut dx, mut dz) = (0.0, 0.0);
+        for (u, weight) in GAUSS_NODES {
+            let u2 = u * u;
+            let u3 = u2 * u;
+            let angle = start.angle
+                + turn * (3.0 * u2 - 2.0 * u3)
+                + start_slope * (u3 - 2.0 * u2 + u)
+                + end_slope * (u3 - u2);
+            let (sin, cos) = crate::math::sin_cos(angle);
+            dx += weight * cos;
+            dz += weight * sin;
+        }
+        points[index + 1].x = start.x + length * dx;
+        points[index + 1].z = start.z + length * dz;
+    }
+    for point in points.iter_mut() {
+        point.heart_curvature = point.curvature / (1.0 - HEART_HEIGHT * point.curvature);
+    }
 }
 
 fn heart_speed_corrected_curvature(scheduled_curvature: f64) -> f64 {
@@ -863,43 +1247,226 @@ fn train_mean_height(profile: &SolvedProfile, front_distance: f64, cars: usize) 
         / cars as f64
 }
 
+struct RailHeightSegment {
+    d0: f64,
+    length: f64,
+    p0: f64,
+    m0: f64,
+    half_n0: f64,
+    c: f64,
+    b: f64,
+    a: f64,
+}
+
+struct RailHeightTable {
+    distances: Vec<f64>,
+    segments: Vec<RailHeightSegment>,
+    first_z: f64,
+    first_sin: f64,
+    last_distance: f64,
+    last_z: f64,
+    last_sin: f64,
+}
+
+impl RailHeightTable {
+    fn new(profile: &SolvedProfile) -> Self {
+        let len = profile.points.len();
+        let mut distances = Vec::with_capacity(len);
+        let mut sin_angles = Vec::with_capacity(len);
+        let mut accel_z = Vec::with_capacity(len);
+        for point in &profile.points {
+            let (sin_angle, cos_angle) = crate::math::sin_cos(point.angle);
+            distances.push(point.distance);
+            sin_angles.push(sin_angle);
+            accel_z.push(cos_angle * point.curvature);
+        }
+        let mut segments = Vec::with_capacity(len.saturating_sub(1));
+        for index in 1..len {
+            let d0 = distances[index - 1];
+            let length = distances[index] - d0;
+            let p0 = profile.points[index - 1].z;
+            let p1 = profile.points[index].z;
+            let m0 = length * sin_angles[index - 1];
+            let m1 = length * sin_angles[index];
+            let length_sq = crate::math::powi(length, 2);
+            let n0 = length_sq * accel_z[index - 1];
+            let n1 = length_sq * accel_z[index];
+            let delta = p1 - p0;
+            let a = 6.0 * delta - 3.0 * (m0 + m1) - (n0 - n1) / 2.0;
+            let b = -15.0 * delta + 8.0 * m0 + 7.0 * m1 + 1.5 * n0 - n1;
+            let c = 10.0 * delta - 6.0 * m0 - 4.0 * m1 - 1.5 * n0 + n1 / 2.0;
+            segments.push(RailHeightSegment {
+                d0,
+                length,
+                p0,
+                m0,
+                half_n0: n0 / 2.0,
+                c,
+                b,
+                a,
+            });
+        }
+        let first = profile.points.first().expect("profile has start point");
+        let last = profile.points.last().expect("profile has end point");
+        Self {
+            distances,
+            segments,
+            first_z: first.z,
+            first_sin: sin_angles[0],
+            last_distance: last.distance,
+            last_z: last.z,
+            last_sin: sin_angles[len - 1],
+        }
+    }
+
+    #[inline]
+    fn sample_z_with_hint(&self, distance: f64, hint: &mut usize) -> f64 {
+        let len = self.distances.len();
+        let index = if *hint == 0 {
+            self.distances
+                .partition_point(|point_distance| *point_distance < distance)
+                .clamp(1, len - 1)
+        } else {
+            let mut index = (*hint).clamp(1, len - 1);
+            if self.distances[index - 1] >= distance {
+                while index > 1 && self.distances[index - 1] >= distance {
+                    index -= 1;
+                }
+            } else {
+                while index < len - 1 && self.distances[index] < distance {
+                    index += 1;
+                }
+            }
+            index
+        };
+        *hint = index;
+        let segment = &self.segments[index - 1];
+        let u = (distance - segment.d0) / segment.length;
+        ((((segment.a * u + segment.b) * u + segment.c) * u + segment.half_n0) * u + segment.m0) * u
+            + segment.p0
+    }
+
+    #[inline]
+    fn rail_height_with_hint(&self, distance: f64, mirror: bool, hint: &mut usize) -> f64 {
+        if distance < 0.0 {
+            self.first_z + distance * self.first_sin
+        } else if distance > self.last_distance {
+            if mirror {
+                let mirrored_distance = 2.0 * self.last_distance - distance;
+                if mirrored_distance < 0.0 {
+                    self.first_z + mirrored_distance * self.first_sin
+                } else {
+                    let mut mirror_hint = *hint;
+                    self.sample_z_with_hint(mirrored_distance, &mut mirror_hint)
+                }
+            } else {
+                self.last_z + (distance - self.last_distance) * self.last_sin
+            }
+        } else {
+            self.sample_z_with_hint(distance, hint)
+        }
+    }
+}
+
+fn minimum_mean_height_for_train_table(
+    table: &RailHeightTable,
+    distance: f64,
+    mirror: bool,
+    train: ProfileTrain,
+    base_hint: &mut usize,
+) -> f64 {
+    let mut hint = *base_hint;
+    match train {
+        ProfileTrain::Legacy18MetreEnvelope => {
+            let mut rail_heights = [0.0_f64; 23];
+            for (index, slot) in rail_heights.iter_mut().enumerate() {
+                *slot = table.rail_height_with_hint(
+                    distance + (index as f64 - 11.0) * 1.5,
+                    mirror,
+                    &mut hint,
+                );
+                if index == 0 {
+                    *base_hint = hint;
+                }
+            }
+            let mut minimum = f64::INFINITY;
+            for front_car in 0..6 {
+                let mut sum = 0.0;
+                for other_car in 0..6 {
+                    let offset = (front_car as isize - other_car as isize) * 2;
+                    sum += rail_heights[(offset + 11) as usize];
+                }
+                minimum = minimum.min(sum / 6.0);
+            }
+            for front_car in 0..12 {
+                let mut sum = 0.0;
+                for other_car in 0..12 {
+                    let offset = front_car as isize - other_car as isize;
+                    sum += rail_heights[(offset + 11) as usize];
+                }
+                minimum = minimum.min(sum / 12.0);
+            }
+            minimum
+        }
+        ProfileTrain::Coaster {
+            cars,
+            length_metres,
+        } => {
+            let spacing = length_metres / cars as f64;
+            let offset_count = 2 * cars - 1;
+            let mut heights = [0.0_f64; 32];
+            assert!(
+                offset_count <= heights.len(),
+                "coaster train exceeds height sample buffer"
+            );
+            let center = cars as isize - 1;
+            for (slot, height) in heights[..offset_count].iter_mut().enumerate() {
+                let offset = slot as isize - center;
+                *height = table.rail_height_with_hint(
+                    distance + offset as f64 * spacing,
+                    mirror,
+                    &mut hint,
+                );
+                if slot == 0 {
+                    *base_hint = hint;
+                }
+            }
+            let cars_f64 = cars as f64;
+            let mut minimum = f64::INFINITY;
+            for reference_car in 0..cars {
+                let mut sum = 0.0;
+                for other_car in 0..cars {
+                    let offset = reference_car as isize - other_car as isize;
+                    sum += heights[(offset + center) as usize];
+                }
+                minimum = minimum.min(sum / cars_f64);
+            }
+            minimum
+        }
+    }
+}
+
+fn worst_speed_squared_for_train_table(
+    table: &RailHeightTable,
+    distance: f64,
+    entry_speed: f64,
+    mirror: bool,
+    train: ProfileTrain,
+    base_hint: &mut usize,
+) -> f64 {
+    crate::math::powi(entry_speed, 2)
+        - 2.0
+            * GRAVITY
+            * minimum_mean_height_for_train_table(table, distance, mirror, train, base_hint)
+}
+
+#[cfg(test)]
 fn minimum_mean_height(profile: &SolvedProfile, distance: f64, mirror: bool) -> f64 {
     let (six_car_means, twelve_car_means) = train_mean_heights(profile, distance, mirror);
     six_car_means
         .into_iter()
         .chain(twelve_car_means)
         .fold(f64::INFINITY, f64::min)
-}
-
-fn minimum_mean_height_for_train(
-    profile: &SolvedProfile,
-    distance: f64,
-    mirror: bool,
-    train: ProfileTrain,
-) -> f64 {
-    match train {
-        ProfileTrain::Legacy18MetreEnvelope => minimum_mean_height(profile, distance, mirror),
-        ProfileTrain::Coaster {
-            cars,
-            length_metres,
-        } => {
-            let spacing = length_metres / cars as f64;
-            (0..cars)
-                .map(|reference_car| {
-                    (0..cars)
-                        .map(|other_car| {
-                            rail_height(
-                                profile,
-                                distance + (reference_car as f64 - other_car as f64) * spacing,
-                                mirror,
-                            )
-                        })
-                        .sum::<f64>()
-                        / cars as f64
-                })
-                .fold(f64::INFINITY, f64::min)
-        }
-    }
 }
 
 fn maximum_mean_height(profile: &SolvedProfile, distance: f64) -> f64 {
@@ -952,17 +1519,6 @@ fn worst_speed_squared(
         - 2.0 * GRAVITY * minimum_mean_height(profile, distance, mirror)
 }
 
-fn worst_speed_squared_for_train(
-    profile: &SolvedProfile,
-    distance: f64,
-    entry_speed: f64,
-    mirror: bool,
-    train: ProfileTrain,
-) -> f64 {
-    crate::math::powi(entry_speed, 2)
-        - 2.0 * GRAVITY * minimum_mean_height_for_train(profile, distance, mirror, train)
-}
-
 fn rail_height(profile: &SolvedProfile, distance: f64, mirror: bool) -> f64 {
     let first = profile.points.first().unwrap();
     let last = profile.points.last().unwrap();
@@ -1010,14 +1566,24 @@ fn solve_with_profile_train(
     train: ProfileTrain,
     steps: usize,
 ) -> Result<(SolvedProfile, u8), OfflineSolveError> {
-    let mut profile = integrate_checked_with_train(spec, None, steps, train)?;
+    solve_with_profile_train_tolerance(spec, train, steps, 0.000001)
+}
+
+fn solve_with_profile_train_tolerance(
+    spec: &ProfileSpec,
+    train: ProfileTrain,
+    steps: usize,
+    tolerance_metres: f64,
+) -> Result<(SolvedProfile, u8), OfflineSolveError> {
+    let schedule = PrecomputedProfileSchedule::new(spec, steps);
+    let mut profile = integrate_precomputed_with_train(&schedule, None, train)?;
     for iteration in 1..=12 {
-        let next = integrate_checked_with_train(spec, Some(&profile), steps, train)?;
+        let next = integrate_precomputed_with_train(&schedule, Some(&profile), train)?;
         let before = profile.points.last().unwrap();
         let after = next.points.last().unwrap();
         let movement = crate::math::hypot(before.x - after.x, before.z - after.z);
         profile = next;
-        if movement < 0.000001 {
+        if movement < tolerance_metres {
             return Ok((profile, iteration + 1));
         }
     }
@@ -1082,8 +1648,7 @@ fn snap_hill_profile_to_grid(profile: &mut SolvedProfile) -> f64 {
         heart_curvature: 0.0,
         curvature: 0.0,
     });
-    profile.cached_minimum_entry = None;
-    profile.cached_minimum_radius = None;
+    profile.invalidate_caches();
     insert_metres
 }
 
@@ -1142,6 +1707,18 @@ fn offline_hill_spec(spec: OfflineHillSpec, heart_speed_correction: bool) -> Pro
     profile_spec
 }
 
+/// A hill spec for the runtime shaped solver, which keeps the heart line free of node noise.
+fn shaped_hill_spec(
+    spec: OfflineHillSpec,
+    heart_speed_correction: bool,
+    consistent_nodes: bool,
+) -> ProfileSpec {
+    ProfileSpec {
+        consistent_nodes,
+        ..offline_hill_spec(spec, heart_speed_correction)
+    }
+}
+
 pub fn solve_hill_offline(
     spec: OfflineHillSpec,
     train: OfflineTrain,
@@ -1170,18 +1747,173 @@ pub(crate) fn solve_hill_offline_profile(
     Ok((profile, iterations, connector_insert_metres))
 }
 
+pub(crate) fn solve_shaped_hill_apex_height_offline(
+    spec: OfflineHillSpec,
+    train: OfflineTrain,
+    steps: usize,
+) -> Result<f64, OfflineSolveError> {
+    assert!(steps > 0);
+    let train = profile_train(train);
+    let spec = shaped_hill_spec(spec, true, true);
+    let (half, _) = solve_with_profile_train_tolerance(&spec, train, steps, 1e-3)?;
+    Ok(half
+        .points
+        .iter()
+        .map(|point| point.z)
+        .fold(f64::NEG_INFINITY, f64::max))
+}
+
+/// `consistent_nodes` is false only to rebuild hills from saves made before consistent nodes.
 pub(crate) fn solve_shaped_hill_offline_profile(
     spec: OfflineHillSpec,
     train: OfflineTrain,
     steps: usize,
+    consistent_nodes: bool,
 ) -> Result<(SolvedProfile, u8, f64), OfflineSolveError> {
     assert!(steps > 0);
     let train = profile_train(train);
-    let spec = offline_hill_spec(spec, true);
+    let spec = shaped_hill_spec(spec, true, consistent_nodes);
     let (half, iterations) = solve_with_profile_train(&spec, train, steps)?;
     let mut profile = reflect_hill(&half);
     let connector_insert_metres = snap_hill_profile_to_grid(&mut profile);
     Ok((profile, iterations, connector_insert_metres))
+}
+
+fn loop_profile_spec(
+    entry_speed_mps: f64,
+    bottom_g: f64,
+    top_g: f64,
+    hold_degrees: f64,
+    mirror_apex: bool,
+) -> ProfileSpec {
+    ProfileSpec {
+        segments: vec![Segment::Arc {
+            angle: PI,
+            schedule: Schedule::Loop {
+                bottom: bottom_g,
+                top: top_g,
+                hold: hold_degrees.to_radians(),
+            },
+        }],
+        maximum_entry: entry_speed_mps,
+        fixed_speed: false,
+        mirror_apex,
+        start_angle: 0.0,
+        taper_angle: None,
+        curved_end: !mirror_apex,
+        heart_speed_correction: !mirror_apex,
+        consistent_nodes: true,
+        #[cfg(test)]
+        name: if mirror_apex {
+            "shaped full loop"
+        } else {
+            "shaped half loop"
+        },
+    }
+}
+
+pub(crate) fn solve_shaped_full_loop_profile(
+    entry_speed_mps: f64,
+    bottom_g: f64,
+    top_g: f64,
+    hold_degrees: f64,
+    train: OfflineTrain,
+    steps: usize,
+) -> Result<SolvedProfile, OfflineSolveError> {
+    assert!(steps > 0);
+    let train = profile_train(train);
+    let spec = loop_profile_spec(entry_speed_mps, bottom_g, top_g, hold_degrees, true);
+    let (half, _) = solve_with_profile_train(&spec, train, steps)?;
+    Ok(reflect_hill(&half))
+}
+
+/// Climbing half-loop for a Raven turn. It ends inverted on a curved crest whose curvature delivers
+/// `top_g` of seat force at the apex speed, so the crest radius sets the top feel.
+pub(crate) fn solve_shaped_raven_half_loop_profile(
+    entry_speed_mps: f64,
+    bottom_g: f64,
+    top_g: f64,
+    hold_degrees: f64,
+    train: OfflineTrain,
+    steps: usize,
+) -> Result<SolvedProfile, OfflineSolveError> {
+    assert!(steps > 0);
+    let spec = loop_profile_spec(entry_speed_mps, bottom_g, top_g, hold_degrees, false);
+    let (mut profile, _) = solve_with_profile_train(&spec, profile_train(train), steps)?;
+    profile.round_to_nine_decimal_places();
+    Ok(profile)
+}
+
+pub(crate) fn solve_shaped_zero_g_hill_profile(
+    entry_speed_mps: f64,
+    pull_g: f64,
+    flank_angle_radians: f64,
+    train: OfflineTrain,
+    steps: usize,
+) -> Result<(SolvedProfile, f64, f64), OfflineSolveError> {
+    assert!(steps > 0);
+    let train_model = profile_train(train);
+    let spec = shaped_hill_spec(
+        OfflineHillSpec {
+            entry_speed_mps,
+            pull_g,
+            crest_g: 0.0,
+            flank_angle_radians,
+            taper_angle_radians: Some((flank_angle_radians / 3.0).min(0.3)),
+        },
+        false,
+        true,
+    );
+    let (half, _) = solve_with_profile_train(&spec, train_model, steps)?;
+    let crest_start = half
+        .points
+        .iter()
+        .find(|point| (point.angle - flank_angle_radians).abs() < 1e-9)
+        .ok_or(OfflineSolveError::DidNotConverge)?
+        .distance;
+    let crest_end = 2.0 * half.length() - crest_start;
+    let profile = reflect_hill(&half);
+    Ok((profile, crest_start, crest_end))
+}
+
+pub(crate) fn zero_g_crest_duration_seconds(
+    profile: &SolvedProfile,
+    crest_start_m: f64,
+    crest_end_m: f64,
+    entry_speed_mps: f64,
+    train: OfflineTrain,
+) -> Option<f64> {
+    let train_model = profile_train(train);
+    let table = RailHeightTable::new(profile);
+    let first_index = profile
+        .points
+        .partition_point(|point| point.distance < crest_start_m)
+        .min(profile.points.len().saturating_sub(1));
+    let last_index = profile
+        .points
+        .partition_point(|point| point.distance < crest_end_m)
+        .min(profile.points.len().saturating_sub(1));
+    if last_index <= first_index {
+        return None;
+    }
+    let mut duration = 0.0;
+    let mut hint = 0_usize;
+    for pair in profile.points[first_index..=last_index].windows(2) {
+        let midpoint = 0.5 * (pair[0].distance + pair[1].distance);
+        let speed_sq = worst_speed_squared_for_train_table(
+            &table,
+            midpoint,
+            entry_speed_mps,
+            false,
+            train_model,
+            &mut hint,
+        );
+        if !speed_sq.is_finite() || speed_sq <= 0.0 {
+            return None;
+        }
+        duration += (pair[1].distance - pair[0].distance) / speed_sq.sqrt();
+    }
+    Some(duration)
 }
 
 pub fn integrate_hill_offline_once(
@@ -1457,6 +2189,7 @@ pub(crate) fn snap_full_loop(spec: &ProfileSpec) -> SolvedProfile {
         end.x = target_x;
         profile.points.push(end);
     }
+    profile.invalidate_caches();
     profile
 }
 
@@ -1534,8 +2267,7 @@ pub(crate) fn reflect_hill(half: &SolvedProfile) -> SolvedProfile {
             heart_curvature: point.heart_curvature,
             curvature: point.curvature,
         }));
-    profile.cached_minimum_entry = None;
-    profile.cached_minimum_radius = None;
+    profile.invalidate_caches();
     profile
 }
 
@@ -1974,6 +2706,7 @@ pub(crate) fn test_profile() -> SolvedProfile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use std::f64::consts::FRAC_PI_2;
     use std::fmt::Write as _;
 
@@ -3052,7 +3785,9 @@ mod tests {
             mirror_apex: false,
             start_angle: 0.0,
             taper_angle: None,
+            curved_end: false,
             heart_speed_correction: false,
+            consistent_nodes: false,
             name: "half loop test",
         };
         let mut profile = integrate(&spec, None, 2048);

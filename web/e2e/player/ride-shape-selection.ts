@@ -1,5 +1,19 @@
-import { defaultShapeSelectionId, shapeSelectionId, type ShapedElementSelection } from "../../src/construction-shaped-elements.ts";
+import {
+  defaultInversionSelectionId,
+  defaultShapeSelectionId,
+  shapeSelectionId,
+  type ShapedElementSelection,
+  type ShapedLoopTopFeel,
+} from "../../src/construction-shaped-elements.ts";
 import type { RideShapeIntent } from "./rides.ts";
+
+function topFeelFromRideIntent(feel: "Floaty" | "Neutral" | "PressedIn"): ShapedLoopTopFeel {
+  switch (feel) {
+    case "Floaty": return "floaty";
+    case "Neutral": return "neutral";
+    case "PressedIn": return "pressedIn";
+  }
+}
 
 /** How the visible builder controls express a ride file's shaped intent; shared by the browser driver and the fast agreement check. */
 export function selectionFromRideIntent(intent: RideShapeIntent): ShapedElementSelection {
@@ -16,15 +30,38 @@ export function selectionFromRideIntent(intent: RideShapeIntent): ShapedElementS
       : { kind: "height" as const, heightMetres: hill.size.Height };
     return { kind: "hill", feel, strengthG: hill.strength_g, size };
   }
-  const turn = intent.turn;
-  const size = turn.size === "Auto"
-    ? { kind: "auto" as const }
-    : { kind: "radius" as const, radiusMetres: turn.size.Radius };
+  if ("turn" in intent) {
+    const turn = intent.turn;
+    const size = turn.size === "Auto"
+      ? { kind: "auto" as const }
+      : { kind: "radius" as const, radiusMetres: turn.size.Radius };
+    return {
+      kind: "turn",
+      hand: turn.hand === "Left" ? "left" : "right",
+      feel: "fullyBanked",
+      size,
+    };
+  }
+  if ("loop" in intent) {
+    return {
+      kind: "loop",
+      hand: intent.loop.hand === "Left" ? "left" : "right",
+      peakG: intent.loop.peak_g,
+      topFeel: topFeelFromRideIntent(intent.loop.top_feel),
+    };
+  }
+  if ("zero_g_roll" in intent) {
+    return {
+      kind: "zeroGRoll",
+      hand: intent.zero_g_roll.hand === "Left" ? "left" : "right",
+      peakG: intent.zero_g_roll.peak_g,
+    };
+  }
   return {
-    kind: "turn",
-    hand: turn.hand === "Left" ? "left" : "right",
-    feel: "fullyBanked",
-    size,
+    kind: "ravenTurn",
+    hand: intent.raven_turn.hand === "Left" ? "left" : "right",
+    peakG: intent.raven_turn.peak_g,
+    topFeel: topFeelFromRideIntent(intent.raven_turn.top_feel),
   };
 }
 
@@ -32,7 +69,10 @@ export function shapeBaseSelectionId(selection: ShapedElementSelection): string 
   if (selection.kind === "hill") {
     return defaultShapeSelectionId(selection.feel);
   }
-  return shapeSelectionId({ ...selection, size: { kind: "auto" } });
+  if (selection.kind === "turn") {
+    return shapeSelectionId({ ...selection, size: { kind: "auto" } });
+  }
+  return defaultInversionSelectionId(selection.kind, selection.hand);
 }
 
 export type ClassicHillAttribute = "feel" | "twist" | "height" | "span";

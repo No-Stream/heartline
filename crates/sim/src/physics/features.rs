@@ -379,16 +379,24 @@ fn element_classes(
             | PieceId::SteelLoop
             | PieceId::SteelLoopRight
             | PieceId::LargeLoop
-            | PieceId::LargeLoopRight => {
+            | PieceId::LargeLoopRight
+            | PieceId::ShapedLoopLeft
+            | PieceId::ShapedLoopRight => {
                 classes.insert(ElementClass::VerticalLoop);
             }
             PieceId::Corkscrew | PieceId::CorkscrewRight => {
                 classes.insert(ElementClass::Corkscrew);
             }
-            PieceId::HeartlineRoll | PieceId::HeartlineRollRight => {
+            PieceId::HeartlineRoll
+            | PieceId::HeartlineRollRight
+            | PieceId::ShapedZeroGRollLeft
+            | PieceId::ShapedZeroGRollRight => {
                 classes.insert(ElementClass::HeartlineRoll);
             }
-            PieceId::HalfLoopUp | PieceId::HalfLoopDown => {
+            PieceId::HalfLoopUp
+            | PieceId::HalfLoopDown
+            | PieceId::ShapedRavenTurnLeft
+            | PieceId::ShapedRavenTurnRight => {
                 classes.insert(ElementClass::HalfLoop);
             }
             PieceId::HalfCorkscrewLeftUp

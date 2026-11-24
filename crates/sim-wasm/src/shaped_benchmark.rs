@@ -5,11 +5,12 @@ use theme_park_sim::physics::{PhysicsConfig, PreviewCache, PreviewStatus, TrackP
 use theme_park_sim::track::construction::Construction;
 use theme_park_sim::track::ride_file::{RideFile, RideStep};
 use theme_park_sim::track::shaped::{
-    ElementIntent, ElementSpec, HillSizeHint, SolveContext, SolvedElement, TurnSizeHint,
-    default_hill_strength, solve,
+    ElementIntent, ElementSpec, HillSizeHint, LoopTopFeel, SolveContext, SolvedElement,
+    TurnSizeHint, default_hill_strength, default_loop_peak_g, default_raven_turn_peak_g,
+    default_zero_g_roll_peak_g, solve, solve_preview,
 };
 use theme_park_sim::track::{
-    Hand, HillFeel, Piece, PieceId, PieceKind, TrackState, catalog, coaster_models,
+    Hand, HillFeel, Inversion, Piece, PieceId, PieceKind, TrackState, catalog, coaster_models,
 };
 use theme_park_sim::world::{Surface, World};
 use wasm_bindgen::prelude::*;
@@ -218,6 +219,15 @@ impl ShapedSolveBenchmark {
 
     /// Runs one solve while returning typed refusals as benchmark data.
     pub fn try_solve(&mut self) {
+        self.try_solve_with_mode(false);
+    }
+
+    /// Runs the production one-preview shaped solve used while browsing candidates.
+    pub fn try_solve_preview(&mut self) {
+        self.try_solve_with_mode(true);
+    }
+
+    fn try_solve_with_mode(&mut self, provisional: bool) {
         assert!(
             self.observed_entry_speed_mps.is_finite(),
             "call prepare first"
@@ -236,6 +246,7 @@ impl ShapedSolveBenchmark {
                 preview_cache: &mut self.preview_cache,
                 physics: self.physics,
             };
+            let solve = if provisional { solve_preview } else { solve };
             match solve(&self.intent, &mut context) {
                 Ok(solved) => solved,
                 Err(refusal) => {
@@ -451,35 +462,66 @@ pub fn shaped_benchmark_cases_json() -> String {
     serde_json::to_string(&cases).expect("benchmark cases serialize")
 }
 
-/// Lists one shaped hill and one shaped turn parity case for every profiled coaster model.
+/// Lists shaped hill, turn, and supported inversion parity cases for every profiled coaster model.
 #[wasm_bindgen]
 pub fn shaped_parity_cases_json() -> String {
-    let cases: Vec<_> = coaster_models()
-        .into_iter()
-        .filter_map(|model| {
-            let profile = model.shaped_profile?;
-            let cars = model.train.cars;
-            let midpoint_speed =
-                ((profile.minimum_speed_mps + profile.maximum_speed_mps) / 2.0).round();
-            Some([
-                json!({
-                    "id": format!("floater-hill:{}:{cars}:{midpoint_speed}", model.key),
+    let mut cases = Vec::new();
+    for model in coaster_models() {
+        let Some(profile) = model.shaped_profile else {
+            continue;
+        };
+        let cars = model.train.cars;
+        let midpoint_speed =
+            ((profile.minimum_speed_mps + profile.maximum_speed_mps) / 2.0).round();
+        cases.push(json!({
+            "id": format!("floater-hill:{}:{cars}:{midpoint_speed}", model.key),
+            "model": model.key,
+            "cars": cars,
+            "element": "floater-hill",
+            "requested_speed_mps": midpoint_speed,
+        }));
+        cases.push(json!({
+            "id": format!("fully-banked-turn:{}:{cars}:{midpoint_speed}", model.key),
+            "model": model.key,
+            "cars": cars,
+            "element": "fully-banked-turn",
+            "requested_speed_mps": midpoint_speed,
+        }));
+        if profile.minimum_inversion_speed_mps > 0.0 {
+            let inversion_speed =
+                ((profile.minimum_inversion_speed_mps + profile.maximum_inversion_speed_mps) / 2.0)
+                    .round();
+            if model.allowed_inversions.contains(&Inversion::VerticalLoop) {
+                cases.push(json!({
+                    "id": format!("vertical-loop:{}:{cars}:{inversion_speed}", model.key),
                     "model": model.key,
                     "cars": cars,
-                    "element": "floater-hill",
-                    "requested_speed_mps": midpoint_speed,
-                }),
-                json!({
-                    "id": format!("fully-banked-turn:{}:{cars}:{midpoint_speed}", model.key),
+                    "element": "vertical-loop",
+                    "requested_speed_mps": inversion_speed,
+                }));
+            }
+            if model.allowed_inversions.contains(&Inversion::HeartlineRoll) {
+                cases.push(json!({
+                    "id": format!("zero-g-roll:{}:{cars}:{inversion_speed}", model.key),
                     "model": model.key,
                     "cars": cars,
-                    "element": "fully-banked-turn",
-                    "requested_speed_mps": midpoint_speed,
-                }),
-            ])
-        })
-        .flatten()
-        .collect();
+                    "element": "zero-g-roll",
+                    "requested_speed_mps": inversion_speed,
+                }));
+            }
+            if model.allowed_inversions.contains(&Inversion::VerticalLoop)
+                && model.allowed_inversions.contains(&Inversion::Corkscrew)
+            {
+                cases.push(json!({
+                    "id": format!("raven-turn:{}:{cars}:{inversion_speed}", model.key),
+                    "model": model.key,
+                    "cars": cars,
+                    "element": "raven-turn",
+                    "requested_speed_mps": inversion_speed,
+                }));
+            }
+        }
+    }
     serde_json::to_string(&cases).expect("parity cases serialize")
 }
 
@@ -549,6 +591,20 @@ fn benchmark_case(kind: &str) -> (theme_park_sim::track::CoasterModel, ElementIn
         "fully-banked-turn" => ElementIntent::Turn {
             hand: Hand::Left,
             size: TurnSizeHint::Auto,
+        },
+        "vertical-loop" => ElementIntent::Loop {
+            hand: Hand::Left,
+            peak_g: default_loop_peak_g(&model),
+            top_feel: LoopTopFeel::Neutral,
+        },
+        "zero-g-roll" => ElementIntent::ZeroGRoll {
+            hand: Hand::Left,
+            peak_g: default_zero_g_roll_peak_g(&model),
+        },
+        "raven-turn" => ElementIntent::RavenTurn {
+            hand: Hand::Left,
+            peak_g: default_raven_turn_peak_g(&model),
+            top_feel: LoopTopFeel::Neutral,
         },
         _ => panic!("unknown shaped benchmark element: {element_kind}"),
     };
@@ -667,6 +723,54 @@ fn result_summary(
             result["radius_m"] = json!(radius_m);
             result["bank_degrees"] = json!(bank_degrees);
         }
+        ElementSpec::Loop {
+            target_peak_g,
+            delivered_peak_g,
+            delivered_top_g,
+            height_m,
+            span_m,
+            steel_structure,
+            ..
+        } => {
+            result["target_peak_g"] = json!(target_peak_g);
+            result["delivered_peak_g"] = json!(delivered_peak_g);
+            result["delivered_top_g"] = json!(delivered_top_g);
+            result["height_m"] = json!(height_m);
+            result["span_m"] = json!(span_m);
+            result["steel_structure"] = json!(steel_structure);
+        }
+        ElementSpec::ZeroGRoll {
+            target_peak_g,
+            delivered_peak_g,
+            delivered_crest_g,
+            peak_roll_rate_deg_s,
+            height_m,
+            span_m,
+            ..
+        } => {
+            result["target_peak_g"] = json!(target_peak_g);
+            result["delivered_peak_g"] = json!(delivered_peak_g);
+            result["delivered_crest_g"] = json!(delivered_crest_g);
+            result["peak_roll_rate_deg_s"] = json!(peak_roll_rate_deg_s);
+            result["height_m"] = json!(height_m);
+            result["span_m"] = json!(span_m);
+        }
+        ElementSpec::RavenTurn {
+            target_peak_g,
+            delivered_peak_g,
+            delivered_top_g,
+            peak_roll_rate_deg_s,
+            height_m,
+            span_m,
+            ..
+        } => {
+            result["target_peak_g"] = json!(target_peak_g);
+            result["delivered_peak_g"] = json!(delivered_peak_g);
+            result["delivered_top_g"] = json!(delivered_top_g);
+            result["peak_roll_rate_deg_s"] = json!(peak_roll_rate_deg_s);
+            result["height_m"] = json!(height_m);
+            result["span_m"] = json!(span_m);
+        }
     }
     result
 }
@@ -675,4 +779,22 @@ fn stable_hash(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf29ce484222325, |hash, byte| {
         (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ShapedSolveBenchmark;
+    use serde_json::{Value, from_str};
+
+    #[test]
+    fn browse_benchmark_records_a_single_preview_without_committing() {
+        let mut benchmark = ShapedSolveBenchmark::new("hyper-strong-floater-hill");
+        benchmark.prepare();
+        benchmark.try_solve_preview();
+
+        let result: Value = from_str(&benchmark.result_json()).expect("benchmark result is JSON");
+        assert_eq!(result["status"], "solved");
+        assert_eq!(result["calibration_runs"], 1);
+        assert_eq!(result["construction_append_would_tunnel"], Value::Null);
+    }
 }

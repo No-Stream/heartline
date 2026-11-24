@@ -27,11 +27,19 @@ pub struct TrackPreview {
     pub force_limit_exceeded: Vec<bool>,
 }
 
+/// Height band below an inversion's highest point that counts as its crest.
+const INVERTED_CREST_DEPTH_M: f64 = 0.5;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CandidateCarForces {
     pub car_index: usize,
     pub peaks: ForcePeakValues,
     pub sustained_minimum_vertical_g: Option<f64>,
+    pub inverted_minimum_vertical_g: Option<f64>,
+    /// Mean vertical force over the car's inverted samples within `INVERTED_CREST_DEPTH_M` of its
+    /// highest inverted sample: the felt top of an inversion, read over the curved crest.
+    pub inverted_crest_vertical_g: Option<f64>,
+    pub peak_roll_rate_deg_s: f64,
     pub within_limits: bool,
     #[cfg(test)]
     pub(crate) minimum_vertical_sample: CandidateForceSample,
@@ -244,17 +252,32 @@ impl PreviewCache {
             .position(|piece| piece.kind == PieceKind::Station)?;
         assert!(pieces.windows(2).all(|pair| pair[0].exit == pair[1].entry));
         let closed = !treat_as_open && pieces.last().unwrap().exit == pieces[0].entry;
-        let source_circuit = circuit_from_pieces(pieces.to_vec(), !closed);
-        let source_length = source_circuit.length;
-        let source_piece_count = source_circuit.pieces.len();
-        let mut simulation_pieces = source_circuit.pieces.clone();
-        if !closed {
-            simulation_pieces.extend(virtual_tangent_runout(
-                pieces.last().unwrap().exit,
-                configuration.length_metres,
-            ));
-        }
-        let circuit = circuit_from_pieces(simulation_pieces, !closed);
+        let source_piece_count = pieces.len();
+        let (source_circuit, source_length, circuit) = if candidate_piece_index.is_some() {
+            let source_length = pieces.iter().map(Piece::length).sum();
+            let mut simulation_pieces = Vec::with_capacity(pieces.len() + 1);
+            simulation_pieces.extend_from_slice(pieces);
+            if !closed {
+                simulation_pieces.extend(virtual_tangent_runout(
+                    pieces.last().unwrap().exit,
+                    configuration.length_metres,
+                ));
+            }
+            let circuit = circuit_from_pieces(simulation_pieces, !closed);
+            (None, source_length, circuit)
+        } else {
+            let source_circuit = circuit_from_pieces(pieces.to_vec(), !closed);
+            let source_length = source_circuit.length;
+            let mut simulation_pieces = source_circuit.pieces.clone();
+            if !closed {
+                simulation_pieces.extend(virtual_tangent_runout(
+                    pieces.last().unwrap().exit,
+                    configuration.length_metres,
+                ));
+            }
+            let circuit = circuit_from_pieces(simulation_pieces, !closed);
+            (Some(source_circuit), source_length, circuit)
+        };
         let preview_end_distance = if closed {
             source_length
         } else {
@@ -301,47 +324,97 @@ impl PreviewCache {
             train.controls.resize(circuit.pieces.len(), None);
             let recorder = if candidate_piece_index.is_none() {
                 let mut recorder = snapshot.recorder.clone();
-                recorder.rebind_preview_circuit(&source_circuit, model);
+                recorder.rebind_preview_circuit(
+                    source_circuit
+                        .as_ref()
+                        .expect("track preview builds source circuit"),
+                    model,
+                );
                 Some(recorder)
             } else {
                 None
             };
-            let mut flags = snapshot.flags.clone();
-            let mut force_peak_recorder = snapshot.force_peak_recorder.clone();
-            force_peak_recorder.rebind_circuit(&circuit);
-            flags.resize(source_length.ceil() as usize, false);
+            let flags = if candidate_piece_index.is_none() {
+                let mut flags = snapshot.flags.clone();
+                flags.resize(source_length.ceil() as usize, false);
+                flags
+            } else {
+                Vec::new()
+            };
+            let force_peak_recorder = if candidate_piece_index.is_none() {
+                let mut force_peak_recorder = snapshot.force_peak_recorder.clone();
+                force_peak_recorder.rebind_circuit(&circuit);
+                force_peak_recorder
+            } else {
+                PreviewForcePeakRecorder::new(&circuit, 0)
+            };
             (
                 train,
                 recorder,
                 force_peak_recorder,
                 snapshot.evaluators.clone(),
                 flags,
-                snapshot.previous_flags.clone(),
-                snapshot.furthest_flag_metres.clone(),
+                if candidate_piece_index.is_none() {
+                    snapshot.previous_flags.clone()
+                } else {
+                    Vec::new()
+                },
+                if candidate_piece_index.is_none() {
+                    snapshot.furthest_flag_metres.clone()
+                } else {
+                    Vec::new()
+                },
                 snapshot.stationary_steps,
                 snapshot.steps,
             )
         } else {
             (
                 Train::new(&circuit, configuration, config, 0.0, 2.0),
-                candidate_piece_index
-                    .is_none()
-                    .then(|| TestRunRecorder::for_circuit_with_model(&source_circuit, model)),
-                PreviewForcePeakRecorder::new(&circuit, configuration.cars),
+                candidate_piece_index.is_none().then(|| {
+                    TestRunRecorder::for_circuit_with_model(
+                        source_circuit
+                            .as_ref()
+                            .expect("track preview builds source circuit"),
+                        model,
+                    )
+                }),
+                PreviewForcePeakRecorder::new(
+                    &circuit,
+                    if candidate_piece_index.is_none() {
+                        configuration.cars
+                    } else {
+                        0
+                    },
+                ),
                 vec![EnvelopeEvaluator::new(TIME_STEP); usize::from(configuration.cars)],
-                vec![false; source_length.ceil() as usize],
-                vec![None; usize::from(configuration.cars)],
-                vec![None; usize::from(configuration.cars)],
+                if candidate_piece_index.is_none() {
+                    vec![false; source_length.ceil() as usize]
+                } else {
+                    Vec::new()
+                },
+                if candidate_piece_index.is_none() {
+                    vec![None; usize::from(configuration.cars)]
+                } else {
+                    Vec::new()
+                },
+                if candidate_piece_index.is_none() {
+                    vec![None; usize::from(configuration.cars)]
+                } else {
+                    Vec::new()
+                },
                 0,
                 0,
             )
         };
         let mut car_recorders = record_all_cars.then(|| {
+            let source_circuit = source_circuit
+                .as_ref()
+                .expect("all-car preview builds source circuit");
             evaluators
                 .iter()
                 .map(|evaluator| {
                     let mut recorder =
-                        TestRunRecorder::for_circuit_with_model(&source_circuit, model);
+                        TestRunRecorder::for_circuit_with_model(source_circuit, model);
                     recorder.set_envelope_evaluator(evaluator.clone());
                     recorder
                 })
@@ -608,6 +681,47 @@ fn preview_output(completion: PreviewCompletion) -> PreviewOutput {
             .filter_map(|(car_index, recorder)| {
                 let summary =
                     candidate_force_peak_summary(&recorder.samples, completion.circuit_length)?;
+                let inverted_minimum_vertical_g = recorder
+                    .samples
+                    .iter()
+                    .filter(|sample| sample.inverted)
+                    .map(|sample| sample.vertical_g)
+                    .reduce(f64::min);
+                let inverted_crest_vertical_g = recorder
+                    .samples
+                    .iter()
+                    .filter(|sample| sample.inverted)
+                    .map(|sample| sample.height_m)
+                    .reduce(f64::max)
+                    .map(|crest_height_m| {
+                        let (sum_g, count) = recorder
+                            .samples
+                            .iter()
+                            .filter(|sample| {
+                                sample.inverted
+                                    && sample.height_m >= crest_height_m - INVERTED_CREST_DEPTH_M
+                            })
+                            .fold((0.0, 0_u32), |(sum_g, count), sample| {
+                                (sum_g + sample.vertical_g, count + 1)
+                            });
+                        sum_g / f64::from(count)
+                    });
+                let peak_roll_rate_deg_s = recorder
+                    .samples
+                    .windows(2)
+                    .filter_map(|pair| {
+                        let [first, second] = pair else {
+                            return None;
+                        };
+                        let delta_distance = second.distance - first.distance;
+                        let mean_speed = 0.5 * (first.speed + second.speed);
+                        if delta_distance <= 1e-9 || mean_speed <= 0.0 {
+                            return None;
+                        }
+                        let delta_seconds = delta_distance / mean_speed;
+                        Some((second.roll - first.roll).abs().to_degrees() / delta_seconds)
+                    })
+                    .fold(0.0_f64, f64::max);
                 #[cfg(test)]
                 let maximum_longitudinal_sample = recorder
                     .maximum_longitudinal_sample
@@ -616,6 +730,9 @@ fn preview_output(completion: PreviewCompletion) -> PreviewOutput {
                     car_index,
                     peaks: summary.force,
                     sustained_minimum_vertical_g: summary.sustained.minimum_vertical_g,
+                    inverted_minimum_vertical_g,
+                    inverted_crest_vertical_g,
+                    peak_roll_rate_deg_s,
                     within_limits: recorder.within_limits,
                     #[cfg(test)]
                     minimum_vertical_sample: recorder
@@ -819,7 +936,14 @@ fn interpolate_candidate_reading(
         } else {
             second.inverted
         },
-        roll: interpolate(first.roll, second.roll),
+        // Each piece measures roll from its own reference, so roll only interpolates within a piece.
+        roll: if first.piece_index == second.piece_index {
+            interpolate(first.roll, second.roll)
+        } else if fraction < 0.5 {
+            first.roll
+        } else {
+            second.roll
+        },
         piece_index: if fraction < 0.5 {
             first.piece_index
         } else {

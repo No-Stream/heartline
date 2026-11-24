@@ -74,6 +74,11 @@ impl LegacyV4ElementSpec {
                 bank_degrees: *bank_degrees,
                 geometry: geometry.clone(),
             },
+            ElementSpec::Loop { .. }
+            | ElementSpec::ZeroGRoll { .. }
+            | ElementSpec::RavenTurn { .. } => {
+                panic!("legacy v4 saves did not contain shaped inversions")
+            }
         }
     }
 }
@@ -137,6 +142,45 @@ fn shape_selection_id(intent: &ElementIntent) -> String {
                 TurnSizeHint::Radius(radius) => format!("fixed-{radius}"),
             };
             format!("shape:turn:{hand}:fullyBanked:{size}")
+        }
+        ElementIntent::Loop {
+            hand,
+            peak_g,
+            top_feel,
+        } => {
+            let hand = match hand {
+                Hand::Left => "left",
+                Hand::Right => "right",
+            };
+            let top = match top_feel {
+                theme_park_sim::track::LoopTopFeel::Floaty => "floaty",
+                theme_park_sim::track::LoopTopFeel::Neutral => "neutral",
+                theme_park_sim::track::LoopTopFeel::PressedIn => "pressedIn",
+            };
+            format!("shape:loop:{hand}:{peak_g}:{top}")
+        }
+        ElementIntent::ZeroGRoll { hand, peak_g } => {
+            let hand = match hand {
+                Hand::Left => "left",
+                Hand::Right => "right",
+            };
+            format!("shape:zeroGRoll:{hand}:{peak_g}")
+        }
+        ElementIntent::RavenTurn {
+            hand,
+            peak_g,
+            top_feel,
+        } => {
+            let hand = match hand {
+                Hand::Left => "left",
+                Hand::Right => "right",
+            };
+            let top = match top_feel {
+                theme_park_sim::track::LoopTopFeel::Floaty => "floaty",
+                theme_park_sim::track::LoopTopFeel::Neutral => "neutral",
+                theme_park_sim::track::LoopTopFeel::PressedIn => "pressedIn",
+            };
+            format!("shape:ravenTurn:{hand}:{peak_g}:{top}")
         }
     }
 }
@@ -465,16 +509,16 @@ fn save_keeps_reports_for_the_starter_and_built_coasters() {
 }
 
 #[test]
-fn saves_use_v9_and_round_trip() {
+fn saves_use_v10_and_round_trip() {
     let compatible_v6_bytes = decompress_save_fixture(include_bytes!(
         "../tests/fixtures/coaster-grouping-v6-compatible.save.xz"
     ));
     assert!(compatible_v6_bytes.starts_with(b"TPSAVE\x06"));
     let expected = WasmSimulation::load_state_native(&compatible_v6_bytes).unwrap();
-    let saved_v9 = expected.save_state().unwrap();
-    assert!(saved_v9.starts_with(b"TPSAVE\x09"));
-    let v9_round_trip = WasmSimulation::load_state_native(&saved_v9).unwrap();
-    assert_eq!(expected.state_hash(), v9_round_trip.state_hash());
+    let saved_v10 = expected.save_state().unwrap();
+    assert!(saved_v10.starts_with(b"TPSAVE\x0a"));
+    let v10_round_trip = WasmSimulation::load_state_native(&saved_v10).unwrap();
+    assert_eq!(expected.state_hash(), v10_round_trip.state_hash());
 }
 
 #[test]
@@ -485,7 +529,7 @@ fn v8_demo_save_migrates_to_a_closed_ordinary_coaster_with_a_stationary_train() 
     assert!(v8_bytes.starts_with(b"TPSAVE\x08"));
 
     let mut simulation = WasmSimulation::load_state_native(&v8_bytes).unwrap();
-    assert!(simulation.save_state().unwrap().starts_with(b"TPSAVE\x09"));
+    assert!(simulation.save_state().unwrap().starts_with(b"TPSAVE\x0a"));
     assert_eq!(simulation.coasters().count(), 1);
     let coaster = simulation
         .coaster(CoasterId(0))
@@ -506,8 +550,8 @@ fn v8_demo_save_migrates_to_a_closed_ordinary_coaster_with_a_stationary_train() 
     }
     assert_eq!(simulation.coaster_train_poses(0), parked_train_poses);
 
-    let saved_v9 = simulation.save_state().unwrap();
-    let restored = WasmSimulation::load_state_native(&saved_v9).unwrap();
+    let saved_v10 = simulation.save_state().unwrap();
+    let restored = WasmSimulation::load_state_native(&saved_v10).unwrap();
     assert_eq!(simulation.state_hash(), restored.state_hash());
     assert_eq!(restored.coaster_train_poses(0), parked_train_poses);
 }
@@ -578,6 +622,69 @@ fn v8_demo_migration_preserves_guest_state_and_assigns_the_next_coaster_id() {
     assert_eq!(restored.simulation.state_hash(), guest_state_hash);
 }
 
+/// Made by master 6c7dadd (save version 9) from the Horizon Hawk and Daisy Dash park, open, with
+/// 12 guests and 600 ticks. Both rides have shaped hills built before node-consistent profiles.
+const MASTER_V9_SHAPED_HILLS_LOADED_STATE_HASH: u64 = 9673806636469140253;
+const MASTER_V9_SHAPED_HILLS_STATE_HASH_AFTER_300_TICKS: u64 = 10677785211317160263;
+const MASTER_V9_SHAPED_HILLS_CONSTRUCTION_HASHES: [(u32, &str, usize, u64); 2] = [
+    (0, "Horizon Hawk", 42, 4204688025986493489),
+    (1, "Daisy Dash", 26, 12442706703477066370),
+];
+
+#[test]
+fn master_v9_save_with_shaped_hills_loads_and_survives_v10_save_cycles() {
+    let v9_bytes =
+        decompress_save_fixture(include_bytes!("../tests/fixtures/shaped-hills-v9.save.xz"));
+    assert!(v9_bytes.starts_with(b"TPSAVE\x09"));
+    let mut loaded = WasmSimulation::load_state_native(&v9_bytes).unwrap();
+    assert_eq!(
+        loaded.state_hash(),
+        MASTER_V9_SHAPED_HILLS_LOADED_STATE_HASH
+    );
+    for (id, name, piece_count, construction_hash) in MASTER_V9_SHAPED_HILLS_CONSTRUCTION_HASHES {
+        let coaster = loaded.coaster(CoasterId(id)).unwrap();
+        assert_eq!(coaster.name, name);
+        assert_eq!(coaster.construction.pieces().len(), piece_count);
+        assert_eq!(
+            coaster.construction.state_hash(),
+            construction_hash,
+            "{name}"
+        );
+    }
+
+    let v10_bytes = loaded.save_state().unwrap();
+    assert!(v10_bytes.starts_with(b"TPSAVE\x0a"));
+    let mut reloaded = WasmSimulation::load_state_native(&v10_bytes).unwrap();
+    assert_eq!(reloaded.state_hash(), loaded.state_hash());
+    let mut reloaded_twice =
+        WasmSimulation::load_state_native(&reloaded.save_state().unwrap()).unwrap();
+    assert_eq!(reloaded_twice.state_hash(), loaded.state_hash());
+
+    for _ in 0..300 {
+        loaded.tick();
+        reloaded.tick();
+        reloaded_twice.tick();
+    }
+    assert_eq!(
+        loaded.state_hash(),
+        MASTER_V9_SHAPED_HILLS_STATE_HASH_AFTER_300_TICKS
+    );
+    assert_eq!(reloaded.state_hash(), loaded.state_hash());
+    assert_eq!(reloaded_twice.state_hash(), loaded.state_hash());
+}
+
+#[test]
+fn master_builder_snapshot_with_shaped_hills_loads() {
+    let snapshot = decompress_save_fixture(include_bytes!(
+        "../tests/fixtures/shaped-hills-v9.builder-snapshot.xz"
+    ));
+    let session = crate::builder_session::BuilderSession::load_native_snapshot(&snapshot).unwrap();
+    assert_eq!(
+        session.state_hash(),
+        MASTER_V9_SHAPED_HILLS_LOADED_STATE_HASH
+    );
+}
+
 #[test]
 fn legacy_v4_v5_saves_load_and_keep_running() {
     let compatible_v6_bytes = decompress_save_fixture(include_bytes!(
@@ -636,14 +743,14 @@ fn tested_open_v6_fixture_keeps_its_typed_v4_v5_rejection() {
 }
 
 #[test]
-fn tested_open_v6_fixture_saves_and_reloads_as_v9_without_changing_hash() {
+fn tested_open_v6_fixture_saves_and_reloads_as_v10_without_changing_hash() {
     let rich_v6_bytes = decompress_save_fixture(include_bytes!(
         "../tests/fixtures/coaster-grouping-v6.save.xz"
     ));
     let mut original = WasmSimulation::load_state_native(&rich_v6_bytes).unwrap();
-    let saved_v9 = original.save_state().unwrap();
-    assert!(saved_v9.starts_with(b"TPSAVE\x09"));
-    let mut restored = WasmSimulation::load_state_native(&saved_v9).unwrap();
+    let saved_v10 = original.save_state().unwrap();
+    assert!(saved_v10.starts_with(b"TPSAVE\x0a"));
+    let mut restored = WasmSimulation::load_state_native(&saved_v10).unwrap();
     assert_eq!(original.state_hash(), restored.state_hash());
 
     for _ in 0..10 {
@@ -654,14 +761,14 @@ fn tested_open_v6_fixture_saves_and_reloads_as_v9_without_changing_hash() {
 }
 
 #[test]
-fn v7_fixture_migrates_to_v9_and_continues_after_reload() {
+fn v7_fixture_migrates_to_v10_and_continues_after_reload() {
     let v7_bytes = decompress_save_fixture(include_bytes!(
         "../tests/fixtures/coaster-grouping-v7.save.xz"
     ));
     let mut original = WasmSimulation::load_state_native(&v7_bytes).unwrap();
-    let v9_bytes = original.save_state().unwrap();
-    assert!(v9_bytes.starts_with(b"TPSAVE\x09"));
-    let mut restored = WasmSimulation::load_state_native(&v9_bytes).unwrap();
+    let v10_bytes = original.save_state().unwrap();
+    assert!(v10_bytes.starts_with(b"TPSAVE\x0a"));
+    let mut restored = WasmSimulation::load_state_native(&v10_bytes).unwrap();
     assert_eq!(original.state_hash(), restored.state_hash());
 
     for _ in 0..30 {
@@ -809,6 +916,126 @@ fn save_round_trips_horizon_hawk_shaped_ride_under_two_mebibytes() {
         .replay_ride(&ride)
         .expect("Horizon Hawk shaped ride replays after save reload");
     assert_eq!(restored.state_hash(), replayed.state_hash());
+}
+
+#[test]
+fn v10_save_round_trips_shaped_inversion_intents_and_pieces() {
+    for (model_key, selection, expected_piece_id) in [
+        (
+            "velocity_viper",
+            "shape:loop:left:4:neutral",
+            PieceId::ShapedLoopLeft,
+        ),
+        (
+            "velocity_viper",
+            "shape:loop:right:4:neutral",
+            PieceId::ShapedLoopRight,
+        ),
+        (
+            "velocity_viper",
+            "shape:zeroGRoll:right:3.5",
+            PieceId::ShapedZeroGRollRight,
+        ),
+        (
+            "velocity_viper",
+            "shape:zeroGRoll:left:3.5",
+            PieceId::ShapedZeroGRollLeft,
+        ),
+        (
+            "velocity_viper",
+            "shape:ravenTurn:left:4:floaty",
+            PieceId::ShapedRavenTurnLeft,
+        ),
+        (
+            "velocity_viper",
+            "shape:ravenTurn:right:4:floaty",
+            PieceId::ShapedRavenTurnRight,
+        ),
+        (
+            "wooden_twister",
+            "shape:loop:left:3.5:neutral",
+            PieceId::ShapedLoopLeft,
+        ),
+    ] {
+        let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+        simulation.construction_select(&format!("model:{model_key}"));
+        simulation.construction_start(128, 128, 60, 0);
+        let prefix_piece_ids: &[&str] = if model_key == "wooden_twister" {
+            &[
+                "LevelToGentleDown",
+                "GentleToSteepDown",
+                "SteepToGentleDown",
+                "GentleDown",
+                "GentleDownToLevel",
+                "Straight",
+            ]
+        } else {
+            &[
+                "LevelToGentleDown",
+                "GentleToSteepDown",
+                "SteepDown",
+                "SteepToGentleDown",
+                "GentleDownToLevel",
+                "Straight",
+            ]
+        };
+        for piece_id in prefix_piece_ids {
+            simulation.construction_select(piece_id);
+            assert!(
+                simulation.construction_can_append(),
+                "{model_key} prefix piece {piece_id} cannot append: {}",
+                simulation.construction_message()
+            );
+            simulation.construction_append();
+            assert!(simulation.construction_message().is_empty());
+        }
+        simulation.construction_select(selection);
+        assert!(
+            simulation.construction_message().is_empty(),
+            "{model_key} {selection}: {}",
+            simulation.construction_message()
+        );
+
+        let selected_save = simulation.save_state_native().unwrap();
+        assert!(selected_save.starts_with(b"TPSAVE\x0a"));
+        let selected_restore = WasmSimulation::load_state_native(&selected_save).unwrap();
+        let selected = selected_restore
+            .construction_selected_shape_wire(true)
+            .expect("selected shaped inversion survives save loading");
+        assert_eq!(selected.selection, selection);
+
+        assert!(simulation.construction_can_append());
+        simulation.construction_append();
+        assert!(
+            simulation.construction_message().is_empty(),
+            "{model_key} {selection} append: {}",
+            simulation.construction_message()
+        );
+        assert_eq!(
+            simulation
+                .editing_construction()
+                .unwrap()
+                .pieces()
+                .last()
+                .unwrap()
+                .id,
+            expected_piece_id
+        );
+
+        let saved = simulation.save_state_native().unwrap();
+        assert!(saved.starts_with(b"TPSAVE\x0a"));
+        let restored = WasmSimulation::load_state_native(&saved).unwrap();
+        assert_eq!(
+            restored
+                .editing_construction()
+                .unwrap()
+                .pieces()
+                .last()
+                .unwrap()
+                .id,
+            expected_piece_id
+        );
+    }
 }
 
 #[test]

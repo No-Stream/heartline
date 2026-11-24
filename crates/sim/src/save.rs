@@ -6,10 +6,19 @@ pub(crate) mod catalog_text {
     use serde::{Deserialize, Deserializer, Serializer, de::Error, ser::Error as _};
 
     fn known(value: &str) -> Option<&'static str> {
-        crate::track::catalog()
-            .iter()
-            .map(|piece| piece.name)
+        const EXTRA_SHAPED_NAMES: [&str; 2] = [
+            "Shaped steel-structure loop left",
+            "Shaped steel-structure loop right",
+        ];
+        EXTRA_SHAPED_NAMES
+            .into_iter()
             .find(|name| *name == value)
+            .or_else(|| {
+                crate::track::catalog()
+                    .iter()
+                    .map(|piece| piece.name)
+                    .find(|name| *name == value)
+            })
             .or_else(|| {
                 crate::track::coaster_models()
                     .into_iter()
