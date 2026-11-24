@@ -1,10 +1,10 @@
 ---
 id: TASK-168
 title: Add shaped inversions with peak-force intent
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-22 04:58'
-updated_date: '2026-11-23 05:46'
+updated_date: '2026-11-24 04:57'
 labels:
   - shaped-elements
 dependencies: []
@@ -30,19 +30,5 @@ Follow-up from TASK-156 / TASK-167: add named shaped inversions (vertical loops,
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Initial reassessment at 09740d4: the branch contains broad solver, UI, design-tool, save-test, and test changes, but its prior completion claims require independent verification. Master has since added save versions 7–8, multi-coaster state, a new PieceId, and declared-piece inversion counting; integration and final gates remain outstanding. Baseline build and test assessment is in progress.
-
-Assessment: solver, wire, UI, design-tool and save changes are present. The visible acceptance matrix covers loop models and defaults broadly, but zero-g-roll peak steps, Raven peak/top-feel and hand combinations, speed perturbations, and a Hybrid browser route are not evidently covered to the full extent described by the plan. Build and test results remain pending.
-
-Correction: assert_inversion_envelope does test ±0.5 m/s under both physics configurations. The remaining visible matrix gaps are the zero-g-roll and Raven force/top-feel combinations and Hybrid browser coverage; save tests also need placed-piece coverage against current master versions.
-
-Baseline at 09740d4: tools/run-in-budget.sh cargo test -p theme-park-sim --test shaped_elements passed all 28 tests in 127.37 seconds; the integration test target compiled. Full build and broader suites were not yet assessed.
-
-After merging master at 32f63a5: direct train simulation at the Raven zero-curvature inverted join measured 1.000 g for every car and all requested top feels. Floaty (0.300 g) misses by 0.700 g and PressedIn (1.500 g) by 0.500 g, beyond the 0.35 g goal; Neutral meets it. A Velocity Viper four-car zero-g roll at 30 m/s and 4.5 g is refused despite a 4.49996 g delivered peak because longitudinal headroom is 0.2417 g versus the required 0.25 g. Investigation continues; no limits were relaxed.
-
-Zero-g correction: increasing the design crest traversal target from 2.40 to 2.60 seconds lets the 4.5 g case meet the existing headroom requirement; the 12-case force-step test passes with both physics configurations and ±0.5 m/s checks. Wider regression verification remains pending.
-
-Raven top feel (2026-11-23): the crest radius is now solved from the top speed and the requested feel, and the feel is measured as each car's mean seat force over the inverted crest. Per the orchestrator's decision the criterion is the train average: the mean over cars must be within 0.35 g of the feel (the solver accepts 0.25 g so a full ride test stays inside 0.35 g), and the per-car spread is bounded only by the global force limits. If the crest breaks a force limit other than the pullout peak, the solver moves its aim toward the side that relieves it, by at most 0.25 g; if that cannot work it refuses with TopFeelOutOfReach (target, train average, lowest and highest car). InfeasibleTarget from the Raven solver now always reports the requested peak. The 120-case matrix (Velocity Viper 3 and 6 cars, Hybrid 4 and 8 cars, 22 to 36 m/s, all feels, both hands) reaches the feel except in 12 cases per hand, all refused with TopFeelOutOfReach because the rear cars exceed the longitudinal limit over a tight crest: Viper 3-car 22 Neutral and Pressed-in and 26 Pressed-in; Viper 6-car 22 Neutral and Pressed-in and 26 Pressed-in; Hybrid 4-car 22 and 26 Pressed-in; Hybrid 8-car 22 Neutral and Pressed-in, 26 and 30 Pressed-in. The 8-car Hybrid at 22 m/s Neutral, previously pinned as a Stall, is now this top-feel refusal. No limits were relaxed. Saved Raven recipes are checked for a stored top feel within 0.35 g, and their exit height is checked against the crest dive instead of the apex height, which had made every fresh Raven turn fail to append.
-
-Heart-line noise (2026-11-23, commit cd47ddb): shaped loop, Raven and shaped hill profiles had up to 4.7 g of sample-to-sample tangential force noise from inconsistent node data. Shaped profiles now integrate exactly through the taper, keep nodes at least 1 cm apart and rebuild consistent node curvatures and positions; the worst jump is about 0.1 g. Frozen catalog tables were left as generated.
+Landed on master dff412d (CI green). Raven top feel aims the train-average crest g at the target within 0.35 g; per-car spread bounded only by the global force limits (orchestrator decision, consistent with targets-vs-global-envelope). Shared profile heart-line noise fixed (worst sample-to-sample tangential jump 4.7 g to 0.1 g). Saves are version 10; version 9 and older saves keep their original shaped-hill geometry (HillProfileNodes marker). 12 low-speed raven feel combinations per hand are refused with TopFeelOutOfReach.
 <!-- SECTION:NOTES:END -->
