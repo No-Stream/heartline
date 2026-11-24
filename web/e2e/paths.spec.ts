@@ -43,13 +43,17 @@ test("rebuilds the entrance path through the UI and guests walk to the food stal
   const corridorTilesByGuest = new Map<string, Set<number>>();
   let walkedRebuiltCorridor = false;
   let newlyVisitedFoodStall = false;
-  for (let advancedTicks = 0; advancedTicks < 100_000; advancedTicks += 250) {
-    await page.evaluate((count) => window.gameTest.advanceTicks(count), 250);
-    const guestPositions = await page.evaluate(() => window.gameTest.guests().map(({ id, x, y }) => ({
-      id,
-      tileX: Math.floor(x),
-      tileY: Math.floor(y),
-    })));
+  const tickBatchSize = 25;
+  const foodMemoryCheckInterval = 5_000;
+  for (let advancedTicks = 0; advancedTicks < 100_000; advancedTicks += tickBatchSize) {
+    const guestPositions = await page.evaluate(async (count) => {
+      await window.gameTest.advanceTicks(count);
+      return window.gameTest.guests().map(({ id, x, y }) => ({
+        id,
+        tileX: Math.floor(x),
+        tileY: Math.floor(y),
+      }));
+    }, tickBatchSize);
     for (const guest of guestPositions) {
       if (guest.tileX !== 218 || guest.tileY < 250 || guest.tileY > 256) continue;
       const visitedTiles = corridorTilesByGuest.get(guest.id) ?? new Set<number>();
@@ -58,7 +62,7 @@ test("rebuilds the entrance path through the UI and guests walk to the food stal
       if (visitedTiles.size > 1) walkedRebuiltCorridor = true;
     }
 
-    if (advancedTicks % 5_000 === 4_750) {
+    if ((advancedTicks + tickBatchSize) % foodMemoryCheckInterval === 0) {
       for (const guestId of guestIds) {
         const detail = await guestDetail(page, guestId);
         const previousTick = previousFoodTicks.get(guestId) ?? 0;
